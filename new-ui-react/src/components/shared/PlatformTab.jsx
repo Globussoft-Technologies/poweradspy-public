@@ -11,6 +11,7 @@ import quoraIcon from "../../assets/quora.png";
 import pinterestIcon from "../../assets/pinterest.png";
 import tiktokIcon from "../../assets/tiktoklogo.jpg";
 import admobIcon from "../../assets/admob.svg";
+import chatgptIcon from "../../assets/chatgpt.svg";
 
 const PLATFORM_ASSET_MAP = {
   facebook: fbIcon,
@@ -35,6 +36,9 @@ const PLATFORM_ASSET_MAP = {
   tiktok: tiktokIcon,
   tt: tiktokIcon,
   admob: admobIcon,
+  chatgptads: chatgptIcon,
+  chatgpt: chatgptIcon,
+  gpt: chatgptIcon,
 };
 
 const PLATFORM_FULL_NAMES = {
@@ -60,6 +64,9 @@ const PLATFORM_FULL_NAMES = {
   tt: "TikTok",
   tiktok: "TikTok",
   admob: "AdMob",
+  chatgptads: "ChatGPT Ads",
+  chatgpt: "ChatGPT Ads",
+  gpt: "ChatGPT Ads",
   all: "All Platforms",
 };
 

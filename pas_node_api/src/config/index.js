@@ -564,6 +564,21 @@ const config = {
     })(),
   },
 
+  // ChatGPT Ads network visibility (testing/development gate). EXCLUSIVE allow-list:
+  // empty = no restriction (the network follows normal plan entitlement — open to every
+  // plan via networkRegistry's defaultPlanAccess until plan control takes over). Non-empty
+  // = ONLY these user IDs see ChatGPT Ads; it is removed from every other user's
+  // allowedPlatforms, so the tab disappears and its search is refused. Applied in
+  // planAccessMiddleware and GET /auth/plan-access.
+  chatgptads: {
+    allowedUserIds: (() => {
+      const raw = getVal(fileConfig.chatgptads?.allowedUserIds, 'CHATGPTADS_ALLOWED_USER_IDS');
+      if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+      if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+      return [];
+    })(),
+  },
+
   sendgrid: {
     enabled: getVal(fileConfig.sendgrid?.enabled, 'SENDGRID_ENABLED', toBool),
     apiKey: getVal(fileConfig.sendgrid?.apiKey, 'SENDGRID_API_KEY'),

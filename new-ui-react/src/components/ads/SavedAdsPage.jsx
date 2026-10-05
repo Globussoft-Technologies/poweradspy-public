@@ -133,7 +133,9 @@ const SavedAdsPage = ({
   const platformsDoc = sdui?.config?.navbar?.find((d) => d._id === "platforms");
   const platformFilter = platformsDoc?.filters?.[0];
   const platformOptions = useMemo(() => {
-    const opts = platformFilter?.options || [];
+    // ChatGPT Ads can't be saved/hidden yet, so it has no tab on this page.
+    const opts = (platformFilter?.options || [])
+      .filter((o) => String(o.value ?? o.label ?? "").toLowerCase() !== "chatgptads");
     if (opts.length === 0 || opts.some((o) => (o.value || "").toLowerCase() === "tiktok")) return opts;
     return [...opts, { value: "tiktok", label: "TT", icon_url: null }];
   }, [platformFilter]);

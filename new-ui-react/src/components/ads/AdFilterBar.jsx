@@ -259,6 +259,8 @@ const AdFilterBar = ({
     .filter(Boolean), [activePlatforms]);
   const isAdmobOnly = activeLower.length === 1 && activeLower[0] === "admob";
   const isQuoraOnly = activeLower.length === 1 && activeLower[0] === "quora";
+  // ChatGPT Ads tab — its date picker offers Last Seen / First Seen.
+  const isChatgptOnly = activeLower.length === 1 && activeLower[0] === "chatgptads";
   const visibleSortTabs = useMemo(() => {
     if (!isQuoraOnly) return sortTabs;
     return sortTabs.filter((tab) => {
@@ -431,7 +433,7 @@ const AdFilterBar = ({
 
       {/* Right side controls */}
       <div className="flex items-center gap-2 flex-wrap shrink-0">
-        <AdDateDropdown onDateChange={onDateChange} filterValues={sdui?.filterValues} isTikTok={specificPlatforms.length === 1 && specificPlatforms[0]?.toLowerCase() === "tiktok"} isAdmobOnly={isAdmobOnly} disableTooltips={disableTooltips} isFilterRestricted={isFilterRestricted} onRestricted={onDateRestricted} />
+        <AdDateDropdown onDateChange={onDateChange} filterValues={sdui?.filterValues} isTikTok={specificPlatforms.length === 1 && specificPlatforms[0]?.toLowerCase() === "tiktok"} isAdmobOnly={isAdmobOnly} disableTooltips={disableTooltips} isChatgptOnly={isChatgptOnly} isFilterRestricted={isFilterRestricted} onRestricted={onDateRestricted} />
         {/* Ad Type Filter — hidden when no options available for current platform */}
         {AD_TYPE_OPTIONS.length > 0 && <div className="relative" ref={adTypeFilterRef}>
           <button

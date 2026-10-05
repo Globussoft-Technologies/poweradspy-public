@@ -37,6 +37,19 @@ function applyAdmobUserGate(allowedPlatforms, userId) {
   return allowedPlatforms.filter((p) => p !== 'admob');
 }
 
+/**
+ * ChatGPT Ads visibility override (config.chatgptads.allowedUserIds — exclusive).
+ * Empty list = no-op, ChatGPT Ads follows normal plan entitlement. Non-empty = only those
+ * user IDs keep 'chatgptads' in allowedPlatforms (testing/development rollout); everyone
+ * else has it stripped, so the tab is hidden and requirePlatform('chatgptads') refuses it.
+ */
+function applyChatgptadsUserGate(allowedPlatforms, userId) {
+  const allow = config.chatgptads?.allowedUserIds || [];
+  if (!allow.length) return allowedPlatforms;
+  if (userId !== undefined && userId !== null && allow.includes(String(userId))) return allowedPlatforms;
+  return allowedPlatforms.filter((p) => p !== 'chatgptads');
+}
+
 function overlayPlanControlAllowedPlatforms(req, legacyAllowedPlatforms) {
   const adsSearchDecision = Array.isArray(req.planControlDecisions)
     ? req.planControlDecisions.find((decision) => decision?.capabilityId === 'ads.search')
@@ -138,7 +151,7 @@ async function planAccessMiddleware(req, res, next) {
       // were added to defaults); explicit 0 = denied (custom plan that didn't purchase this platform).
       const pa = req.user.platformAccess;
       const paLower = Object.fromEntries(Object.entries(pa).map(([k, v]) => [k.toLowerCase(), v]));
-      const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'google', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok', 'admob'];
+      const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'google', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok', 'admob', 'chatgptads'];
       const jwtAllowed = new Set(ALL_PLATFORMS.filter(p => !(p in paLower) || paLower[p] === 1));
 
       // True when the JWT has at least one platform explicitly set to 0 (custom plan with restricted platforms).
@@ -170,6 +183,7 @@ async function planAccessMiddleware(req, res, next) {
         allowedPlatforms = overlayPlanControlAllowedPlatforms(req, allowedPlatforms);
       }
       allowedPlatforms = applyAdmobUserGate(allowedPlatforms, req.user?.id);
+      allowedPlatforms = applyChatgptadsUserGate(allowedPlatforms, req.user?.id);
 
       let aMemberPlanRestricted = [];
       let aMemberPlatformRestricted = [];
@@ -255,6 +269,7 @@ async function planAccessMiddleware(req, res, next) {
       allowedPlatforms = overlayPlanControlAllowedPlatforms(req, allowedPlatforms);
     }
     allowedPlatforms = applyAdmobUserGate(allowedPlatforms, req.user?.id);
+    allowedPlatforms = applyChatgptadsUserGate(allowedPlatforms, req.user?.id);
 
     // Compute filter status for the requested platform(s)
     const filterStatus = planAccessService.getFilterStatus(planId, network, planConfig);
@@ -506,4 +521,5 @@ module.exports = {
   getAuthenticatedUserId,
   hasKeywordExplorerAccess,
   applyAdmobUserGate,
+  applyChatgptadsUserGate,
 };

@@ -14,6 +14,7 @@ const { searchAds: pinSearchAds } = require('../../pinterest/controllers/adSearc
 const { searchAds: googSearchAds } = require('../../google/controllers/adSearchController');
 const { searchAds: ttSearchAds }   = require('../../tiktok/controllers/adSearchController');
 const { searchAds: admobSearchAds } = require('../../admob/controllers/adSearchController');
+const { searchAds: chatgptadsSearchAds } = require('../../chatgptads/controllers/adSearchController');
 const { getClientIp, getLocation, detectCountry } = require('../../../utils/geoip');
 const { mergeNetworkResults }        = require('../../../utils/resultMerger');
 const { getApplicableNetworks }      = require('../helpers/filterApplicability');
@@ -55,12 +56,16 @@ const POST_DATE_NETWORKS = new Set([
 ]);
 const FIRST_SEEN_NETWORKS = new Set([
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
-  'reddit', 'quora', 'pinterest', 'google', 'tiktok',
+  'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'chatgptads',
 ]);
 const LAST_SEEN_NETWORKS = new Set([
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
-  'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob',
+  'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob', 'chatgptads',
 ]);
+
+// ChatGPT Ads is tab-only: it is searched only when the request names it explicitly,
+// never as part of an "all" request (its own filters/fields don't overlap the others').
+const TAB_ONLY_NETWORKS = new Set(['chatgptads']);
 const DOMAIN_DATE_NETWORKS = new Set([
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
   'reddit', 'quora', 'pinterest', 'google',
@@ -179,6 +184,7 @@ async function searchAllNetworks(req, res) {
   const googService = serviceRegistry.getService('google');
   const ttService   = serviceRegistry.getService('tiktok');
   const admobService = serviceRegistry.getService('admob');
+  const chatgptadsService = serviceRegistry.getService('chatgptads');
 
   // ── 3. Fire networks in parallel — only plan-allowed + filter-applicable ─────
   // Four layers of restriction (intersected):
@@ -223,7 +229,7 @@ async function searchAllNetworks(req, res) {
     value.every(entry => Number.isFinite(Number(entry)));
   const _dateFilterNetworks = new Set([
     'facebook', 'instagram', 'youtube', 'gdn', 'linkedin', 'native',
-    'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob',
+    'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob', 'chatgptads',
   ]);
   if (isDateRange(_body.post_date_btn_sort)) {
     for (const network of [..._dateFilterNetworks]) {
@@ -271,7 +277,9 @@ async function searchAllNetworks(req, res) {
   const _popularitySortActive =
     _body.popularity_sort === 'popularity_sort' || _body.sortBy === 'Popularity';
 
-  const isUserRequested  = (net) => reqNetworks === 'all' || reqNetworks.includes(net);
+  const isUserRequested  = (net) => TAB_ONLY_NETWORKS.has(net)
+    ? Array.isArray(reqNetworks) && reqNetworks.includes(net)
+    : reqNetworks === 'all' || reqNetworks.includes(net);
   const isCustomPlan = req.planAccess?.isCustomPlan === true;
   const hasPlanControlSearchDecision = Array.isArray(req.planControlDecisions) &&
     req.planControlDecisions.some((decision) => decision?.capabilityId === 'ads.search');
@@ -316,6 +324,8 @@ async function searchAllNetworks(req, res) {
     allTasks.push(withTimeout(ttSearchAds(searchReq, ttService.db, ttService.log), ms, 'tiktok'));
   if (admobService && isAllowed('admob'))
     allTasks.push(withTimeout(admobSearchAds(searchReq, admobService.db, admobService.log), ms, 'admob'));
+  if (chatgptadsService && isAllowed('chatgptads'))
+    allTasks.push(withTimeout(chatgptadsSearchAds(searchReq, chatgptadsService.db, chatgptadsService.log), ms, 'chatgptads'));
 
   const settled = await Promise.allSettled(allTasks);
 
@@ -327,7 +337,7 @@ async function searchAllNetworks(req, res) {
   const totals            = {
     facebook: 0, instagram: 0, youtube: 0, gdn: 0, linkedin: 0,
     native: 0, reddit: 0, quora: 0, pinterest: 0, google: 0, tiktok: 0,
-    admob: 0,
+    admob: 0, chatgptads: 0,
   };
   const networksWithData  = [];   // networks that returned data (for suggestion)
   const networkErrors     = {};
@@ -506,6 +516,7 @@ async function searchAllNetworks(req, res) {
       google: [googService, googSearchAds, googleSearchReq],
       tiktok: [ttService, ttSearchAds, searchReq],
       admob: [admobService, admobSearchAds, searchReq],
+      chatgptads: [chatgptadsService, chatgptadsSearchAds, searchReq],
     };
     const alreadyQueried = new Set(Object.keys(NETWORK_FNS).filter(
       n => isAllowed(n) && NETWORK_FNS[n][0]

@@ -2203,7 +2203,7 @@ const SDUI_DISPLAY_MODES = ['input','tab_toggle','icon_pill','dropdown','accordi
 const SDUI_ICON_TYPES    = ['svg','url','none'];
 // Keep this list aligned with supported platform-selector values so the matrix
 // editor can display and edit every network, including AdMob.
-const SDUI_PLATFORMS     = ['facebook','instagram','youtube','google','gdn','native','linkedin','reddit','quora','pinterest','tiktok','admob'];
+const SDUI_PLATFORMS     = ['facebook','instagram','youtube','google','gdn','native','linkedin','reddit','quora','pinterest','tiktok','admob','chatgptads'];
 // Keep the AI category editor stable: nested_multiselect must survive edit/re-render cycles.
 const SDUI_TYPES_WITH_OPTS = ['icon_toggle','checkbox','radio','segmented_control','dropdown_single','dropdown_multi','chip_multi_select','nested_select','nested_multiselect','date_preset','combobox'];
 const SDUI_INPUT_TYPES   = ['text_input','autocomplete'];

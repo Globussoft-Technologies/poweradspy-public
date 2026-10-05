@@ -448,6 +448,7 @@ const PLATFORM_ID_TO_NETWORK = {
   12: 'gdn',
   18: 'google',
   19: 'admob',
+  21: 'chatgptads',
 };
 
 const normalizeNetworkSlug = (value) => {
@@ -964,6 +965,30 @@ export const mapAdToCard = (raw) => {
       try { return JSON.parse(v); } catch { return null; }
     })(),
   };
+
+  // ChatGPT Ads: no likes/comments/shares/impressions exist for this ad surface. The card
+  // shows how often the ad was seen (hits), its landing domain and every country it was
+  // seen in (the backend sends `country` as an array of names).
+  if (resolvedNetwork === 'chatgptads') {
+    return {
+      ...card,
+      likes: null,
+      comments: null,
+      shares: null,
+      views: null,
+      impressions: null,
+      popularity: null,
+      timesSeen: Number(raw.hits) > 0 ? Number(raw.hits) : null,
+      domain: raw.domain || '',
+      countries: Array.isArray(raw.country)
+        ? raw.country
+        : typeof raw.country === 'string' && raw.country
+          ? raw.country.split(',').map((value) => value.trim()).filter(Boolean)
+          : [],
+      subtitle: raw.newsfeed_description || raw.news_feed_description || '',
+      runningDays: raw.days_running ?? card.runningDays ?? null,
+    };
+  }
 
   if (!isAdmob) return card;
 

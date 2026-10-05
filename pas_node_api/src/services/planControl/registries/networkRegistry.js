@@ -110,6 +110,18 @@ const NETWORK_DEFINITIONS = [
     supportsGeneralAccess: true,
     defaultPlanAccess: true,
   },
+  {
+    // ChatGPT Ads (platform 21). defaultPlanAccess = open to every active plan during
+    // rollout; per-user testing visibility is config.chatgptads.allowedUserIds. To hand
+    // control to the admin plan UI later: drop defaultPlanAccess and add a `chatgptads`
+    // key to platform_access.platform_plans / the Plan Control policy.
+    id: 'chatgptads',
+    label: 'ChatGPT Ads',
+    status: 'active',
+    aliases: ['chatgpt'],
+    supportsGeneralAccess: true,
+    defaultPlanAccess: true,
+  },
 ];
 
 // ─── Derived lookups (built once at module load) ────────────────────────────

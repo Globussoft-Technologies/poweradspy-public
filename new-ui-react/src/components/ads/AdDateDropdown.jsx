@@ -9,6 +9,13 @@ const OPTIONS = [
   { id: "domain_reg", label: "Domain Registration Date" },
 ];
 
+// ChatGPT Ads has no post date / domain registration data — it filters on when the
+// ad was last and first seen (last_seen / first_seen in its index).
+const CHATGPT_OPTIONS = [
+  { id: "ad_seen", label: "Last Seen Date" },
+  { id: "first_seen", label: "First Seen Date" },
+];
+
 // Keep the picker presets aligned with the canonical values accepted by Common Ads Search.
 export const QUICK_FILTERS = [
   { id: "all", label: "All" },
@@ -222,17 +229,22 @@ const CustomDropdown = (props) => {
   );
 };
 
-const DATE_FILTER_KEYS = ["seen_btn_sort", "post_date_btn_sort", "domain_date_btn_sort"];
+const DATE_FILTER_KEYS = ["seen_btn_sort", "post_date_btn_sort", "domain_date_btn_sort", "first_seen_btn_sort"];
 
 // Maps the date type tab id → plan_access_config _id (matches SDUI_TO_PLAN_ACCESS in useAuth.jsx)
 const DATE_TYPE_TO_PLAN_ACCESS_ID = {
   ad_seen:    'last_seen',
   post_date:  'post_date',
   domain_reg: 'domain_registration',
+  // No separate plan entry for first-seen — gate it with the same seen-date entitlement.
+  first_seen: 'last_seen',
 };
 
-const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobOnly = false, guest, disableTooltips = false, isFilterRestricted, onRestricted }) => {
-  const restrictToAdSeenOnly = isTikTok || isAdmobOnly;
+const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobOnly = false, isChatgptOnly = false, guest, disableTooltips = false, isFilterRestricted, onRestricted }) => {
+  const restrictToAdSeenOnly = !isChatgptOnly && (isTikTok || isAdmobOnly);
+  const dateTypeOptions = isChatgptOnly
+    ? CHATGPT_OPTIONS
+    : OPTIONS.filter((opt) => !restrictToAdSeenOnly || opt.id === "ad_seen");
   const [isOpen, setIsOpen] = useState(false);
   const [showTip, setShowTip] = useState(false);
   const [tipPos, setTipPos] = useState({ x: 0, y: 0 });
@@ -251,6 +263,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
     ad_seen: undefined,
     post_date: undefined,
     domain_reg: undefined,
+    first_seen: undefined,
   });
   const [activeQuickFilter, setActiveQuickFilter] = useState("all");
   const [month, setMonth] = useState(new Date());
@@ -259,12 +272,19 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
     seen_btn_sort: "ad_seen",
     post_date_btn_sort: "post_date",
     domain_date_btn_sort: "domain_reg",
+    first_seen_btn_sort: "first_seen",
   };
+
+  // A date type that isn't offered on the current tab (e.g. Post Date after switching
+  // to ChatGPT) falls back to Ad Seen so the calendar never edits a hidden dimension.
+  useEffect(() => {
+    if (!dateTypeOptions.some((opt) => opt.id === activeDateType)) setActiveDateType("ad_seen");
+  }, [isChatgptOnly, restrictToAdSeenOnly]);
 
   // Sync calendar state from filterValues when dropdown opens
   useEffect(() => {
     if (!isOpen) return;
-    const restored = { ad_seen: undefined, post_date: undefined, domain_reg: undefined };
+    const restored = { ad_seen: undefined, post_date: undefined, domain_reg: undefined, first_seen: undefined };
     let hasAny = false;
     for (const [filterKey, dateType] of Object.entries(FILTER_KEY_TO_DATE_TYPE)) {
       const val = filterValues?.[filterKey];
@@ -308,7 +328,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
       (k) => !filterValues?.[k] || (Array.isArray(filterValues[k]) && filterValues[k].length === 0)
     );
     if (allCleared) {
-      setDates({ ad_seen: undefined, post_date: undefined, domain_reg: undefined });
+      setDates({ ad_seen: undefined, post_date: undefined, domain_reg: undefined, first_seen: undefined });
       setActiveQuickFilter("all");
       setMonth(new Date());
     }
@@ -450,7 +470,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
           {/* Tabs for Date Types */}
           <div className="p-3 border-b border-[#363840]/70 bg-theme-surface">
             <div className={`flex gap-2 ${restrictToAdSeenOnly ? "justify-center" : ""}`}>
-              {OPTIONS.filter((opt) => !restrictToAdSeenOnly || opt.id === "ad_seen").map((opt) => (
+              {dateTypeOptions.map((opt) => (
                 <button
                   key={opt.id}
                   onClick={() => {

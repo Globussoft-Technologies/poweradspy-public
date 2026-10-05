@@ -17,7 +17,7 @@ const dbManager = require('../database/DatabaseManager');
 const config = require('../config');
 const logger = require('../logger');
 const planAccessService = require('../services/planAccess/planAccessService');
-const { applyAdmobUserGate } = require('../middleware/planAccess');
+const { applyAdmobUserGate, applyChatgptadsUserGate } = require('../middleware/planAccess');
 const { overlayAiMetaLegacyDecision } = require('../services/planControl/legacyPlanAccessBridge');
 const { getCapabilityDecision } = require('../services/planControl/registries/routeClassification');
 const { resolveNeedsOnboarding } = require('../services/common/helpers/onboardingEligibility');
@@ -158,7 +158,7 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
   if (req.user?.platformAccess && !req.user?.plan_id) {
     const pa = req.user.platformAccess;
     const paLower = Object.fromEntries(Object.entries(pa).map(([k, v]) => [k.toLowerCase(), v]));
-    const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'google', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok', 'admob'];
+    const ALL_PLATFORMS = ['facebook', 'instagram', 'youtube', 'google', 'linkedin', 'gdn', 'native', 'reddit', 'quora', 'pinterest', 'tiktok', 'admob', 'chatgptads'];
     const jwtAllowed = new Set(ALL_PLATFORMS.filter(p => !(p in paLower) || paLower[p] === 1));
 
     // True when JWT has explicit 0s — custom plan with restricted platform selection.
@@ -204,6 +204,7 @@ router.get('/plan-access', authMiddleware, asyncHandler(async (req, res) => {
   }
 
   allowedPlatforms = applyAdmobUserGate(allowedPlatforms, req.user?.id);
+  allowedPlatforms = applyChatgptadsUserGate(allowedPlatforms, req.user?.id);
 
   const filters = planAccessService.getFilterStatus(planId, network, config2);
   await overlayAiMetaLegacyDecision(req, network, filters);

@@ -13,6 +13,7 @@ const { evaluateAllCapabilities } = require('../engine/evaluator');
 const { resolvePlanIdentity } = require('../engine/planIdentityResolver');
 const { getCapabilities } = require('../registries/capabilityRegistry');
 const { withDefaultPlanNetworks } = require('../registries/networkRegistry');
+const { applyChatgptadsUserGate } = require('../../../middleware/planAccess');
 
 const router = typeof express.Router === 'function'
   ? express.Router()
@@ -61,6 +62,16 @@ router.get('/entitlements', authMiddleware, async (req, res) => {
         .filter(Boolean)
       : null;
 
+    // ChatGPT Ads testing gate (config.chatgptads.allowedUserIds) — the same exclusive
+    // allow-list planAccessMiddleware and /plan-access apply, so the frontend never shows
+    // the ChatGPT tab to a user whose search would be refused.
+    const gateNetworks = (list) => (Array.isArray(list) ? applyChatgptadsUserGate(list, user.id) : list);
+    for (const evaluation of Object.values(evaluations || {})) {
+      if (evaluation && Array.isArray(evaluation.allowedNetworks)) {
+        evaluation.allowedNetworks = gateNetworks(evaluation.allowedNetworks);
+      }
+    }
+
     res.json({
       code: 200,
       data: {
@@ -72,9 +83,9 @@ router.get('/entitlements', authMiddleware, async (req, res) => {
         policyVersion: policySnapshot?.versionId || null,
         enforcementMode: config.planControl?.enforcementMode || 'enforce',
         // Since generalNetworks are on the family policy, we extract them from the snapshot
-        generalNetworks: customInvoiceNetworks || withDefaultPlanNetworks(
+        generalNetworks: gateNetworks(customInvoiceNetworks || withDefaultPlanNetworks(
           policySnapshot?.snapshot?.policies?.[planIdentity?.familyId]?.generalNetworks || []
-        ),
+        )),
         capabilities: evaluations,
       },
     });

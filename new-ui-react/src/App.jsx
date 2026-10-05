@@ -1068,8 +1068,27 @@ const App = () => {
       );
     }
 
+    // ChatGPT Ads tab — only for users whose allowed platforms include it (the
+    // backend's chatgptads.allowedUserIds testing gate strips it for everyone else).
+    // The admin SDUI platform_selector owns the option once it is configured there;
+    // until then it is placed right after AdMob so the tab is reachable.
+    const isChatgptOpt = (o) => String(o.value ?? o.label ?? '').toLowerCase() === 'chatgptads';
+    const chatgptAllowed = Array.isArray(planAllowedPlatforms) &&
+      planAllowedPlatforms.some((network) => normalizePlanNetwork(network) === 'chatgptads');
+    if (!chatgptAllowed) {
+      allOpts = allOpts.filter((o) => !isChatgptOpt(o));
+    } else if (!allOpts.some(isChatgptOpt)) {
+      const chatgptOpt = { value: 'chatgptads', label: 'GPT', icon_url: null };
+      const admobIndex = allOpts.findIndex(
+        (o) => String(o.value ?? o.label ?? '').toLowerCase() === 'admob'
+      );
+      allOpts = admobIndex === -1
+        ? [...allOpts, chatgptOpt]
+        : [...allOpts.slice(0, admobIndex + 1), chatgptOpt, ...allOpts.slice(admobIndex + 1)];
+    }
+
     return allOpts;
-  }, [platformFilter, admobUIEnabled]);
+  }, [platformFilter, admobUIEnabled, planAllowedPlatforms]);
 
   const sortingDoc = sdui.config?.navbar?.find((d) => d._id === "sorting");
   const sortFilter = sortingDoc?.filters?.[0];
@@ -1117,8 +1136,11 @@ const App = () => {
   }, [dispatch, sdui.sortBy, sortTabs, ui.activeTab]);
 
   const allPlatformValues = useMemo(() => {
+    // ChatGPT Ads is tab-only — never part of the "All" selection.
     if (platformOptions.length > 0)
-      return platformOptions.map((opt) => opt.value ?? opt.label);
+      return platformOptions
+        .map((opt) => opt.value ?? opt.label)
+        .filter((value) => String(value).toLowerCase() !== 'chatgptads');
     const platforms = [
       "facebook",
       "instagram",
@@ -1322,6 +1344,7 @@ const App = () => {
     ad_seen: "seen_btn_sort",
     post_date: "post_date_btn_sort",
     domain_reg: "domain_date_btn_sort",
+    first_seen: "first_seen_btn_sort",
   };
 
   const handleDateChange = (type, dates, entryPoint, forceTrack = false) => {
@@ -1362,7 +1385,9 @@ const App = () => {
         const platforms = [...new Set(
           sdui.activePlatforms
             .filter((network) => isPlanNetworkAllowed(planAllowedPlatforms, network))
-            .map((p) => p.toLowerCase()),
+            .map((p) => p.toLowerCase())
+            // ChatGPT Ads has no hidden/saved-ads endpoints (no save/hide on its cards).
+            .filter((p) => p !== 'chatgptads'),
         )];
         if (platforms.length === 0) return;
         const results = [];

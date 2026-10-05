@@ -32,6 +32,8 @@ import {
   ShieldCheck,
   Bookmark,
   Sparkles,
+  Repeat,
+  Globe,
 } from "lucide-react";
 import { AD_TYPE_BADGES, getStarRating } from "../../constants";
 import {
@@ -62,6 +64,7 @@ import quoraIcon from "../../assets/quora.png";
 import pinterestIcon from "../../assets/pinterest.png";
 import tiktokIcon from "../../assets/tiktoklogo.jpg";
 import admobIcon from "../../assets/admob.svg";
+import chatgptIcon from "../../assets/chatgpt.svg";
 import he from "he";
 
 import mpAgkn from "../../assets/marketingPlatform/agkn.com.png";
@@ -169,6 +172,7 @@ const PLATFORM_ICONS = {
   pinterest: pinterestIcon,
   tiktok: tiktokIcon,
   admob: admobIcon,
+  chatgptads: chatgptIcon,
 };
 
 const AD_TYPE_ICONS = {
@@ -220,7 +224,13 @@ const STAT_CONFIG = {
   comments:    { label: "Comments",    Icon: MessageCircle,     color: "text-yellow-400" },
   shares:      { label: "Shares",      Icon: Share2,            color: "text-emerald-400" },
   ctr:         { label: "CTR",         Icon: MousePointerClick, color: "text-cyan-400" },
+  timesSeen:   { label: "Times seen",  Icon: Repeat,            color: "text-violet-400" },
+  domain:      { label: "Landing domain", Icon: Globe,          color: "text-emerald-400" },
 };
+
+// ChatGPT Ads has no engagement data — its card shows how often the ad was seen and
+// where it lands instead of the six engagement stats.
+const CHATGPT_STAT_ORDER = ["timesSeen", "domain"];
 
 const resolveStatValue = (key, ad) => {
   switch (key) {
@@ -238,6 +248,8 @@ const resolveStatValue = (key, ad) => {
     case "likes":       return ad.likes;
     case "comments":    return ad.comments;
     case "shares":      return ad.shares;
+    case "timesSeen":   return ad.timesSeen;
+    case "domain":      return ad.domain || null;
     default:            return null;
   }
 };
@@ -262,6 +274,9 @@ const MasonryCard = ({
   sduiConfig,
 }) => {
   const platform = String(ad.network || "").toLowerCase();
+  // ChatGPT Ads: no save/hide (no saved-ads storage for this network yet) and its own
+  // card stats (times seen + landing domain) instead of engagement metrics.
+  const isChatgpt = platform === "chatgptads";
   // AI enrichment is an ad property, not only a search-result property. The
   // boolean is intentionally lightweight; full labels are loaded on demand.
   // An explicit backend false means projected AI fields were incomplete.
@@ -604,12 +619,12 @@ const MasonryCard = ({
   // If none of the six have data, the whole row is omitted.
   const availableStats = useMemo(
     () =>
-      STAT_ORDER.map((key) => ({
+      (isChatgpt ? CHATGPT_STAT_ORDER : STAT_ORDER).map((key) => ({
         key,
         ...STAT_CONFIG[key],
         value: formatStat(resolveStatValue(key, ad)),
       })).filter((s) => s.value),
-    [ad],
+    [ad, isChatgpt],
   );
 
   // Derived handle ("@advertiser" if no real handle is in the data)
@@ -1018,7 +1033,8 @@ const MasonryCard = ({
               {cornerBadgeLabel}
             </span>
 
-            {/* Save / unsave */}
+            {/* Save / unsave — not offered for ChatGPT Ads (no saved-ads storage yet) */}
+            {!isChatgpt && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -1046,6 +1062,7 @@ const MasonryCard = ({
                 }
               />
             </button>
+            )}
 
             {/* Download */}
             <button
@@ -1078,7 +1095,7 @@ const MasonryCard = ({
                 </button>
               )
             ) : (
-              onHideAd && (
+              !isChatgpt && onHideAd && (
                 <button
                   ref={hideButtonRef}
                   onClick={(e) => {
