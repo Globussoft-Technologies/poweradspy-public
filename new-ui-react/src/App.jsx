@@ -1700,16 +1700,13 @@ const App = () => {
   const handleAiModeChange = useCallback((active) => {
     setAiModeActive(active);
     if (!active) {
-      // AI capability copy is only meaningful while AI mode is active. The
-      // health guard can switch modes without going through the AI reset path.
+      // AI capability copy is only meaningful while AI mode is active. Header
+      // also invokes the full AI reset when health forces a mode downgrade.
       setAiCapabilityMessage(null);
       clearAiSearchDisplay();
       dismissAiToast();
-      // A failed/unsupported AI plan has no valid search to restore. Clear its
-      // persisted prompt when the health guard leaves AI mode, otherwise the
-      // old prompt is rehydrated when the user opens AI mode again. Successful
-      // AI searches keep their prompt and results across a transient health
-      // fallback.
+      // Keep failed-prompt cleanup defensive for any mode change that reaches
+      // this callback without going through the Header reset path.
       if (aiFailedPromptRef.current) {
         clearFailedAiPromptReloadMarker();
         aiFailedPromptRef.current = false;

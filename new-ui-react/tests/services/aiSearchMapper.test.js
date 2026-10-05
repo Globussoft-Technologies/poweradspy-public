@@ -73,6 +73,18 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('ignores the full_payload type default when the planner did not request an ad type', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: { keyword: 'weight-loss products' },
+      full_payload: { type: 'NA' },
+    });
+    const mapped = mapArgsToFilters(normalized, {});
+
+    expect(mapped.searchQuery).toBe('weight-loss products');
+    expect(mapped.unmappedDetails).toEqual([]);
+    expect(mapped.filterValues).toEqual({});
+  });
+
   it('hydrates DS AI filter fields into frontend filter state', () => {
     const mapped = mapArgsToFilters({
       keyword: 'skincare products',

@@ -151,6 +151,22 @@ describe("NestedMultiselectFilter > child toggle via onChildChange", () => {
     fireEvent.click(getByText("Shoes"));
     expect(onChildChange).toHaveBeenCalledWith([], "fashion");
   });
+
+  it("does not pass other selected parent markers into child state", () => {
+    const onChildChange = vi.fn();
+    const { getByText } = render(
+      <NestedMultiselectFilter
+        options={TREE}
+        selected={["fashion", "shoes"]}
+        onChange={() => {}}
+        onChildChange={onChildChange}
+      />,
+    );
+    fireEvent.click(getByText("Food"));
+    fireEvent.click(getByText("Veggies"));
+
+    expect(onChildChange).toHaveBeenCalledWith(["shoes", "veg"], "food");
+  });
 });
 
 describe("NestedMultiselectFilter > Select-all (tri-state)", () => {
@@ -181,6 +197,21 @@ describe("NestedMultiselectFilter > Select-all (tri-state)", () => {
     );
     fireEvent.click(getByTitle("Deselect all"));
     expect(onChildChange).toHaveBeenCalledWith([], "fashion");
+  });
+
+  it("does not retain another selected parent when selecting all children", () => {
+    const onChildChange = vi.fn();
+    const { getByTitle } = render(
+      <NestedMultiselectFilter
+        options={TREE}
+        selected={["fashion", "shoes"]}
+        onChange={() => {}}
+        onChildChange={onChildChange}
+      />,
+    );
+    fireEvent.click(getByTitle("Select all"));
+
+    expect(onChildChange).toHaveBeenCalledWith(["shoes", "veg"], "food");
   });
   it("with some leaves selected → 'Select remaining'", () => {
     const onChildChange = vi.fn();

@@ -183,8 +183,14 @@ const Header = ({
   // never during the initial "not checked yet" window, or a restored aiMode would
   // be wiped on every reload before the first poll returns.
   useEffect(() => {
-    if (aiSearchChecked && !aiSearchAvailable && aiMode) setAiMode(false);
-  }, [aiSearchChecked, aiSearchAvailable, aiMode]);
+    if (!aiSearchChecked || aiSearchAvailable || !aiMode) return;
+
+    // A health fallback is a real mode exit, not just a visual toggle. Clear
+    // the AI prompt/results first so Keyword mode cannot display AI state.
+    setLocalQuery("");
+    onExitAiSearch?.();
+    setAiMode(false);
+  }, [aiSearchChecked, aiSearchAvailable, aiMode, onExitAiSearch]);
   const [shareCopied, setShareCopied] = useState(false);
   const [shareLoading, setShareLoading] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
@@ -706,18 +712,20 @@ const Header = ({
         />
       )}
 
+      {/* Center the absolute search controls against the full header, not just
+          the remaining flex space between the logo and actions. */}
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
         <div className="mx-1 flex h-full min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
           {/* Desktop Search bar & Mobile Search Overlay */}
           <div
             className={`
-              absolute inset-0 z-10 mx-auto w-full min-w-0 transition-all duration-300 ease-in-out md:w-[calc(100vw-28rem)] lg:w-[calc(100vw-30rem)] xl:w-[calc(100vw-34rem)] 2xl:w-full
+              absolute inset-0 z-10 mx-auto w-full min-w-0 transition-all duration-300 ease-in-out
               ${
                 isSearchOpenMobile
-                  ? "max-w-none"
+                  ? "w-full max-w-none"
                   : aiMode
-                    ? "max-w-none md:max-w-[560px] lg:max-w-[720px] xl:max-w-4xl"
-                    : "max-w-none md:max-w-[440px] lg:max-w-[560px] xl:max-w-2xl"
+                    ? "w-[calc(100vw-550px)] max-w-none md:max-w-[520px] lg:w-[calc(100vw-630px)] lg:max-w-[520px] xl:w-[calc(100vw-660px)] xl:max-w-4xl"
+                    : "w-[calc(100vw-600px)] max-w-none md:max-w-[440px] lg:w-[calc(100vw-670px)] lg:max-w-[440px] xl:w-[calc(100vw-740px)] xl:max-w-2xl"
               }
               ${
                 isSearchOpenMobile
@@ -1093,7 +1101,8 @@ const Header = ({
         </div>
       )}
 
-      {/* Keep actions in normal flow; the centered search reserves responsive side gutters. */}
+      {/* Actions stay in normal flow and remain above the centered search when
+          the responsive width reaches the available header space. */}
       <div className="relative z-20 flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
         {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
           <button
@@ -1103,8 +1112,10 @@ const Header = ({
             <Search size={20} />
           </button>
         )}
+        {/* Keep the clear action compact while the header is space-constrained;
+            wider layouts regain the roomier button for readability. */}
         {isAdsLibraryPage && !guest?.isRestricted && (
-          <div className="w-8 shrink-0 sm:w-[120px]">
+          <div className="w-8 shrink-0 sm:w-[88px] md:w-[100px] lg:w-[108px] xl:w-[112px]">
             {showClearFilters && (
               <button
                 onClick={() => {
@@ -1119,7 +1130,7 @@ const Header = ({
                 }}
                 title={t("clear_filters", "Clear filters")}
                 aria-label={t("clear_filters", "Clear filters")}
-                className="flex w-full shrink-0 items-center justify-center gap-0.5 whitespace-nowrap rounded-lg border border-red-500/20 bg-red-500/10 px-1.5 py-1.5 text-[9px] font-bold text-red-400 transition-all hover:border-red-500/40 hover:bg-red-500/20 animate-pulse-glow sm:gap-1.5 sm:px-3 sm:text-[11px]"
+                className="flex w-full shrink-0 items-center justify-center gap-0.5 whitespace-nowrap rounded-lg border border-red-500/20 bg-red-500/10 px-1.5 py-1.5 text-[9px] font-bold text-red-400 transition-all hover:border-red-500/40 hover:bg-red-500/20 animate-pulse-glow sm:gap-1 sm:px-1.5 sm:text-[10px] lg:gap-1.5 lg:px-2.5 lg:text-[11px]"
               >
                 <X size={12} />
                 <span className="hidden sm:inline">

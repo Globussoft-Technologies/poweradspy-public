@@ -137,9 +137,27 @@ const expandNestedSelections = (doc, values) => {
     const parentKey = filter.parent_filter_id || filter._id;
     const childKey = filter.child_filter_id;
     const parentValues = toArray(next[parentKey]);
-    if (parentValues.length === 0) continue;
+    const parentMarkerValues = new Set(
+      (filter.options || []).map((option) =>
+        String(option?.value ?? option?.label ?? ""),
+      ),
+    );
+    const existingChildren = toArray(next[childKey])
+      .filter((value) => !parentMarkerValues.has(String(value)))
+      .map((value) => String(value));
 
-    const expandedChildren = new Set(toArray(next[childKey]).map((value) => String(value)));
+    // Clean drafts restored from sessions created before nested selections
+    // stopped leaking parent IDs into the child filter.
+    if (parentValues.length === 0) {
+      if (existingChildren.length > 0) {
+        next[childKey] = [...new Set(existingChildren)];
+      } else {
+        delete next[childKey];
+      }
+      continue;
+    }
+
+    const expandedChildren = new Set(existingChildren);
     for (const parentValue of parentValues) {
       const option = findOptionByValue(filter.options || [], parentValue);
       if (!option) continue;

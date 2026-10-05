@@ -183,7 +183,29 @@ const SchemaRenderer = ({
       // shares a name — leaving orphan chips that don't clear when the
       // originating parent is removed.
       const handleChildChange = (childValues, parentValue) => {
-        onFilterChangeRef.current(nestedChildFilterId, childValues);
+        // The nested picker receives merged parent + child selections. Strip
+        // parent markers and duplicate values before writing the child key so
+        // stale/legacy picker state cannot become orphan numeric chips or an
+        // invalid child query.
+        const parentMarkerValues = new Set(
+          (filter.options || []).map((option) =>
+            String(option.value ?? option.label),
+          ),
+        );
+        const normalizedChildValues = Array.isArray(childValues)
+          ? [
+              ...new Set(
+                childValues.filter(
+                  (value) => !parentMarkerValues.has(String(value)),
+                ),
+              ),
+            ]
+          : [];
+
+        onFilterChangeRef.current(
+          nestedChildFilterId,
+          normalizedChildValues,
+        );
         if (!parentValue) return;
         const collectLeaves = (node) => {
           const kids = node.children || node.sub_options || [];
@@ -201,8 +223,10 @@ const SchemaRenderer = ({
         };
         const parentNode = findNode(filter.options || [], parentValue);
         const parentLeaves = parentNode ? collectLeaves(parentNode) : [];
-        const parentStillHasChild = parentLeaves.some((l) =>
-          childValues.includes(l),
+        const parentStillHasChild = parentLeaves.some((leaf) =>
+          normalizedChildValues.some(
+            (value) => String(value) === String(leaf),
+          ),
         );
         const cur = filterValues[nestedParentFilterId];
         const arr = Array.isArray(cur) ? cur : cur ? [cur] : [];

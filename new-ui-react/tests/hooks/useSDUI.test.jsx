@@ -171,6 +171,36 @@ describe("useSDUI > initial load", () => {
     expect(JSON.parse(sessionStorage.getItem("sdui.filterValues"))).toEqual(restoredFilters);
   });
 
+  it("cleans parent IDs leaked into persisted nested child state", async () => {
+    sessionStorage.setItem("sdui.filterValues", JSON.stringify({
+      ai_category_id: ["1001", "1002"],
+      ai_subcategory_id: ["1001", "10010001", "1002", "10020001"],
+    }));
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{
+        _id: "ai_meta",
+        filters: [{
+          _id: "ai_category_id",
+          type: "nested_multiselect",
+          parent_filter_id: "ai_category_id",
+          child_filter_id: "ai_subcategory_id",
+          options: [
+            { value: "1001", children: [{ value: "10010001" }] },
+            { value: "1002", children: [{ value: "10020001" }] },
+          ],
+        }],
+      }],
+    }));
+
+    const { result } = renderHook(() => useSDUI());
+    await waitFor(() => {
+      expect(result.current.filterValues.ai_subcategory_id).toEqual([
+        "10010001",
+        "10020001",
+      ]);
+    });
+  });
+
   it("keeps date, ad-type, and sort toolbar selections after refresh", async () => {
     const storedToolbarFilters = {
       seen_btn_sort: [1786147199, 1785542400],

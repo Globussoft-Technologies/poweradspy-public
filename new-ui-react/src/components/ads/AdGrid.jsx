@@ -350,10 +350,14 @@ const AdGrid = ({
     return `${dd}/${mm}/${yyyy}`;
   };
 
-  // Keep chip labels user-facing. We only strip the AI prefix for the range
-  // chip that represents the offer-value filter, so the backend key stays
-  // unchanged while the visible chip reads naturally.
+  // Keep chip labels user-facing. Ad-type options already carry their own
+  // display label (for example, "Video"), so do not prefix them with the
+  // SDUI category ("Ad Types") regardless of which state alias produced them.
   const normalizeChipCategoryLabel = (key, label) => {
+    const normalizedKey = String(key ?? "").trim().toLowerCase();
+    if (["ad_type", "ad_types", "ad_type_filter", "type", "adtype"].includes(normalizedKey)) {
+      return "";
+    }
     if (/offer[_ ]?value/i.test(String(key))) {
       return String(label).replace(/^ai\s+/i, "").replace(/^meta\s+/i, "");
     }

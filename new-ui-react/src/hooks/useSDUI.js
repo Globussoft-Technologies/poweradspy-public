@@ -142,6 +142,44 @@ const withoutDisabledPlatformConfig = (cfg) => {
     };
 };
 
+// Nested filters keep parent and child selections in separate state keys. Older
+// picker state could leak a parent ID into the child array, so clean that value
+// once the live SDUI schema is available before it reaches the query builder.
+const sanitizeNestedChildState = (values, cfg) => {
+    if (!values || !cfg) return values;
+    const allFilters = [
+        ...(cfg.searchbar?.flatMap(document => document.filters || []) || []),
+        ...(cfg.navbar?.flatMap(document => document.filters || []) || []),
+        ...(cfg.sidebar?.flatMap(document => document.filters || []) || []),
+    ];
+    let next = values;
+
+    for (const filter of allFilters) {
+        if (filter.type !== 'nested_select' && filter.type !== 'nested_multiselect') continue;
+        const childKey = filter.child_filter_id;
+        const current = values[childKey];
+        if (!childKey || !Array.isArray(current)) continue;
+
+        const parentValues = new Set(
+            (filter.options || []).map(option =>
+                String(option?.value ?? option?.label ?? '')
+            )
+        );
+        const cleaned = [...new Set(
+            current.filter(value => !parentValues.has(String(value)))
+        )];
+        const unchanged = cleaned.length === current.length &&
+            cleaned.every((value, index) => value === current[index]);
+        if (unchanged) continue;
+
+        if (next === values) next = { ...values };
+        if (cleaned.length > 0) next[childKey] = cleaned;
+        else delete next[childKey];
+    }
+
+    return next;
+};
+
 const loadTabState = (key, fallback) => {
     try {
         const raw = sessionStorage.getItem(key);
@@ -523,6 +561,16 @@ export function useSDUI() {
     useEffect(() => {
         try { sessionStorage.setItem(PLATFORMS_STORAGE_KEY, JSON.stringify(activePlatforms)); } catch {}
     }, [activePlatforms]);
+
+    useEffect(() => {
+        if (!config) return;
+        setFilterValues(prev => {
+            const next = sanitizeNestedChildState(prev, config);
+            if (next === prev) return prev;
+            filterValuesRef.current = next;
+            return next;
+        });
+    }, [config]);
 
     // Google Transparency controls exist whenever Google is selected.
     // Leaving Google deletes the toggle + dependent value. Turning the toggle

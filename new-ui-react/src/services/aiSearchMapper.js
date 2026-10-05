@@ -343,9 +343,13 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
 
   // ── type → ad_type ─────────────────────────────────────────────────────────
   const adTypeFilter = findFilter(config, FILTER_IDS.adType);
-  if (args.type != null && args.type !== '') {
-    if (adTypeFilter) applyResolved(adTypeFilter, asArray(args.type), filterValues, unmapped, 'type', recordUnmapped);
-    else recordUnmapped('type', args.type, 'filter is not available in live SDUI');
+  // Common Ads Search uses "NA" in full_payload when no ad-type filter was
+  // requested. It is a wire default, not a value that should be resolved
+  // against SDUI options or reported as an unsupported planner argument.
+  const adTypeValues = meaningfulValues(args.type);
+  if (adTypeValues.length) {
+    if (adTypeFilter) applyResolved(adTypeFilter, adTypeValues, filterValues, unmapped, 'type', recordUnmapped);
+    else recordUnmapped('type', adTypeValues, 'filter is not available in live SDUI');
   }
 
   // ── country → country_filter (label-keyed; falls back to the raw name since

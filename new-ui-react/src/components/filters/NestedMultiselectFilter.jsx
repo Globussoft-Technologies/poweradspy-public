@@ -65,6 +65,18 @@ const NestedMultiselectFilter = ({
     );
   }, [options]);
 
+  // `selected` is a merged parent + child array. Keep parent markers out of
+  // the child state when switching between branches of the same tree.
+  const parentMarkerValues = useMemo(
+    () =>
+      new Set(
+        sortedOptions.map((option) =>
+          String(option.value ?? option.label),
+        ),
+      ),
+    [sortedOptions],
+  );
+
   // When a parent category is already selected from another surface (for
   // example a quick filter), auto-expand that branch so the selected leaves
   // are immediately visible instead of hiding behind a collapsed parent.
@@ -169,7 +181,9 @@ const NestedMultiselectFilter = ({
 
     if (parentValue && onChildChange) {
       // This is a child item — only track child values, not parent categories
-      const currentChildren = selected.filter((s) => s !== parentValue);
+      const currentChildren = selected.filter(
+        (s) => !parentMarkerValues.has(String(s)),
+      );
       const newChildren = currentChildren.includes(optValue)
         ? currentChildren.filter((s) => s !== optValue)
         : [...currentChildren, optValue];
@@ -201,7 +215,9 @@ const NestedMultiselectFilter = ({
     // Never feed the parent marker back into the child filter when bulk
     // selecting/deselecting, or it survives as an orphan numeric filter chip.
     const otherSelected = selected.filter(
-      (v) => v !== parentValue && !leaves.includes(v),
+      (v) =>
+        !parentMarkerValues.has(String(v)) &&
+        !leaves.includes(v),
     );
     if (allSelected) {
       onChildChange(otherSelected, parentValue);

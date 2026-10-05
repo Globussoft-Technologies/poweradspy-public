@@ -5,6 +5,7 @@ import {
   getAiFilterOptionLabels,
   hasActiveAiFilters,
   mergeAiQuickFilter,
+  normalizeAiFilterValues,
   replaceAiFilters,
   resolveActiveAiQuickFilterPreset,
   resolveAiQuickFilterPresets,
@@ -216,6 +217,34 @@ describe("AI quick filter presets", () => {
         doc,
       )?.id,
     ).toBe("b2b_saas");
+  });
+
+  it("removes leaked parent markers and duplicate values from nested child state", () => {
+    const doc = makeDoc();
+
+    expect(
+      normalizeAiFilterValues(
+        {
+          ai_category_id: ["1009", "1010"],
+          ai_subcategory_id: [
+            "1009",
+            "10090001",
+            "1010",
+            "10100001",
+            "10090001",
+          ],
+        },
+        doc,
+      ),
+    ).toEqual({
+      ai_category_id: ["1009", "1010"],
+      ai_subcategory_id: [
+        "10090001",
+        "10100001",
+        "10090002",
+        "10100002",
+      ],
+    });
   });
 
   it("replaces the previous strategy instead of combining filter groups", () => {
