@@ -534,12 +534,20 @@ function resolveAdmobFilterOptions(filter, liveOptions, platforms = ['admob']) {
   // currently-selected platform (e.g. admob and/or gdn); the rest come from
   // the live DB query below, the source of truth for AdMob's own real values.
   const normalizedPlatforms = (platforms || []).map((p) => String(p).toLowerCase());
+  // Traffic Source is fully SDUI-governed: an option tagged "all" applies to
+  // AdMob too, and whatever the admin has not enabled stays hidden — live DB
+  // values never fill in for it.
+  const sduiGoverned = filterId === 'source_filter';
   const existingOptions = allOptions.filter((option) => {
     const pa = option.platform_applicability;
     if (!pa) return true;
     const list = Array.isArray(pa) ? pa : [pa];
-    return list.some((p) => normalizedPlatforms.includes(String(p).toLowerCase()));
+    return list.some((p) => {
+      const value = String(p).toLowerCase();
+      return normalizedPlatforms.includes(value) || (sduiGoverned && value === 'all');
+    });
   });
+  if (sduiGoverned) return existingOptions;
   // Manually-authored options are the primary source of truth for this
   // filter — once an admin has curated a list, live DB data must never mix
   // into or reorder it. Live data is consulted only as a fallback when no
@@ -566,7 +574,10 @@ async function prepareAdmobSidebar(config, { admobOnly = false, platforms = ['ad
       ADMOB_SIDEBAR_IDS.includes(doc._id) &&
       !(doc._id === 'source' && !admobOnly) &&
       (doc.filters || []).some((filter) => {
-        if (!ADMOB_LIVE_FILTER_IDS.has(getCanonicalAdmobFilterId(filter._id))) return false;
+        const canonicalFilterId = getCanonicalAdmobFilterId(filter._id);
+        if (!ADMOB_LIVE_FILTER_IDS.has(canonicalFilterId)) return false;
+        // Traffic Source never falls back to live data (SDUI-governed).
+        if (canonicalFilterId === 'source_filter') return false;
         const options = Array.isArray(filter.options) ? filter.options : [];
         return !options.some((option) => {
           const pa = option.platform_applicability;
