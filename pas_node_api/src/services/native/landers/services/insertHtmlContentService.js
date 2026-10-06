@@ -196,6 +196,8 @@ class InsertHtmlContentService {
     if (data.status === 2) {
       // Whitehat
       metadataUpdate.white_ad_screenshot = [data.screen_shot];
+      // Mirror onto screenshot_url (like the other networks) so ad details stop serving /processing.gif.
+      if (data.screen_shot) metadataUpdate.screenshot_url = data.screen_shot;
       // html_path optional — only store the zip path when provided.
       if (data.html_path) metadataUpdate.white_ad_lander = [data.html_path];
       metadataUpdate.white_lander_date = new Date().toISOString().split('T')[0];
@@ -203,6 +205,7 @@ class InsertHtmlContentService {
     } else if (data.status === 1) {
       // Blackhat
       metadataUpdate.png_file = [data.screen_shot];
+      if (data.screen_shot) metadataUpdate.screenshot_url = data.screen_shot;
       // html_path optional — only store the zip path when provided.
       if (data.html_path) metadataUpdate.blackhat_path = [data.html_path];
       metadataUpdate.blackhat_date = new Date().toISOString().split('T')[0];

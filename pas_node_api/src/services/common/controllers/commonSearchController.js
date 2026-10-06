@@ -318,7 +318,8 @@ async function searchAllNetworks(req, res) {
     allTasks.push(withTimeout(ttSearchAds(searchReq, ttService.db, ttService.log), ms, 'tiktok'));
   if (admobService && isAllowed('admob'))
     allTasks.push(withTimeout(admobSearchAds(searchReq, admobService.db, admobService.log), ms, 'admob'));
-  if (chatgptadsService && isAllowed('chatgptads'))
+  // CHATGPTADS_ENABLED=false also covers requests without a resolved allowedPlatforms list.
+  if (chatgptadsService && config.chatgptads?.enabled !== false && isAllowed('chatgptads'))
     allTasks.push(withTimeout(chatgptadsSearchAds(searchReq, chatgptadsService.db, chatgptadsService.log), ms, 'chatgptads'));
 
   const settled = await Promise.allSettled(allTasks);

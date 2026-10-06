@@ -50,6 +50,16 @@ export const getPermittedSavedPlatforms = (availablePlatforms = [], allowedPlatf
   return availablePlatforms.filter((value) => allowed.has(String(value).toLowerCase()));
 };
 
+// True when `a` is on the Hidden list because the same advertiser (same network +
+// post owner) as `ad` was hidden — used to clear all of an advertiser's cards at once.
+const isSameHiddenAdvertiser = (a, ad) => {
+  if (a.hideType !== 1) return false;
+  if (String(a.network || "").toLowerCase() !== String(ad.network || "").toLowerCase()) return false;
+  const owner = ad.hiddenPostOwnerId ?? ad.postOwnerId;
+  const other = a.hiddenPostOwnerId ?? a.postOwnerId;
+  return owner != null && other != null && String(owner) === String(other);
+};
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 const SavedAdsPage = ({
   sdui,
@@ -88,6 +98,11 @@ const SavedAdsPage = ({
   const [removingIds, setRemovingIds] = useState(new Set());
   const scrollRef = useRef(null);
   const isFetchingRef = useRef(false);
+  // Latest fresh-load wins: a tab/platform switch while a request is in flight
+  // aborts it and bumps the sequence, so a slower older response (e.g. the
+  // multi-network "All" list) can't overwrite the newly selected platform's ads.
+  const loadSeqRef = useRef(0);
+  const loadAbortRef = useRef(null);
 
   // Auto-height masonry — same pattern as AdGrid
   // Refs for scroll handler — avoids stale closure issues (same pattern as AdGrid)
@@ -200,8 +215,12 @@ const SavedAdsPage = ({
 
   // Fresh load — resets ads list. Uses refs to avoid stale closure issues.
   const loadFresh = useCallback(async (tab, platforms) => {
-    if (isFetchingRef.current) return;
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
+    const seq = ++loadSeqRef.current;
     isFetchingRef.current = true;
+    setLoadingMore(false);
     setLoading(true);
     setError(null);
     setAds([]);
@@ -233,7 +252,8 @@ const SavedAdsPage = ({
         hidden: tab === "hidden",
         skip: 0,
       };
-      const result = await fetchAds(payload);
+      const result = await fetchAds(payload, { signal: controller.signal });
+      if (seq !== loadSeqRef.current) return; // superseded by a newer selection
       const fetched = (result.ads || []).map(resolveSavedHiddenAd);
       // Deduplicate by adId — API can return duplicates when pagination boundaries shift
       const seen = new Set();
@@ -247,14 +267,17 @@ const SavedAdsPage = ({
       setPage(1);
       setHasMore(fetched.length >= PAGE_SIZE);
     } catch (err) {
+      if (seq !== loadSeqRef.current || err?.name === "AbortError") return;
       if (err?.showSubscriptionModal === true) {
         onPlatformRestrictedRef.current?.();
       } else {
         setError(err?.message || "Failed to load ads. Please try again.");
       }
     } finally {
-      setLoading(false);
-      isFetchingRef.current = false;
+      if (seq === loadSeqRef.current) {
+        setLoading(false);
+        isFetchingRef.current = false;
+      }
     }
   }, [resolveSavedHiddenAd]);
 
@@ -263,6 +286,7 @@ const SavedAdsPage = ({
     if (isFetchingRef.current || !hasMoreRef.current || loadingMoreRef.current) return;
     isFetchingRef.current = true;
     setLoadingMore(true);
+    const seq = loadSeqRef.current;
     try {
       const platforms = specificPlatformsRef.current;
       const permittedPlatforms = permittedPlatformValuesRef.current;
@@ -285,6 +309,7 @@ const SavedAdsPage = ({
         skip: pageRef.current,
       };
       const result = await fetchAds(payload);
+      if (seq !== loadSeqRef.current) return; // a fresh load replaced this list
       const fetched = (result.ads || []).map(resolveSavedHiddenAd);
       setAds((prev) => {
         const existingIds = new Set(prev.map((a) => String(a.adId || a.id || "")));
@@ -299,8 +324,10 @@ const SavedAdsPage = ({
     } catch {
       // silently fail on load more
     } finally {
-      setLoadingMore(false);
-      isFetchingRef.current = false;
+      if (seq === loadSeqRef.current) {
+        setLoadingMore(false);
+        isFetchingRef.current = false;
+      }
     }
   }, [resolveSavedHiddenAd]);
 
@@ -534,7 +561,11 @@ const SavedAdsPage = ({
                       setRemovingIds((prev) => new Set([...prev, key]));
                       try {
                         await onUnHideAd({ ...ad, hideType: isAdvHidden ? 1 : 2 });
-                        setAds((prev) => prev.filter((a) => String(a.adId || a.id) !== key));
+                        // Unhiding an advertiser unhides all of its ads — drop every
+                        // card of that advertiser, not just the one clicked.
+                        setAds((prev) => prev.filter((a) =>
+                          String(a.adId || a.id) !== key &&
+                          !(isAdvHidden && isSameHiddenAdvertiser(a, ad))));
                       } catch {
                         setRemovingIds((prev) => { const n = new Set(prev); n.delete(key); return n; });
                       }
@@ -559,7 +590,10 @@ const SavedAdsPage = ({
         isAdvertiserHidden={selectedAd ? selectedAd.hideType === 1 : false}
         onUnHideAd={async (ad) => {
           await onUnHideAd?.(ad);
-          setAds((prev) => prev.filter((a) => String(a.adId || a.id) !== String(ad.adId || ad.id)));
+          const advHidden = ad.hideType === 1;
+          setAds((prev) => prev.filter((a) =>
+            String(a.adId || a.id) !== String(ad.adId || ad.id) &&
+            !(advHidden && isSameHiddenAdvertiser(a, ad))));
           setSelectedAd(null);
         }}
         onHideAdvertiser={onHideAdvertiser}

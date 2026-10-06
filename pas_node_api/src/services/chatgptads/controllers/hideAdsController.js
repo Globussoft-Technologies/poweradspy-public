@@ -135,9 +135,10 @@ async function unHide(req, db, logger) {
     );
     const affected = result?.affectedRows ?? 0;
     if (affected > 0) return { code: 200, message: 'data deleted successfully', data: affected };
-    // Un-saving is idempotent: the row may already be gone because hiding auto-unsaved it.
-    if (p.type === 3) return { code: 200, message: 'already not favourited', data: 0 };
-    return { code: 400, message: 'data not deleted', data: null };
+    // Idempotent: the row can already be gone — hiding auto-unsaves (type 3), and unhiding an
+    // advertiser from one card leaves that advertiser's other cards on a stale Hidden list
+    // (type 1). The end state the user asked for is reached either way.
+    return { code: 200, message: p.type === 3 ? 'already not favourited' : 'already not hidden', data: 0 };
   } catch (err) {
     logger.error('Error in ChatGPT Ads unHide', { error: err.message });
     return { code: 500, message: 'Error in unHide', error: err.message };

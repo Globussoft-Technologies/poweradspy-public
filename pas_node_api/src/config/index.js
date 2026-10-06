@@ -570,7 +570,15 @@ const config = {
   // = ONLY these user IDs see ChatGPT Ads; it is removed from every other user's
   // allowedPlatforms, so the tab disappears and its search is refused. Applied in
   // planAccessMiddleware and GET /auth/plan-access.
+  //   enabled: master switch (CHATGPTADS_ENABLED). Default true; false/0 = ChatGPT Ads is
+  //   removed from every user's allowedPlatforms (allow-listed users included), so the tab,
+  //   its ads in "All" and its search API disappear without a frontend change.
   chatgptads: {
+    enabled: (() => {
+      const raw = getVal(fileConfig.chatgptads?.enabled, 'CHATGPTADS_ENABLED');
+      if (raw === undefined || raw === null || raw === '') return true;
+      return !(raw === false || raw === 0 || ['false', '0', 'no', 'off'].includes(String(raw).trim().toLowerCase()));
+    })(),
     allowedUserIds: (() => {
       const raw = getVal(fileConfig.chatgptads?.allowedUserIds, 'CHATGPTADS_ALLOWED_USER_IDS');
       if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);

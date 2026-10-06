@@ -223,4 +223,30 @@ async function searchAds(req, db, logger) {
   }
 }
 
-module.exports = { searchAds, toCardRow, AD_DETAIL_SELECT, AD_DETAIL_JOINS };
+/**
+ * One ad by its external ad_id — used by the shared-link endpoint
+ * (common/shareAdController: copy-link button + public /share/:token page).
+ * Same contract as other networks' share handlers: req.body.ad_id → {code, data:[ad]}.
+ */
+async function getAdByAdId(req, db, logger) {
+  const adId = String(req?.body?.ad_id ?? '').trim();
+  if (!adId) return { code: 400, message: 'Missing param: ad_id', data: [] };
+  if (!db?.elastic) return { code: 503, message: 'ChatGPT Ads Elasticsearch connection is unavailable.', data: [] };
+
+  try {
+    const esParams = new ChatgptSearchQueryBuilder(db.elastic.indexName).setSize(1).setAdIds([adId]).build();
+    const result = await db.elastic.search(esParams);
+    const hit = ((result.body || result).hits?.hits || [])[0];
+    if (!hit) return { code: 404, message: 'Ad not found', data: [] };
+
+    const src = hit._source || {};
+    const id = Number(src.id ?? hit._id);
+    const sqlRows = await hydrateFromSql(db.sql, Number.isFinite(id) ? [id] : [], logger);
+    return { code: 200, data: [toCardRow(src, sqlRows.get(String(src.id ?? hit._id)))], message: 'Ad fetched successfully' };
+  } catch (err) {
+    logger.error('ChatGPT Ads fetch by ad_id failed', { error: err.message, adId });
+    return { code: 500, message: 'ChatGPT ad could not be fetched.', data: [] };
+  }
+}
+
+module.exports = { searchAds, getAdByAdId, toCardRow, AD_DETAIL_SELECT, AD_DETAIL_JOINS };

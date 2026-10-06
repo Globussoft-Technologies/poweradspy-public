@@ -42,8 +42,10 @@ function applyAdmobUserGate(allowedPlatforms, userId) {
  * Empty list = no-op, ChatGPT Ads follows normal plan entitlement. Non-empty = only those
  * user IDs keep 'chatgptads' in allowedPlatforms (testing/development rollout); everyone
  * else has it stripped, so the tab is hidden and requirePlatform('chatgptads') refuses it.
+ * config.chatgptads.enabled === false (CHATGPTADS_ENABLED=false) strips it for everyone.
  */
 function applyChatgptadsUserGate(allowedPlatforms, userId) {
+  if (config.chatgptads?.enabled === false) return allowedPlatforms.filter((p) => p !== 'chatgptads');
   const allow = config.chatgptads?.allowedUserIds || [];
   if (!allow.length) return allowedPlatforms;
   if (userId !== undefined && userId !== null && allow.includes(String(userId))) return allowedPlatforms;

@@ -269,6 +269,24 @@ function bootstrapAuth() {
   const params = new URLSearchParams(window.location.search);
   const urlToken = params.get('token');
   const isFreshLogin = !!urlToken;
+  // A ?token= arrival is a NEW session only when this browser wasn't already signed in
+  // as the same user. The aMember dashboard's "access your dashboard" link re-sends a
+  // token on every click without the user ever logging out — that re-entry must not
+  // count as a login, or it clears a skipped onboarding popup and shows it again.
+  // Logout clears authToken/authUser, so a real logout → login still counts as fresh.
+  const isSameUserReentry = (() => {
+    if (!urlToken) return false;
+    try {
+      const prevToken = localStorage.getItem('authToken');
+      if (!prevToken) return false;
+      const prev = JSON.parse(atob(prevToken.split('.')[1]));
+      const next = JSON.parse(atob(urlToken.split('.')[1]));
+      const prevId = prev?.user_id ?? prev?.id;
+      const nextId = next?.user_id ?? next?.id;
+      const prevActive = !prev?.exp || prev.exp * 1000 > Date.now();
+      return prevActive && prevId != null && String(prevId) === String(nextId);
+    } catch { return false; }
+  })();
   if (urlToken) {
     localStorage.setItem('authToken', urlToken);
     enableEnvAuthFallback();
@@ -300,7 +318,7 @@ function bootstrapAuth() {
     // bootstrap starts from a consistent state.
     expireStaleFilters();
     enableEnvAuthFallback();
-    if (isFreshLogin && shouldResetOnboardingDismiss(payload)) {
+    if (isFreshLogin && !isSameUserReentry && shouldResetOnboardingDismiss(payload)) {
       clearOnboardingDismissForUserId(payload.user_id || payload.id);
     }
     localStorage.setItem('authUser', JSON.stringify(payload));

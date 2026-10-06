@@ -122,6 +122,10 @@ class NativeAdMetaData {
       fields.push('white_ad_screenshot = ?');
       values.push(JSON.stringify(data.white_ad_screenshot));
     }
+    if (data.screenshot_url !== undefined) {
+      fields.push('screenshot_url = ?');
+      values.push(data.screenshot_url);
+    }
     if (data.white_ad_lander !== undefined) {
       fields.push('white_ad_lander = ?');
       values.push(JSON.stringify(data.white_ad_lander));

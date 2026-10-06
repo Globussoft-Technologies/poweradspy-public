@@ -1897,7 +1897,18 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
     values.find((value) => value != null && value !== "");
   // AdMob lander data is indexed under dedicated fields instead of the
   // legacy screenshot keys used by Facebook-family payloads.
-  const landerScreenshotUrl = firstAvailable(
+  // Skip placeholder screenshots (processing.gif / "[null]" / empty arrays) so a
+  // real white_ad_screenshot is used when screenshot_url was never updated
+  // (e.g. older Native lander inserts left screenshot_url at /processing.gif).
+  const isUsableScreenshot = (value) => {
+    if (value == null || value === "") return false;
+    if (Array.isArray(value)) return value.some(isUsableScreenshot);
+    if (typeof value !== "string") return true;
+    return !value.includes("processing.gif") && !value.includes("[null]") && value.trim() !== "[]";
+  };
+  const firstUsableScreenshot = (...values) =>
+    values.find(isUsableScreenshot) ?? firstAvailable(...values);
+  const landerScreenshotUrl = firstUsableScreenshot(
     adDetailsData?.lander_screen_shot,
     processedAd?.lander_screen_shot,
     ad?.lander_screen_shot,

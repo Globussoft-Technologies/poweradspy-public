@@ -16,6 +16,8 @@ const { getAdsByAdvertiser: natAdsByAdvertiser }  = require('../../native/contro
 const { getAdsByAdvertiser: gdnAdsByAdvertiser }  = require('../../gdn/controllers/getAdsByAdvertiserController');
 const { getAdsByAdvertiser: ttAdsByAdvertiser }   = require('../../tiktok/controllers/getAdsByAdvertiserController');
 const { getAdsByAdvertiser: admobAdsByAdvertiser } = require('../../admob/controllers/getAdsByAdvertiserController');
+// ChatGPT Ads: fetch-one-ad-by-ad_id handler with the same {code, data:[ad]} contract.
+const { getAdByAdId: chatgptAdByAdId } = require('../../chatgptads/controllers/adSearchController');
 
 const adHandlers = {
   facebook:  fbAdsByAdvertiser,
@@ -30,6 +32,7 @@ const adHandlers = {
   gdn:       gdnAdsByAdvertiser,
   tiktok:    ttAdsByAdvertiser,
   admob:     admobAdsByAdvertiser,
+  chatgptads: chatgptAdByAdId,
 };
 
 const COLLECTION_NAME = 'shared_ad_links';
