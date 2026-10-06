@@ -76,7 +76,13 @@ function firstHitId(esResponse) {
 // translation cron for this network) — kept as an explicit empty list + function (not
 // omitted) so a future addition has an obvious place to go, matching facebook's
 // CARRY_OVER_KEYS/extractCarryOver shape.
-const CARRY_OVER_KEYS = ['nas_video_url'];
+// ecommerce_platform / funnel / affiliate_data are written by the built-with worker
+// (controllers/built-withController.js), not by insertion — carried so a re-index keeps them.
+// The lander keys below are written by landers/insertHtmlService.js — same reason.
+const CARRY_OVER_KEYS = [
+  'nas_video_url', 'ecommerce_platform', 'funnel', 'affiliate_data',
+  'domain_registered_date', 'outgoing_source_url', 'outgoing_redirect_url', 'outgoing_final_url', 'redirect_url',
+];
 function extractCarryOver(esResponse) {
   const hits = esResponse?.hits?.hits || esResponse?.body?.hits?.hits;
   const src = hits && hits[0] ? hits[0]._source : null;

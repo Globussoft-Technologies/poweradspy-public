@@ -68,7 +68,19 @@
         "nas_video_url": { "type": "keyword", "index": false, "doc_values": false },
         "othermedia": { "type": "keyword", "index": false, "doc_values": false },
         "image_url_original": { "type": "keyword", "index": false, "doc_values": false },
-        "post_owner_image": { "type": "keyword", "index": false, "doc_values": false }
+        "post_owner_image": { "type": "keyword", "index": false, "doc_values": false },
+
+        "_comment_built_with": "Written by the built-with worker (controllers/built-withController.js), not by insertion — the '|'-separated SQL values are split into keyword ARRAYS so one technology is a cheap term filter. ES names: ecommerce_platform = SQL built_with, funnel = SQL built_with_analytics_tracking (same names youtube/linkedin use). Added 2026-10-05; on an existing index apply with scripts/chatgptads/apply-chatgpt-built-with-es-mapping.js.",
+        "ecommerce_platform": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "funnel": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "affiliate_data": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+
+        "_comment_landers": "Written by the lander worker (landers/insertHtmlService.js), not by insertion. URL lists are ARRAYS mapped as text (word search inside URLs) + .keyword sub-field (exact match / aggregations), no ignore_above. domain_registered_date is a plain date. Added 2026-10-06; on an existing index apply with PUT <index>/_mapping (adds fields only, no reindex).",
+        "domain_registered_date": { "type": "date", "format": "yyyy-MM-dd" },
+        "outgoing_source_url": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+        "outgoing_redirect_url": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+        "outgoing_final_url": { "type": "text", "fields": { "keyword": { "type": "keyword" } } },
+        "redirect_url": { "type": "text", "fields": { "keyword": { "type": "keyword" } } }
       }
     }
   }

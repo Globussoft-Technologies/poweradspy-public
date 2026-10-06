@@ -57,9 +57,12 @@ CREATE TABLE IF NOT EXISTS chatgptads_ad_post_owners (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS chatgptads_ad_domains (
-  id         INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  domain     VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  id                     INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  domain                 VARCHAR(255) NOT NULL,
+  -- Filled by the lander worker (insertHtmlRedirectCountry payload domain_registered_date).
+  -- NULL until a crawl resolves it; a blank value never overwrites a known date.
+  domain_registered_date DATE NULL DEFAULT NULL COMMENT 'domain registration date, from the lander scraper',
+  created_at             TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uq_domain (domain)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -108,7 +111,10 @@ CREATE TABLE IF NOT EXISTS chatgptads_ad (
   days_running         SMALLINT UNSIGNED NOT NULL DEFAULT 1,
   hits                 INT UNSIGNED NOT NULL DEFAULT 1,
   status               TINYINT UNSIGNED NOT NULL DEFAULT 1,
+  built_with_status    TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'built-with scrape status: 0 = pending, 1 = done, 2 = processing, 3 = failed or no data found',
+  lander_status        TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'lander scrape status: 0 = pending, 2 = processing, 4 = success, 5 = failed or no data found',
   created_at           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uq_ad_id (ad_id),
   KEY idx_post_owner (post_owner_id),
@@ -134,6 +140,8 @@ CREATE TABLE IF NOT EXISTS chatgptads_ad_variants (
   newsfeed_description TEXT NULL COMMENT 'canonical value — normalize.js collapses the payload''s news_feed_description/newsfeed_description alias pair into this one column',
   image_url            VARCHAR(512) NULL COMMENT 'NAS path (image, or video thumbnail) — same dual use as facebook_ad_variants.image_url',
   image_url_original   TEXT NULL COMMENT 'original source URL from the payload (image_url_original / image_video_url, whichever was present)',
+  created_at           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uq_chatgptads_ad (chatgptads_ad_id),
   CONSTRAINT fk_chatgptads_variants_ad FOREIGN KEY (chatgptads_ad_id)
@@ -228,6 +236,68 @@ CREATE TABLE IF NOT EXISTS chatgptads_hidden_ads (
     REFERENCES chatgptads_ad(ad_id) ON DELETE CASCADE,
   CONSTRAINT fk_chatgptads_hidden_post_owner FOREIGN KEY (post_owner_id)
     REFERENCES chatgptads_ad_post_owners(id) ON DELETE CASCADE
+-- ── Lander + built-with enrichment (added 2026-10-05) ──
+-- Filled by the lander / built-with workers, not by the insertion pipeline. Progress for each
+-- ad is tracked on chatgptads_ad.lander_status / chatgptads_ad.built_with_status. Both tables
+-- hold ONE row per ad (UNIQUE chatgptads_ad_id) — a re-crawl upserts the row, so storage does
+-- not grow with every crawl. `chatgptads_ad_id` is the INTERNAL chatgptads_ad.id — the `ad_id`
+-- / `id` the workers receive in their payloads — not the extension's 12-digit ad_id string.
+
+-- Lander page captured from the ad's destination_url. Payload keys → columns:
+--   html_path → html_path, html_content → html_content, screen_shot → screenshot_url,
+--   outgoing_url → out_going_url, redirects → redirect_url, crawled_by → scrapper_name.
+CREATE TABLE IF NOT EXISTS chatgptads_ad_landers (
+  id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  chatgptads_ad_id BIGINT UNSIGNED NOT NULL,
+  html_path        VARCHAR(512) NULL COMMENT 'NAS path of the zipped lander HTML, e.g. /pas-dev/stream/gpt/whiteHatAd/202610/63_in_2_1791193138_zip.zip',
+  -- html_content (the page text) lives in chatgptads_ad_html_lander_content, not here.
+  screenshot_url   VARCHAR(512) NULL COMMENT 'NAS path of the lander screenshot',
+  out_going_url    JSON NULL COMMENT 'outgoing links on the lander: [{start_url, destination_url, redirect_urls[]}]',
+  redirect_url     JSON NULL COMMENT 'redirect hops from the ad click to the lander: [url, ...]',
+  scrapper_name    VARCHAR(64) NULL COMMENT 'crawler that captured the lander (payload crawled_by), e.g. python, .net',
+  created_at       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_chatgptads_ad (chatgptads_ad_id),
+  CONSTRAINT fk_chatgptads_landers_ad FOREIGN KEY (chatgptads_ad_id)
+    REFERENCES chatgptads_ad(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Visible text of the lander page — kept in its own table (like facebook_ad_html_lander_content)
+-- so the large text stays out of chatgptads_ad_landers. ONE row per ad, upserted on re-crawl.
+-- Payload key: html_content.
+CREATE TABLE IF NOT EXISTS chatgptads_ad_html_lander_content (
+  id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  chatgptads_ad_id BIGINT UNSIGNED NOT NULL,
+  -- MEDIUMTEXT (up to 16 MB), not TEXT: TEXT caps at 64 KB and full lander page text can exceed it.
+  html_content     MEDIUMTEXT NULL COMMENT 'visible text of the lander page',
+  created_at       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_chatgptads_ad (chatgptads_ad_id),
+  CONSTRAINT fk_chatgptads_html_lander_content_ad FOREIGN KEY (chatgptads_ad_id)
+    REFERENCES chatgptads_ad(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Technologies detected on the lander. Same columns and status codes as the other networks'
+-- built-with data (e.g. reddit_ad_meta_data, see reddit/controllers/built-withController.js),
+-- in its own table here because this network has no _meta_data table.
+-- Example payload: {"id":"43434","built_with":"","built_with_cms":"",
+--                   "built_with_analytics_tracking":"Webflow","affiliate_data":"","status":"1"}
+CREATE TABLE IF NOT EXISTS chatgptads_ad_built_with (
+  id                            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  chatgptads_ad_id              BIGINT UNSIGNED NOT NULL,
+  built_with                    TEXT NULL COMMENT 'detected technologies, "|"-separated',
+  built_with_analytics_tracking TEXT NULL COMMENT 'detected analytics / tracking tools, "|"-separated, e.g. Webflow',
+  built_with_cms                TEXT NULL COMMENT 'detected CMS, "|"-separated',
+  affiliate_data                TEXT NULL COMMENT 'detected affiliate network(s); NULL when none',
+  affiliate_status              TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'affiliate detection status: 0 = pending, 1 = found, 2 = processing, 3 = none found',
+  created_at                    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at                    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_chatgptads_ad (chatgptads_ad_id),
+  CONSTRAINT fk_chatgptads_built_with_ad FOREIGN KEY (chatgptads_ad_id)
+    REFERENCES chatgptads_ad(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- ── chatgptads_es_outbox (ES-write durability — added 2026-10-01 after live testing) ──
@@ -254,3 +324,29 @@ CREATE TABLE IF NOT EXISTS chatgptads_es_outbox (
   UNIQUE KEY uq_chatgptads_es_outbox_ad_action (chatgptads_ad_id, action),
   KEY idx_chatgptads_es_outbox_retry (next_retry_at, attempts)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ── updated_at on every table, created_at on chatgptads_ad_variants, built_with_status +
+--    lander_status on chatgptads_ad (added 2026-10-05) ──
+-- built_with_status / lander_status default to 0 (pending), so every existing and new ad
+-- starts as pending with no application-code change.
+-- updated_at is set by MySQL itself (DEFAULT + ON UPDATE CURRENT_TIMESTAMP) — no application
+-- code writes it, same as every other network's tables. It is in the CREATE TABLE statements
+-- above for new databases. Tables created before 2026-10-05 only had it on
+-- chatgptads_ad_post_owners, chatgptads_translation and chatgptads_es_outbox; because
+-- CREATE TABLE IF NOT EXISTS does not alter an existing table, run the statements below ONCE
+-- on such a database (they are commented out so this file stays safe to re-run — a second
+-- ADD COLUMN would fail with "Duplicate column name"). Existing rows get the time the ALTER
+-- runs, not their real last-update time.
+--
+-- ALTER TABLE chatgptads_ad             ADD COLUMN built_with_status TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'built-with scrape status: 0 = pending, 1 = done, 2 = processing, 3 = failed or no data found' AFTER status,
+--                                       ADD COLUMN lander_status TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'lander scrape status: 0 = pending, 2 = processing, 4 = success, 5 = failed or no data found' AFTER built_with_status,
+--                                       ADD COLUMN updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) AFTER created_at;
+-- ALTER TABLE chatgptads_ad_variants    ADD COLUMN created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) AFTER image_url_original,
+--                                       ADD COLUMN updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) AFTER created_at;
+
+-- ── domain_registered_date on chatgptads_ad_domains (added 2026-10-05) ──
+-- Same as above: the CREATE TABLE already has it for new databases; on a database where
+-- chatgptads_ad_domains already exists, run this ONCE (commented out so the file stays re-runnable).
+-- Existing rows get NULL until the lander worker resolves their date.
+--
+-- ALTER TABLE chatgptads_ad_domains     ADD COLUMN domain_registered_date DATE NULL DEFAULT NULL COMMENT 'domain registration date, from the lander scraper' AFTER domain;

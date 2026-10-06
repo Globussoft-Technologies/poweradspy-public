@@ -1212,6 +1212,8 @@ tags:
     description: YouTube destination-lander scraping pipeline (get_youtubeid_for_lander, upload_blackhat_image_zip, insert_html_content_lander). Scraper-facing; unauthenticated. Patches youtube_ads_data ES.
   - name: Facebook Landers
     description: Facebook destination-lander scraping pipeline (getAdwithCountryCode, uploadFileToServer, insertHtmlRedirectCountry). Scraper-facing; unauthenticated. Patches search_mix ES.
+  - name: ChatGPT Landers
+    description: ChatGPT Ads destination-lander scraping pipeline (getAdwithCountryCode, uploadFileToServer, insertHtmlRedirectCountry) — same contract as Facebook Landers. Scraper-facing; unauthenticated. Lease drives off chatgptads_ad.lander_status (0 pending, 2 processing, 4 success, 5 not found / no lander); lander stored in chatgptads_ad_landers, page text in chatgptads_ad_html_lander_content. ES (chatgpt_search_mix) doc updated by _id with domain_registered_date + outgoing/redirect URLs.
   - name: Facebook OCR
     description: Facebook image OCB (object/celebrity/brand) and OCR (text) pipeline (getFBImageUrl, update-image-info). Scraper-facing; unauthenticated. Lease drives off image_url_status (0=OCB, 4=OCR); report writes facebook_ad_variants + patches search_mix ES. Every response is HTTP 200 — outcome is in the body code.
   - name: GDN OCR
@@ -1291,6 +1293,8 @@ tags:
     description: Pinterest built-with scrape queue (pinterest_ad_meta_data). Filter also requires destination_url IS NOT NULL.
   - name: Native Built-With
     description: Native built-with scrape queue (native_ad_meta_data). GET intentionally does NOT flip affiliate_status — matches PHP behaviour.
+  - name: ChatGPT Built-With
+    description: ChatGPT Ads built-with scrape queue — same contract as Facebook Built-With. Split-table layout — queue status on chatgptads_ad.built_with_status, data + affiliate_status on chatgptads_ad_built_with (upserted). ES = chatgpt_search_mix, updated by _id (ecommerce_platform = built_with, funnel = built_with_analytics_tracking, affiliate_data — keyword arrays).
 
 # ─── Paths ──────────────────────────────────────────────────
 paths:
@@ -2827,6 +2831,121 @@ paths:
               properties:
                 ad_id: { type: string }
                 insertData: { type: object }
+      responses:
+        '200': { description: Lander stored }
+        '400': { description: Ad not found / validation failed }
+
+  # ═══════════════════════════════════════════
+  # CHATGPT LANDERS
+  # ═══════════════════════════════════════════
+
+  /api/v1/chatgptads/landers/getAdwithCountryCode:
+    get:
+      tags: [ChatGPT Landers]
+      summary: Fetch ChatGPT ads queued for lander scraping
+      description: >-
+        Up to 50 ads at lander_status=0 (falls back to lander_status=2 not served today once the
+        pending queue is empty) with a usable destination_url. Each ad is checked in chatgpt_search_mix:
+        present → lander_status=2, absent → 5. `id` is the internal chatgptads_ad.id (send it back as
+        ad_id); `ad_url` is the ad's external ad_id string; `iso` is resolved from the ad's tracked
+        country names via the static name → ISO map (tiktok/helpers/countries.js). No auth.
+      responses:
+        '200':
+          description: Ads fetched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer, example: 63 }
+                        ad_url: { type: string, example: '123456789012' }
+                        iso: { type: array, items: { type: string }, example: ['IN'] }
+                        destination_url: { type: string }
+                  exe_time: { type: number }
+        '400': { description: No ads queued }
+
+  /api/v1/chatgptads/landers/uploadFileToServer:
+    post:
+      tags: [ChatGPT Landers]
+      summary: Upload a lander screenshot and/or HTML zip to NAS
+      description: status 1 → BLACKHAT, 2 → WHITEHAT. Returns the screenshot path as image_path and the zip path as html_path (e.g. /pas-dev/stream/gpt/whiteHatAd/202610/63_in_2_1791193138_zip.zip).
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                ad_id: { type: string, description: Internal chatgptads_ad.id }
+                country: { type: string }
+                status: { type: string, enum: ['1', '2'] }
+                media: { type: string, format: binary }
+                zip: { type: string, format: binary }
+      responses:
+        '200':
+          description: Files stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string }
+                  image_path: { type: string }
+                  html_path: { type: string }
+        '404': { description: No file found }
+
+  /api/v1/chatgptads/landers/insertHtmlRedirectCountry:
+    post:
+      tags: [ChatGPT Landers]
+      summary: Persist scraped lander data
+      description: >-
+        Body: { ad_id, insertData } (flat body also accepted). ad_id is the internal chatgptads_ad.id and
+        the ad must exist in chatgpt_search_mix. status=3 → lander_status=5 only. Otherwise stores
+        domain_registered_date on chatgptads_ad_domains (domain of destinations; blank never overwrites),
+        upserts chatgptads_ad_landers (html_path, screen_shot → screenshot_url,
+        outgoing_url → out_going_url, redirects → redirect_url, crawled_by → scrapper_name) and
+        chatgptads_ad_html_lander_content (html_content), sets lander_status=4, then updates the
+        chatgpt_search_mix doc by _id (domain_registered_date, outgoing_source_url /
+        outgoing_redirect_url / outgoing_final_url, redirect_url).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ad_id, insertData]
+              properties:
+                ad_id: { type: string }
+                insertData:
+                  type: object
+                  required: [ad_id, status, crawled_by, country_iso, destinations, html_path, screen_shot, html_content, domain_registered_date]
+                  properties:
+                    ad_id: { type: string }
+                    status: { type: string, enum: ['1', '2', '3'] }
+                    crawled_by: { type: string, enum: ['.net', 'python'] }
+                    country_iso: { type: string, nullable: true }
+                    destinations: { type: string, nullable: true }
+                    html_path: { type: string, nullable: true }
+                    screen_shot: { type: string, nullable: true }
+                    html_content: { type: string, nullable: true }
+                    domain_registered_date: { type: string, nullable: true }
+                    outgoing_url:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          start_url: { type: string }
+                          destination_url: { type: string }
+                          redirect_urls: { type: array, items: { type: string } }
+                    redirects: { type: array, items: { type: string } }
       responses:
         '200': { description: Lander stored }
         '400': { description: Ad not found / validation failed }
@@ -4863,6 +4982,71 @@ paths:
                   message: { type: string, example: facebook ad id and status must be present }
         '503':
           description: SQL connection not available.
+
+  /api/v1/chatgptads/built-with/getUrlsForOutgoingBuiltWith:
+    get:
+      tags: [ChatGPT Built-With]
+      summary: Fetch pending URLs for outgoing / built-with scraping (ChatGPT Ads)
+      description: |
+        Worker endpoint. Pulls up to **100** ads from `chatgptads_ad` whose
+        `built_with_status = 0` (pending) and that have a usable `destination_url`,
+        then flips them to `2` (processing). `chatgptads_ad_built_with` is not touched — its row is
+        created by updateOutgoingBuiltWithStatus. Same status values as Facebook Built-With. No auth.
+      responses:
+        '200':
+          description: Batch of pending URLs; rows are now marked processing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: integer, description: internal chatgptads_ad.id, example: 63 }
+                        destination_url: { type: string, example: https://example.com/landing }
+        '400': { description: Queue empty — no pending rows. }
+        '402': { description: Internal error while querying / updating. }
+        '503': { description: SQL connection not available. }
+
+  /api/v1/chatgptads/built-with/updateOutgoingBuiltWithStatus:
+    post:
+      tags: [ChatGPT Built-With]
+      summary: Worker reports outgoing / built-with scrape result (ChatGPT Ads)
+      description: |
+        `id` = internal chatgptads_ad.id.
+        - `status = 1` → upserts `built_with`, `built_with_analytics_tracking`, `built_with_cms`,
+          `affiliate_data`, `affiliate_status` on `chatgptads_ad_built_with` and sets
+          `chatgptads_ad.built_with_status` (1 if any built_with field has a value, else 3;
+          affiliate_status 1 if affiliate_data present, else 3). Then patches the chatgpt_search_mix
+          doc (by _id) with `ecommerce_platform` (= built_with), `funnel` (= built_with_analytics_tracking), `affiliate_data` as keyword
+          arrays (`|`-separated values split). ES failure is logged — SQL still succeeds.
+        - anything else → `built_with_status = 3`, `affiliate_status = 3`.
+
+        `||` collapses to `|`; empty strings become NULL. No auth.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuiltWithUpdatePayload'
+      responses:
+        '200':
+          description: Row processed. "built with updated" signals whether MySQL changed a row.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code: { type: integer, example: 200 }
+                  message: { type: string, example: 'BuiltWith Service status Updated ' }
+                  'built with updated': { type: boolean, example: true }
+        '400': { description: Missing id or status / update failed. }
+        '503': { description: SQL connection not available. }
 
   # ─── Built-with scrape queue (per-network worker endpoints) ────────────────
   # GET  /getUrlForBuiltWith  → pull up to 100 pending ads and mark them processing
