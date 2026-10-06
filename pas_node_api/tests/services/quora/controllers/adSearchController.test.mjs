@@ -12,7 +12,8 @@ function FakeBuilder(indexName) {
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
     "setFrom","setSize","setSortField","setSortMethod","setIpBasedCountry","setStatus",
-    "setKeyword","setExactSearch","setPostOwnerName","setUrl","setAdCategory","setSubCategory","setCountry",
+    "setKeyword","setExactSearch","setPostOwnerName","setAdCategory","setSubCategory","setCountry",
+    "setDomainAdIds",
     "setState","setCity","setAdType","setCallToAction","setTags","setLangDetect","setAdPosition",
     "setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
     "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
@@ -430,13 +431,34 @@ describe("services/quora/controllers/adSearchController > regular searchAds", ()
     }, db, fakeLogger);
     const setterCalls = builderCalls[0].calls.map(c => c[0]);
     expect(setterCalls).toEqual(expect.arrayContaining([
-      "setKeyword","setPostOwnerName","setUrl","setAdCategory","setSubCategory","setCountry",
+      "setKeyword","setPostOwnerName","setAdCategory","setSubCategory","setCountry",
       "setState","setCity","setAdType","setCallToAction","setTags","setLangDetect","setAdPosition",
       "setGender","setLowerAgeSeen","setLastSeen","setPostDate","setDomainDate",
       "setBuiltWith","setTrack","setSource","setFunnel","setAffiliate","setMarketPlatform",
       "setOcr","setCelebrity","setImageObject","setLogo","setHtmlContent","setNeedle",
       "setAdDetailId","setNotCountry","setIpBasedCountry",
     ]));
+  });
+
+  it("resolves domain search through the SQL domain relation before querying ES", async () => {
+    let sqlCall = 0;
+    const sql = { query: vi.fn(async () => {
+      sqlCall++;
+      return sqlCall === 1
+        ? [{ ad_id: 77 }]
+        : [
+          { ad_id: 88, destination_url: "https://www.mutualofomaha.com/medicare/water" },
+          { ad_id: 99, destination_url: "https://burnzay.com/products/waterproof-shoes" },
+        ];
+    }) };
+    const db = {
+      sql,
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } })) },
+    };
+    await searchAds({ body: { user_id: "u", domain: "www.mutualofomaha.com" }, query: {} }, db, fakeLogger);
+    expect(sql.query).toHaveBeenNthCalledWith(1, expect.stringContaining("quora_ad_domain.domain"), ["%www.mutualofomaha.com%"]);
+    expect(sql.query).toHaveBeenNthCalledWith(2, expect.stringContaining("quora_ad_meta_data.destination_url"), ["%www.mutualofomaha.com%"]);
+    expect(builderCalls[0].calls).toContainEqual(["setDomainAdIds", [[77, 88]]]);
   });
 
   it("forwards exact_search to the builder", async () => {

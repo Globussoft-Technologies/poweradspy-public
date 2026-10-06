@@ -133,6 +133,18 @@ describe("services/quora/controllers/adDetailController > ES overlay", () => {
     expect((await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger)).data[0].category).toBe("cat");
   });
 
+  it("derives the domain from the last URL when SQL has no domain relation", async () => {
+    const db = {
+      sql: { query: vi.fn(adQueryImpl([{ id: 1, domain: null, destination_url: null, last_seen: null }])) },
+      elastic: { search: vi.fn(async () => ({ hits: { hits: [{ _source: {
+        "quora_ad_meta_data.destination_url": "https://tracker.example/click?next=https://livorin.com/products/water",
+      } }] } })) },
+    };
+
+    const out = await getAdDetails({ body: { ad_id: "1" }, query: {} }, db, fakeLogger);
+    expect(out.data[0].domain).toBe("livorin.com");
+  });
+
   it("ES with 0 hits leaves adData unchanged", async () => {
     const db = {
       sql: { query: vi.fn(adQueryImpl()) },

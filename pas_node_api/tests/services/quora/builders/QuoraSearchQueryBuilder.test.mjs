@@ -47,7 +47,7 @@ describe("Quora builder > construction + setters", () => {
     expect(b.setStatus(["a", "b"])._params.status).toEqual(["a", "b"]);
   });
   it("simple value setters", () => {
-    b.setKeyword("k").setPostOwnerName("po").setUrl("u").setNotCountry("RU")
+    b.setKeyword("k").setPostOwnerName("po").setNotCountry("RU")
       .setAdDetailId("id").setOcr("o").setHtmlContent("html");
     expect(b._params.keyword).toBe("k");
   });
@@ -116,12 +116,15 @@ describe("Quora builder > clause generators (must)", () => {
 });
 
 describe("Quora builder > clause generators (filter)", () => {
-  it("url with/without protocol", () => {
-    expect(JSON.stringify(new Builder().setUrl("https://example.com/x").build())).toContain("*example.com*");
-    expect(JSON.stringify(new Builder().setUrl("bare/path").build())).toContain("*bare*");
+  it("uses SQL-resolved domain ad IDs", () => {
+    const filter = new Builder()
+      .setDomainAdIds([11, 12])
+      .build().body.query.bool.filter;
+    expect(filter).toContainEqual({ terms: { "quora_ad.id": [11, 12] } });
   });
-  it("url that fails new URL() → falls back to split('/')[0] (line 209 catch)", () => {
-    expect(JSON.stringify(new Builder().setUrl("http://[invalid").build())).toContain("*http:*");
+  it("empty SQL domain result emits match_none", () => {
+    const filter = new Builder().setDomainAdIds([]).build().body.query.bool.filter;
+    expect(filter).toContainEqual({ match_none: {} });
   });
   it("country/state/city/adCategory/subCategory filters", () => {
     b.setCountry(["US"]).setState(["CA"]).setCity(["LA"]).setAdCategory(["c"]).setSubCategory(["s"]);

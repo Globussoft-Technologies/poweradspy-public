@@ -87,6 +87,16 @@ describe("filterApplicability > static filter networks (no SDUI required)", () =
     expect(out).toEqual(expect.arrayContaining(["facebook", "instagram", "youtube"]));
   });
 
+  it("does not query AdMob or ChatGPT Ads for AI-Meta filters", async () => {
+    getSDUIConfig.mockResolvedValue({});
+    const { getApplicableNetworks } = freshSut();
+    const out = await getApplicableNetworks({ ai_intent: ["conversion"] });
+
+    expect(out).not.toContain("admob");
+    expect(out).not.toContain("chatgptads");
+    expect(out).toHaveLength(11);
+  });
+
   it("does not let SDUI make LinkedIn eligible for Shares", async () => {
     getSDUIConfig.mockResolvedValue({
       sidebar: [{ filters: [{
@@ -341,12 +351,13 @@ describe("filterApplicability > cache + error handling", () => {
 });
 
 describe("filterApplicability > ALL_NETWORKS export", () => {
-  it("includes all 12 networks", () => {
+  it("includes all 13 networks", () => {
     const { ALL_NETWORKS } = freshSut();
-    expect(ALL_NETWORKS).toHaveLength(12);
+    expect(ALL_NETWORKS).toHaveLength(13);
     expect(ALL_NETWORKS).toContain("facebook");
     expect(ALL_NETWORKS).toContain("tiktok");
     expect(ALL_NETWORKS).toContain("admob");
+    expect(ALL_NETWORKS).toContain("chatgptads");
   });
 });
 

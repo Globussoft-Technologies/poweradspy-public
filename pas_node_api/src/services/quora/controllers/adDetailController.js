@@ -2,6 +2,7 @@
 
 const { normalizeParams, cleanAdsData, withCdn } = require('../helpers/paramParser');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
 
 const AD_DETAIL_SQL = `
   SELECT
@@ -158,6 +159,14 @@ async function getAdDetails(req, db, logger) {
       } catch (esErr) {
         logger.warn('ES overlay failed', { error: esErr.message });
       }
+    }
+
+    // Node-ingested ads can have their destination URL in ES before the SQL
+    // domain relation is populated. Keep AnalyticsModal's Domain field useful
+    // without overwriting a real SQL domain value.
+    if (!String(adData.domain || '').trim()) {
+      const derivedDomain = getLastUrlHostname(adData.destination_url);
+      if (derivedDomain) adData.domain = derivedDomain;
     }
 
     adData.ad_status = computeAdStatus(adData.last_seen);

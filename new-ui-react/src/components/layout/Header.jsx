@@ -1132,7 +1132,7 @@ const Header = ({
                 aria-label={t("clear_filters", "Clear filters")}
                 className="flex w-full shrink-0 items-center justify-center gap-0.5 whitespace-nowrap rounded-lg border border-red-500/20 bg-red-500/10 px-1.5 py-1.5 text-[9px] font-bold text-red-400 transition-all hover:border-red-500/40 hover:bg-red-500/20 animate-pulse-glow sm:gap-1 sm:px-1.5 sm:text-[10px] lg:gap-1.5 lg:px-2.5 lg:text-[11px]"
               >
-                <X size={12} />
+                <X className="shrink-0" size={12} />
                 <span className="hidden sm:inline">
                   {sdui.totalActiveFilters === 1 ? t("clear_x_filters", { count: sdui.totalActiveFilters }) : t("clear_x_filters_plural", { count: sdui.totalActiveFilters })}
                 </span>

@@ -81,7 +81,7 @@ class QuoraSearchQueryBuilder {
 
   setKeyword(v)        { this._params.keyword = v; return this; }
   setPostOwnerName(v)  { this._params.postOwnerName = v; return this; }
-  setUrl(v)            { this._params.url = v; return this; }
+  setDomainAdIds(v)    { this._params.domainAdIds = Array.isArray(v) ? v : null; return this; }
   setCountry(v)        { this._params.country = Array.isArray(v) ? v : [v]; return this; }
   setState(v)          { this._params.state = Array.isArray(v) ? v : [v]; return this; }
   setCity(v)           { this._params.city = Array.isArray(v) ? v : [v]; return this; }
@@ -230,12 +230,11 @@ class QuoraSearchQueryBuilder {
   // ─── filter context ──
 
   _getUrlEnv() {
-    const url = this._params.url;
-    if (!url) return null;
-    let domain;
-    try { domain = new URL(url.startsWith('http') ? url : `http://${url}`).hostname; }
-    catch { domain = url.split('/')[0]; }
-    return asFilter({ wildcard: { 'quora_ad_meta_data.destination_url': `*${domain}*` } });
+    // Quora's displayable domain exists in SQL, not in the ES document.
+    // The controller must resolve it to ad IDs before building this query.
+    if (!Array.isArray(this._params.domainAdIds)) return null;
+    if (!this._params.domainAdIds.length) return asFilter({ match_none: {} });
+    return asFilter({ terms: { 'quora_ad.id': this._params.domainAdIds } });
   }
 
   _getCountryEnv() {

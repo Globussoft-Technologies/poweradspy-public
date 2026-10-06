@@ -104,6 +104,26 @@ describe("buildSearchPayload > AI-Meta", () => {
     expect(payload.network).toEqual([]);
     expect(payload.has_ai_meta).toBe(true);
   });
+
+  it("drops ChatGPT Ads from mixed AI-meta requests", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["facebook", "chatgptads"],
+      ai_intent: ["app_install"],
+    });
+
+    expect(payload.network).toEqual(["facebook"]);
+    expect(payload.has_ai_meta).toBe(true);
+  });
+
+  it("returns no networks for a ChatGPT Ads-only AI-meta request", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["chatgptads"],
+      ai_category_id: ["1009"],
+    });
+
+    expect(payload.network).toEqual([]);
+    expect(payload.has_ai_meta).toBe(true);
+  });
 });
 
 describe("buildSearchPayload > network resolution", () => {

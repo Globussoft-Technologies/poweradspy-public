@@ -4,6 +4,7 @@ const QuoraSearchQueryBuilder = require('../builders/QuoraSearchQueryBuilder');
 const { normalizeParams, ensureArray, parsePagination, parseSort, cleanAdsData } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const { getLastUrlHostname } = require('../../common/helpers/urlDomain');
 const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
@@ -15,6 +16,7 @@ const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwner
 const AD_DETAIL_SELECT = `
     quora_ad.id                                     AS id,
     quora_ad.id                                     AS ad_id,
+    quora_ad_domain.domain                           AS domain,
     quora_ad.type                                   AS type,
     quora_ad.ad_position                            AS ad_position,
     quora_ad.post_owner_id                          AS post_owner_id,
@@ -58,6 +60,63 @@ LEFT JOIN languages            ON quora_ad.language_id = languages.id
 function dedupeRows(rows) {
   const seen = new Set();
   return rows.filter(r => { if (seen.has(r.ad_id)) return false; seen.add(r.ad_id); return true; });
+}
+
+async function findDomainAdIds(domain, db) {
+  const raw = String(domain || '').trim();
+  if (!raw || !db.sql) return [];
+
+  let hostname;
+  try {
+    hostname = new URL(/^https?:\/\//i.test(raw) ? raw : `http://${raw}`).hostname;
+  } catch {
+    hostname = raw.split('/')[0];
+  }
+  // Preserve an explicitly entered `www.` prefix. A search for
+  // `mutualofomaha.com` should match both host variants, while a search for
+  // `www.mutualofomaha.com` should not match the shorter domain value.
+  hostname = String(hostname || '').toLowerCase().trim();
+  if (!hostname) return [];
+
+  // Filter on the same SQL domain relation shown by AnalyticsModal. This is
+  // both semantically correct and compatible with Quora ES indexes that do
+  // not expose destination_url.keyword.
+  const domainRows = await db.sql.query(`
+    SELECT quora_ad.id AS ad_id
+    FROM quora_ad
+    INNER JOIN quora_ad_domain ON quora_ad.domain_id = quora_ad_domain.id
+    WHERE LOWER(quora_ad_domain.domain) LIKE ?
+  `, [`%${hostname}%`]);
+
+  // Some Node-ingested ads have no domain relation yet; the detail response
+  // derives their displayed Domain from destination_url. Search the SQL URL
+  // table only for those ads, then apply the same hostname parser in Node so
+  // path text such as "/waterproof" cannot become a domain match. Keep the
+  // column bare so MySQL can use its collation directly; LOWER(column) would
+  // add a per-row function cost. The leading `%` remains unavoidable for
+  // arbitrary substring searches without a dedicated hostname column.
+  const urlRows = await db.sql.query(`
+    SELECT quora_ad.id AS ad_id, quora_ad_meta_data.destination_url AS destination_url
+    FROM quora_ad
+    INNER JOIN quora_ad_meta_data ON quora_ad.id = quora_ad_meta_data.quora_ad_id
+    LEFT JOIN quora_ad_domain ON quora_ad.domain_id = quora_ad_domain.id
+    WHERE (quora_ad.domain_id IS NULL OR TRIM(COALESCE(quora_ad_domain.domain, '')) = '')
+      AND quora_ad_meta_data.destination_url LIKE ?
+  `, [`%${hostname}%`]);
+
+  const derivedIds = urlRows
+    .filter(row => {
+      const derived = getLastUrlHostname(row.destination_url)
+        .toLowerCase();
+      return derived.includes(hostname);
+    })
+    .map(row => row.ad_id)
+    .filter(id => id !== undefined && id !== null);
+
+  return [...new Set([
+    ...domainRows.map(row => row.ad_id),
+    ...derivedIds,
+  ].filter(id => id !== undefined && id !== null))];
 }
 
 async function enrichAndFilterRows(rows, db, esIndex, typeField, nasField) {
@@ -199,7 +258,22 @@ async function searchAds(req, db, logger) {
   builder.setExactSearch(!!exactAdvertiserName);
   if (p.keyword)    builder.setKeyword(p.keyword);
   if (p.advertiser) builder.setPostOwnerName(p.advertiser);
-  if (p.domain)     builder.setUrl(p.domain);
+  if (p.domain) {
+    if (db.sql) {
+      try {
+        builder.setDomainAdIds(await findDomainAdIds(p.domain, db));
+      } catch (err) {
+        // Domain search is SQL-backed; fail closed instead of querying an ES
+        // URL field that cannot distinguish a hostname from its path.
+        logger.warn('Quora domain relation lookup failed; returning no domain matches', { error: err.message });
+        builder.setDomainAdIds([]);
+      }
+    } else {
+      // The displayed domain is not available in ES, so do not run an
+      // unsupported URL fallback when SQL is unavailable.
+      builder.setDomainAdIds([]);
+    }
+  }
 
   if (p.call_to_action) builder.setCallToAction(ensureArray(p.call_to_action));
   if (p.adcategory)     builder.setAdCategory(ensureArray(p.adcategory));
@@ -307,6 +381,7 @@ async function searchAds(req, db, logger) {
     const esMap2 = new Map(esHits.map(hit => [String(hit._source['quora_ad.id'] || hit._id), hit._source]));
     finalAds = finalAds.map(ad => {
       const src = esMap2.get(String(ad.ad_id || ad.id)) || {};
+      const destinationUrl = ad.destination_url || src['quora_ad_meta_data.destination_url'] || null;
       return {
         ...markAiMetaResult(ad, src, 'quora'),
         post_owner:
@@ -340,7 +415,10 @@ async function searchAds(req, db, logger) {
         // pipeline, so SQL is empty for API-ingested ads while ES has it. Overlay the
         // ES value onto the top-level field the frontend reads (ad.destinationUrl) —
         // otherwise the CTA button is disabled ("lacks a Destination URL") for those ads.
-        destination_url: ad.destination_url || src['quora_ad_meta_data.destination_url'] || null,
+        // SQL domain is preferred; derive it from the ES destination URL when
+        // the SQL domain relation is still absent for an ES-first ad.
+        domain: ad.domain || getLastUrlHostname(destinationUrl) || null,
+        destination_url: destinationUrl,
         market_platform_urls: {
           url_destination: src['quora_ad_url.url_destination']         || null,
           source_url:      src['quora_ad_outgoing_links.source_url']   || null,

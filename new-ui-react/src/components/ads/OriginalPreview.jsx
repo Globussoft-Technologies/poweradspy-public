@@ -22,6 +22,7 @@ import gIcon from "../../assets/g.png";
 import linkedinIcon from "../../assets/linkedin.png";
 import rdIcon from "../../assets/rd.png";
 import pinterestIcon from "../../assets/pinterest.png";
+import chatgptIcon from "../../assets/chatgpt.svg";
 import { getVideoEmbedUrl } from "../../services/api";
 // These are native-look replicas, which render a single CTA button — an ad with
 // several CTAs shows its first one here; the detail pane lists them all.
@@ -188,6 +189,8 @@ const OriginalPreview = ({ ad, fillWidth = false }) => {
     />;
   }
 
+  if (platform === "chatgptads") return <ChatGPTPreview ad={ad} fill={fillWidth} adType={adType} />;
+
   if (platform === "facebook")
     return (
       <FacebookPreview
@@ -250,6 +253,85 @@ const OriginalPreview = ({ ad, fillWidth = false }) => {
   );
 };
 
+const ChatGPTPreview = ({ ad, fill, adType }) => {
+  const isVideo = adType === "video";
+  const image = ad.thumbnail || ad.imageVideoUrl || ad.image_video_url;
+  const advertiserInitial = (ad.advertiser || "?").trim()[0] || "?";
+
+  return (
+    <div
+      className={`bg-[#f7f7f8] rounded-2xl border border-gray-200 shadow-sm overflow-hidden flex flex-col ${fill ? "w-full h-full" : "w-full max-w-[390px] mx-auto"}`}
+    >
+      <div className="px-4 py-3 border-b border-gray-200 bg-white flex items-center gap-2">
+        <img src={chatgptIcon} alt="" className="w-6 h-6 rounded-full flex-shrink-0" />
+        <div className="min-w-0">
+          <p className="text-[13px] font-semibold text-gray-900 leading-tight">ChatGPT</p>
+          <p className="text-[11px] text-gray-500 leading-tight">Sponsored response</p>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-3">
+        <div className="flex gap-3">
+          <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center flex-shrink-0">
+            <img src={chatgptIcon} alt="" className="w-4 h-4 invert" />
+          </div>
+          <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-gray-800">
+            <p className="font-medium text-gray-950">{ad.title}</p>
+            {ad.subtitle && <p className="mt-1 text-gray-700">{ad.subtitle}</p>}
+          </div>
+        </div>
+
+        <div className="ml-10 rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100">
+            {ad.advertiserImage ? (
+              <img
+                src={ad.advertiserImage}
+                alt=""
+                className="w-7 h-7 rounded-full object-cover"
+                onError={(e) => (e.target.style.display = "none")}
+              />
+            ) : (
+              <div className="w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[12px] font-bold">
+                {advertiserInitial}
+              </div>
+            )}
+            <div className="min-w-0">
+              <p className="text-[12px] font-semibold text-gray-900 truncate">{ad.advertiser}</p>
+              <p className="text-[10px] text-gray-500">Sponsored</p>
+            </div>
+          </div>
+
+          {image && (
+            <div className="relative bg-gray-100">
+              <img
+                src={image}
+                alt=""
+                className="w-full max-h-[340px] object-cover"
+                onError={(e) => (e.target.style.display = "none")}
+              />
+              {isVideo && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-14 h-14 bg-black/50 rounded-full flex items-center justify-center">
+                    <Play fill="white" size={24} className="ml-1" />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="px-3 py-3">
+            <p className="text-[13px] font-semibold text-gray-950 leading-snug">{ad.title}</p>
+            {ad.cta && (
+              <button className="mt-3 w-full rounded-full bg-gray-900 px-4 py-2 text-[12px] font-semibold text-white hover:bg-gray-800">
+                {primaryCtaLabel(ad.cta)}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 // Helper — card shell with flex column structure
 const CardShell = ({
   fill,
@@ -282,9 +364,7 @@ const FacebookPreview = ({ ad, position, adType, fill, hideEngagement }) => {
             <p className="text-[11px] font-semibold text-gray-900 line-clamp-2 leading-tight">
               {ad.title}
             </p>
-            <p className="text-[10px] text-gray-500 mt-0.5 truncate">
-              {ad.destinationUrl || ad.subtitle}
-            </p>
+
           </div>
         </div>
       </div>
@@ -344,9 +424,7 @@ const FacebookPreview = ({ ad, position, adType, fill, hideEngagement }) => {
       <div className="flex-shrink-0 mt-auto">
         {/* Link preview */}
         <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
-          <p className="text-[10px] text-gray-500 uppercase">
-            {ad.destinationUrl || "example.com"}
-          </p>
+
           <div className="flex items-center justify-between">
             <p className="text-[13px] font-semibold text-gray-900 line-clamp-1 flex-1">
               {ad.title}
@@ -688,9 +766,7 @@ const GoogleSearchAd = ({ ad, fill, testId }) => {
           <p className="text-[12px] text-gray-900 font-medium">
             {ad.advertiser}
           </p>
-          <p className="text-[11px] text-gray-500 truncate">
-            {ad.destinationUrl || "www.example.com"}
-          </p>
+
         </div>
       </div>
       <div className="flex items-center gap-1.5 mb-1.5">
@@ -806,9 +882,7 @@ const LinkedInPreview = ({ ad, position, adType, fill }) => {
           <p className="text-[13px] font-medium text-gray-900 line-clamp-1">
             {ad.title}
           </p>
-          <p className="text-[11px] text-gray-500">
-            {ad.destinationUrl || "example.com"}
-          </p>
+
         </div>
         {ad.cta && (
           <div className="px-3 py-2">

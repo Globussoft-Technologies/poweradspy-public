@@ -164,6 +164,25 @@ describe("api > mapAdToCard", () => {
     } }).hasAiMeta).toBe(true);
   });
 
+  it("does not expose AI metadata for isolated AdMob or ChatGPT Ads cards", () => {
+    const aiMeta = {
+      ad_type: "video",
+      intent: ["conversion"],
+      hook: ["discount"],
+      offering_type: "product",
+    };
+
+    for (const network of ["admob", "chatgptads"]) {
+      const card = mapAdToCard({
+        network,
+        ai: aiMeta,
+        has_ai_meta: true,
+      });
+      expect(card.hasAiMeta).toBe(false);
+      expect(card.ai_meta).toBeNull();
+    }
+  });
+
   it("maps YouTube's `view` response alias into the shared Views metric", () => {
     expect(mapAdToCard({ network: "youtube", view: 12373 }).views).toBe("12.4K");
     expect(mapAdToCard({ network: "youtube", views: 12373 }).views).toBe("12.4K");

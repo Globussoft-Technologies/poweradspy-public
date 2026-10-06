@@ -19,9 +19,13 @@ const { getSDUIConfig } = require('../../sdui/services/sduiService');
 // All known network slugs — used as the "no restriction" set
 const ALL_NETWORKS = [
   'facebook', 'instagram', 'youtube', 'gdn', 'linkedin',
-  'native', 'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob',
+  'native', 'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob', 'chatgptads',
 ];
-const NON_ADMOB_NETWORKS = ALL_NETWORKS.filter(network => network !== 'admob');
+// AdMob and ChatGPT Ads have no PAS AI-Meta index fields. Keep them available
+// for ordinary searches, but never let AI-only filters select either network.
+const AI_META_NETWORKS = ALL_NETWORKS.filter(
+  network => network !== 'admob' && network !== 'chatgptads',
+);
 
 /**
  * Maps body parameter keys (used by network search controllers) to
@@ -121,9 +125,17 @@ const STATIC_FILTER_NETWORKS = {
   budget:   ['tiktok'],
   // `has_ai_meta` is request-level, while category still remains `all` in the
   // live SDUI config. Keep only the fallbacks still needed at runtime.
-  has_ai_meta: NON_ADMOB_NETWORKS,
-  adcategory: NON_ADMOB_NETWORKS,
-  subCategory: NON_ADMOB_NETWORKS,
+  has_ai_meta: AI_META_NETWORKS,
+  adcategory: AI_META_NETWORKS,
+  subCategory: AI_META_NETWORKS,
+  ai_ad_type: AI_META_NETWORKS,
+  ai_intent: AI_META_NETWORKS,
+  ai_hook: AI_META_NETWORKS,
+  ai_offering_type: AI_META_NETWORKS,
+  ai_offer_type: AI_META_NETWORKS,
+  ai_colors: AI_META_NETWORKS,
+  ai_category_id: AI_META_NETWORKS,
+  ai_subcategory_id: AI_META_NETWORKS,
   // These fields belong to the isolated AdMob index even if SDUI is unavailable.
   sub_network: ['admob'],
   source_app: ['admob'],
@@ -134,9 +146,9 @@ const STATIC_FILTER_NETWORKS = {
   activeDaysRange: ['admob'],
 };
 
-// AdMob should not participate in AI/category-driven searches. These filters
-// belong to the non-AdMob discovery experience, so when they are active in
-// an "all platforms" request we explicitly drop AdMob from the candidate set.
+// AdMob and ChatGPT Ads should not participate in AI/category-driven searches.
+// These filters belong to the AI-Meta discovery experience, so when they are
+// active in an "all platforms" request we explicitly drop both networks.
 
 // In-memory cache — SDUI config is rebuilt every minute max
 let _cached = null;

@@ -17,6 +17,9 @@ const COMPETITOR_API_BASE = import.meta.env.VITE_NODE_API_URL || "http://localho
 const AD_AI_META_CACHE_TTL_MS = 5 * 60 * 1000;
 const AD_AI_META_CACHE_MAX = 200;
 const adAiMetaCache = new Map();
+// These isolated indices are searchable normally, but do not carry the PAS
+// AI-Meta contract used by AI filters and enrichment indicators.
+const AI_META_UNSUPPORTED_NETWORKS = new Set(['admob', 'chatgptads']);
 
 // ─── 401 Handler ─────────────────────────────────────────────────────────────
 // Called whenever any API response returns 401. Clears auth state and redirects.
@@ -691,6 +694,7 @@ export const mapAdToCard = (raw) => {
     raw['linkedin_ad_post_owners.post_owner_name_exactly'],
   );
   const aiMeta = (() => {
+    if (AI_META_UNSUPPORTED_NETWORKS.has(resolvedNetwork)) return null;
     const value = raw.ai_meta ?? raw.aiMeta ?? raw.ai ?? null;
     if (value && typeof value === 'object' && !Array.isArray(value)) return value;
     if (typeof value !== 'string' || !value.trim()) return null;
@@ -708,7 +712,9 @@ export const mapAdToCard = (raw) => {
       ? value.length > 0
       : value !== undefined && value !== null && String(value).trim() !== '';
   });
-  const aiMetaMarker = raw.has_ai_meta ?? raw.hasAiMeta;
+  const aiMetaMarker = AI_META_UNSUPPORTED_NETWORKS.has(resolvedNetwork)
+    ? false
+    : raw.has_ai_meta ?? raw.hasAiMeta;
   const card = {
     id: raw.ad_id || raw.sql_id || raw.id,
     internalId: raw.id ?? raw.sql_id ?? null,
@@ -1258,6 +1264,8 @@ export const FILTER_PLATFORM_SUPPORT = {
   admob_active_days_range: ['admob'],
   activeDaysRange: ['admob'],
   native_network: ['native'],
+  // AdMob and ChatGPT Ads are intentionally excluded: neither index exposes
+  // the PAS AI-Meta fields required by AI filters.
   has_ai_meta:    ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'google', 'tiktok'],
   language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google', 'chatgptads'],
 };
