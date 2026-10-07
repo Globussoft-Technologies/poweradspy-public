@@ -17,7 +17,7 @@ const ANALYTICS_PLATFORM_TITLES = {
   facebook: 'Facebook', instagram: 'Instagram', youtube: 'YouTube',
   google: 'Google', gdn: 'GDN', native: 'Native', linkedin: 'LinkedIn',
   reddit: 'Reddit', quora: 'Quora', pinterest: 'Pinterest', tiktok: 'TikTok',
-  admob: 'AdMob',
+  admob: 'AdMob', chatgptads: 'ChatGPT',
 };
 
 // Short, GA4-friendly platform codes used to prefix per-platform ad_action
@@ -26,6 +26,7 @@ const PLATFORM_ACTION_PREFIXES = {
   facebook: 'fb', instagram: 'insta', youtube: 'youtube', google: 'google',
   gdn: 'gdn', native: 'native', linkedin: 'linkedin', reddit: 'reddit',
   quora: 'quora', pinterest: 'pinterest', tiktok: 'tiktok',
+  chatgptads: 'chatgpt',
 };
 
 /**

@@ -4,6 +4,7 @@ const {
   getAggs, getTotal, resolveTimeWindow, getAllUserEmails, fetchAllTermsBuckets,
   resolveUserIds: helperResolveUserIds, getCache, setCache,
   detectOtherActivity, parseFilterPills, parsePagination,
+  AI_FILTER_LABEL_MAP, AI_FILTER_USED_CLAUSES, aiFieldUsedClause,
 } = require('../helpers/searchIntelligenceHelpers');
 const { buildAllSearchesQuery } = require('../queries/searchIntelligenceQueries');
 
@@ -395,6 +396,7 @@ async function getSummaryStats(req, elastic, logger) {
         { exists: { field: 'filter.native_network'   } },
         { exists: { field: 'filter.ctr'              } },
         { exists: { field: 'filter.budget'           } },
+        ...AI_FILTER_USED_CLAUSES,
       ], minimum_should_match: 1 } },
     ];
 
@@ -427,6 +429,7 @@ async function getSummaryStats(req, elastic, logger) {
           { exists: { field: 'filter.native_network' } },
           { exists: { field: 'filter.ctr' } },
           { exists: { field: 'filter.budget' } },
+          ...AI_FILTER_USED_CLAUSES,
         ], minimum_should_match: 1 } });
       } else if (activity_type === 'other_activity') {
         filters.push({ bool: { should: [
@@ -589,6 +592,8 @@ async function getSummaryStats(req, elastic, logger) {
           budget: { filter: { exists: { field: 'filter.budget' } } },
           ctr: { filter: { exists: { field: 'filter.ctr' } } },
         } },
+        ai_filters_count: { filter: { bool: { should: Object.keys(AI_FILTER_LABEL_MAP).map(aiFieldUsedClause), minimum_should_match: 1 } } },
+        quick_filter_count: { filter: aiFieldUsedClause('dashboard.quick_filter') },
       },
     };
 
@@ -673,6 +678,8 @@ async function getSummaryStats(req, elastic, logger) {
       aggs.filters_breakdown?.platform?.doc_count > 0 && { name: 'Platform', count: aggs.filters_breakdown?.platform?.doc_count ?? 0 },
       aggs.filters_breakdown?.budget?.doc_count > 0 && { name: 'Budget', count: aggs.filters_breakdown?.budget?.doc_count ?? 0 },
       aggs.filters_breakdown?.ctr?.doc_count > 0 && { name: 'CTR', count: aggs.filters_breakdown?.ctr?.doc_count ?? 0 },
+      aggs.ai_filters_count?.doc_count > 0 && { name: 'AI Filters', count: aggs.ai_filters_count.doc_count },
+      aggs.quick_filter_count?.doc_count > 0 && { name: 'Quick Filter', count: aggs.quick_filter_count.doc_count },
     ].filter(Boolean);
 
     return {

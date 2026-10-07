@@ -318,6 +318,71 @@ const ARRAY_JOIN_KEYS = new Set([
 
 const DATE_RANGE_KEYS = new Set(['Ad Seen', 'Post Date']);
 
+// AI Filters modal selections — stored by frontend_user_activity as
+// `dashboard.ai_*` arrays, or the string 'NA' when the group wasn't used.
+const AI_FILTER_LABEL_MAP = {
+  'dashboard.ai_ad_type':       'AI Ad Type',
+  'dashboard.ai_intent':        'AI Intent',
+  'dashboard.ai_hook':          'AI Hook',
+  'dashboard.ai_offer_type':    'AI Offer Type',
+  'dashboard.ai_offering_type': 'AI Offering Type',
+  'dashboard.ai_colors':        'AI Colors',
+  'dashboard.ai_category':      'AI Category',
+  'dashboard.ai_subcategory':   'AI Sub-Category',
+};
+
+// Quick Filter preset ids → labels shown in the UI
+// (see new-ui-react/src/utils/aiQuickFilterPresets.js).
+const QUICK_FILTER_LABEL_MAP = {
+  tiktok_ugc:   'TikTok UGC',
+  b2b_saas:     'B2B SaaS',
+  flash_sale:   'Flash Sale',
+  luxury_brand: 'Luxury Brand',
+  app_install:  'App Install',
+  black_friday: 'Black Friday',
+  high_ticket:  'High-Ticket',
+  local_lead:   'Local Lead',
+};
+
+const AI_FILTER_FIELDS = [...Object.keys(AI_FILTER_LABEL_MAP), 'dashboard.quick_filter'];
+
+// "before_after" → "Before After", "ugc" → "UGC"
+function prettifyAiValue(v) {
+  return String(v)
+    .split('_')
+    .filter(Boolean)
+    .map((w) => (w.toLowerCase() === 'ugc' ? 'UGC' : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
+
+// ES clause: field exists AND isn't the 'NA' placeholder written on every search.
+function aiFieldUsedClause(field) {
+  return {
+    bool: {
+      must: [{ exists: { field } }],
+      must_not: [{ term: { [`${field}.keyword`]: 'NA' } }],
+    },
+  };
+}
+
+const AI_FILTER_USED_CLAUSES = AI_FILTER_FIELDS.map(aiFieldUsedClause);
+
+function parseAiFilterPills(s) {
+  const pills = [];
+  for (const [key, label] of Object.entries(AI_FILTER_LABEL_MAP)) {
+    const val = s[key];
+    if (!val || val === 'NA') continue;
+    const vals = (Array.isArray(val) ? val : [val]).filter((v) => v && v !== 'NA');
+    if (vals.length === 0) continue;
+    pills.push(`${label}: ${vals.map(prettifyAiValue).join(', ')}`);
+  }
+  const qf = s['dashboard.quick_filter'];
+  if (qf && qf !== 'NA') {
+    pills.push(`Quick Filter: ${QUICK_FILTER_LABEL_MAP[qf] ?? prettifyAiValue(qf)}`);
+  }
+  return pills;
+}
+
 function detectOtherActivity(s) {
   const gf = (key) => {
     if (s[key] !== undefined) return s[key];
@@ -411,6 +476,8 @@ function parseFilterPills(s, other_activity) {
     if (!val || val === 'NA') continue;
     filterPills.push(`${label}: ${val}`);
   }
+
+  filterPills.push(...parseAiFilterPills(s));
 
   return filterPills;
 }
@@ -540,4 +607,8 @@ module.exports = {
   SORT_BY_LABEL_MAP,
   ARRAY_JOIN_KEYS,
   DATE_RANGE_KEYS,
+  AI_FILTER_LABEL_MAP,
+  QUICK_FILTER_LABEL_MAP,
+  AI_FILTER_USED_CLAUSES,
+  aiFieldUsedClause,
 };

@@ -2261,7 +2261,8 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
       // Quora hides POST DATE and RUNNING DAYS: the crawler's post_date for Quora
       // is unreliable, so we surface neither it nor the running-days figure derived
       // from it. Other networks keep both rows.
-      ...(ctx.platform === 'quora' ? [] : [{
+      // ChatGPT Ads has no post_date at all, so its POST DATE row is hidden too.
+      ...(ctx.platform === 'quora' || isChatgpt ? [] : [{
         label: "POST DATE",
         // Old rows can carry the epoch-0 (1970-01-01), zero-date (0000-00-00) or ES sentinel
         // (0001-01-01) when the crawler never supplied a real publish date — show "—" (no date)
