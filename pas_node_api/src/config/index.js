@@ -212,6 +212,14 @@ const config = {
     esQueueMaxAttempts: validatedInt(fileConfig.domainDateUpdate?.esQueueMaxAttempts, 10),
   },
 
+  // Load controls for GET /facebook/ocr/getFBImageUrl. config.json → env
+  // FACEBOOK_OCR_LEASE_MAX_EXECUTION_MS → undefined. No code default: read by
+  // src/services/facebook/ocr/repository.js, which runs the lease query uncapped
+  // when this is unset or not a positive number.
+  facebookOcr: {
+    leaseMaxExecutionMs: getVal(fileConfig.facebookOcr?.leaseMaxExecutionMs, 'FACEBOOK_OCR_LEASE_MAX_EXECUTION_MS', toInt),
+  },
+
   aiMeta: {
     bulkRecommendedSize: getVal(fileConfig.aiMeta?.bulkRecommendedSize, 'AI_META_BULK_RECOMMENDED_SIZE', toInt),
     bulkMaxSize: getVal(fileConfig.aiMeta?.bulkMaxSize, 'AI_META_BULK_MAX_SIZE', toInt),
@@ -696,6 +704,14 @@ config.reload = () => {
           config.aiMeta.forceRefreshNetworks = toStringArray(newFileConfig.aiMeta.forceRefreshNetworks);
         }
       }
+
+      // Facebook OCR lease query time cap. Re-resolved with the same config.json →
+      // env precedence as module load, so removing the key falls back to env.
+      config.facebookOcr.leaseMaxExecutionMs = getVal(
+        newFileConfig.facebookOcr?.leaseMaxExecutionMs,
+        'FACEBOOK_OCR_LEASE_MAX_EXECUTION_MS',
+        toInt
+      );
 
       // Update server timeouts
       if (newFileConfig.serverTimeouts) {

@@ -18,6 +18,8 @@
  *   facebook_ad           (join only — type = 'IMAGE', last_seen window)
  */
 
+const config = require('../../../config');
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 
@@ -25,19 +27,33 @@ const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRow
  * PHP Facebook_ad_variants::getImageUrlFBs(): up to 20 IMAGE ads at the given
  * image_url_status, seen in the last 10 days, newest first. For the OCR queue
  * (status 4) the stored image_ocr is also selected so it can be re-sent.
+ *
+ * Driven from facebook_ad (idx_type_last_seen range) so the scan is bounded by the
+ * 10-day IMAGE window. Driving from the status index instead walks the whole status
+ * bucket — which never shrinks (non-IMAGE / stale ads stay at 0 forever) — whenever
+ * fewer than 20 rows qualify. Both indexes are forced: left alone, the optimizer picks a
+ * reverse PRIMARY scan on facebook_ad for ORDER BY ... LIMIT, which is unbounded too.
+ * The (image_url_status, facebook_ad_id) probe rejects non-matching ads inside the
+ * index without reading the variant row. MAX_EXECUTION_TIME caps a slow run so polls
+ * can't pile up; the cap comes from config.json facebookOcr.leaseMaxExecutionMs and is
+ * read per call so a config reload applies it without a restart (unset → no cap).
  */
 async function leaseImageAds(exec, status, withOcr) {
   const ocrCol = withOcr ? ', variants.image_ocr' : '';
+  const maxMs = config.facebookOcr?.leaseMaxExecutionMs;
+  const hint = maxMs > 0 ? ` /*+ MAX_EXECUTION_TIME(${maxMs}) */` : '';
   const sql = `
-    SELECT STRAIGHT_JOIN variants.facebook_ad_id AS ad_id,
+    SELECT${hint} STRAIGHT_JOIN
+           variants.facebook_ad_id AS ad_id,
            variants.image_url${ocrCol}
-      FROM facebook_ad_variants AS variants
-      FORCE INDEX (idx_image_url_status_facebook_ad_id)
-      INNER JOIN facebook_ad AS ads ON ads.id = variants.facebook_ad_id
-     WHERE variants.image_url_status = ?
-       AND ads.type = 'IMAGE'
+      FROM facebook_ad AS ads FORCE INDEX (idx_type_last_seen)
+      INNER JOIN facebook_ad_variants AS variants
+            FORCE INDEX (idx_image_url_status_facebook_ad_id)
+              ON variants.facebook_ad_id = ads.id
+             AND variants.image_url_status = ?
+     WHERE ads.type = 'IMAGE'
        AND ads.last_seen BETWEEN DATE_SUB(NOW(), INTERVAL 10 DAY) AND NOW()
-     ORDER BY variants.facebook_ad_id DESC
+     ORDER BY ads.id DESC
      LIMIT 20`;
   return rows(await exec.query(sql, [status]));
 }
