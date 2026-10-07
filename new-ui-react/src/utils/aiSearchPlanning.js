@@ -50,6 +50,13 @@ export const getPlanningSuggestions = (planning) => {
  * object keeps this compatible with responses that attach metadata only once
  * at the response level rather than repeating it on every payload item.
  */
+const normalizePlanningSummary = (value) => String(value || '')
+  .trim()
+  // The result banner owns the completed-state "Searched:" label. DS may
+  // still return its older in-progress "Searching for:" prefix in summary.
+  .replace(/^(?:searched|searching\s+for)\s*:\s*/i, '')
+  .trim();
+
 export const getPlanningSummary = (planning, tierIndex = 0, fallbackPlanning = null) => {
   const candidates = [
     planning?.tiers?.[tierIndex]?.summary,
@@ -57,7 +64,11 @@ export const getPlanningSummary = (planning, tierIndex = 0, fallbackPlanning = n
     fallbackPlanning?.tiers?.[tierIndex]?.summary,
     fallbackPlanning?.summary,
   ];
-  return candidates.find((value) => typeof value === 'string' && value.trim())?.trim() || '';
+  for (const candidate of candidates) {
+    const summary = normalizePlanningSummary(candidate);
+    if (summary) return summary;
+  }
+  return '';
 };
 
 /**

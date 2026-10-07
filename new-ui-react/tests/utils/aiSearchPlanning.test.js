@@ -61,6 +61,13 @@ describe("AI search planning helpers", () => {
     ]);
   });
 
+  it("removes a duplicate in-progress prefix from the completed summary", () => {
+    expect(getPlanningSummary({ summary: "Searching for: Weight-loss ads" }))
+      .toBe("Weight-loss ads");
+    expect(getPlanningSummary({ summary: "Searched: Country: India" }))
+      .toBe("Country: India");
+  });
+
   it("falls back to response-level planning metadata", () => {
     expect(getPlanningSummary(
       { tiers: [] },

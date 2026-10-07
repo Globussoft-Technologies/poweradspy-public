@@ -2125,7 +2125,8 @@ async function trackUserActivity(payload, meta, info = {}) {
   // Per-platform extra fields matching the exact payload format expected by user_activity helper
   let extra = {};
   if (isMulti) {
-    extra = { network: networkArr.join(','), platform: 'NA' };
+    // ChatGPT Ads are stored in user activity as 'Chatgpt', not the internal 'chatgptads' key.
+    extra = { network: networkArr.map(n => (n === 'chatgptads' ? 'Chatgpt' : n)).join(','), platform: 'NA' };
   } else if (networkKey === 'facebook' || networkKey === 'instagram') {
     extra = {
       network:         networkKey,
@@ -2272,6 +2273,14 @@ async function trackUserActivity(payload, meta, info = {}) {
       object:          payload.image_object    ?? 'NA',
       budget:          payload.budget && payload.budget !== 'NA' ? payload.budget : 'NA',
     };
+  } else if (networkKey === 'chatgptads') {
+    extra = {
+      network:  'Chatgpt',
+      platform: 'NA',
+      celeb:    payload.image_celebrity ?? 'NA',
+      logo:     payload.image_logo      ?? 'NA',
+      object:   payload.image_object    ?? 'NA',
+    };
   } else {
     extra = {
       network:  networkKey,
@@ -2358,10 +2367,12 @@ export function trackEvent(method, fields = {}) {
   const authUser = getAuthUser();
   const user_id = authUser?.user_id ?? fields.user_id ?? 'guest';
   const FIXED_KEYS = new Set(['user_id', 'network', 'ad_id', 'domain', 'userSubscriptionType', 'email', 'hidetype', 'unhidetype']);
+  // ChatGPT Ads are stored in user activity as 'Chatgpt', not the internal 'chatgptads' key.
+  const network = String(fields.network ?? '').toLowerCase() === 'chatgptads' ? 'Chatgpt' : fields.network;
   const body = {
     user_id,
     method,
-    network:              fields.network  ?? 'NA',
+    network:              network         ?? 'NA',
     ad_id:                fields.ad_id    ?? 'NA',
     domain:               fields.domain   ?? 'NA',
     userSubscriptionType: authUser?.userSubscriptionType ?? fields.userType ?? 'NA',

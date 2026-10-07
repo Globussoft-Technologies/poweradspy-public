@@ -128,6 +128,9 @@ const Header = ({
   sortTipPos,
   setShowSortTip,
   onDateChange,
+  onDateRestricted,
+  onSortRestricted,
+  onAdTypeRestricted,
   isFilterRestricted,
   onAiFilterRestricted,
   guest,
@@ -717,6 +720,8 @@ const Header = ({
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
         <div className="mx-1 flex h-full min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
           {/* Desktop Search bar & Mobile Search Overlay */}
+          {/* Keep the bar viewport-centered while reserving enough space for
+              the logo and action group at compact breakpoints. */}
           <div
             className={`
               absolute inset-0 z-10 mx-auto w-full min-w-0 transition-all duration-300 ease-in-out
@@ -724,8 +729,8 @@ const Header = ({
                 isSearchOpenMobile
                   ? "w-full max-w-none"
                   : aiMode
-                    ? "w-[calc(100vw-550px)] max-w-none md:max-w-[520px] lg:w-[calc(100vw-630px)] lg:max-w-[520px] xl:w-[calc(100vw-660px)] xl:max-w-4xl"
-                    : "w-[calc(100vw-600px)] max-w-none md:max-w-[440px] lg:w-[calc(100vw-670px)] lg:max-w-[440px] xl:w-[calc(100vw-740px)] xl:max-w-2xl"
+                    ? "w-[calc(100vw-540px)] max-w-none md:max-w-[420px] lg:w-[calc(100vw-620px)] lg:max-w-[440px] xl:w-[calc(100vw-840px)] xl:max-w-4xl"
+                    : "w-[calc(100vw-590px)] max-w-none md:max-w-[360px] lg:w-[calc(100vw-680px)] lg:max-w-[380px] xl:w-[calc(100vw-880px)] xl:max-w-2xl"
               }
               ${
                 isSearchOpenMobile
@@ -1088,6 +1093,11 @@ const Header = ({
                 setShowMoreTabs={setShowMoreTabsHeader}
                 moreTabsRef={moreTabsRefHeader}
                 onDateChange={onDateChange}
+                // The scrolled header is a second filter-bar instance; keep
+                // its restricted controls connected to the same upgrade flow.
+                onDateRestricted={onDateRestricted}
+                onSortRestricted={onSortRestricted}
+                onAdTypeRestricted={onAdTypeRestricted}
                 isFilterRestricted={isFilterRestricted}
                 onAiFilterRestricted={onAiFilterRestricted}
                 showAiToggleOnMobile={false}
@@ -1115,7 +1125,7 @@ const Header = ({
         {/* Keep the clear action compact while the header is space-constrained;
             wider layouts regain the roomier button for readability. */}
         {isAdsLibraryPage && !guest?.isRestricted && (
-          <div className="w-8 shrink-0 sm:w-[88px] md:w-[100px] lg:w-[108px] xl:w-[112px]">
+          <div className="w-8 shrink-0 sm:w-[96px] md:w-[100px] lg:w-[104px] xl:w-[108px] 2xl:w-[112px]">
             {showClearFilters && (
               <button
                 onClick={() => {

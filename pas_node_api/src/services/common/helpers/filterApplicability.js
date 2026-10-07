@@ -96,6 +96,11 @@ const NON_FILTER_BODY_KEYS = new Set([
 // Hard backend capability restrictions. These override SDUI when a network's
 // search controller cannot actually apply a filter; keys are request body fields.
 const STATIC_FILTER_NETWORKS = {
+  // Native Network is a network selector, not a field shared by every
+  // controller. Keep it Native-only even when an option is saved as the
+  // SDUI wildcard "All" or the live SDUI config is temporarily unavailable.
+  nativeNetwork: ['native'],
+  native_network: ['native'],
   // LinkedIn has no share-count field; SDUI applicability must not make its
   // search controller silently ignore an active Shares range.
   shares: ['facebook', 'tiktok'],
@@ -146,6 +151,12 @@ const STATIC_FILTER_NETWORKS = {
   activeDaysRange: ['admob'],
 };
 
+// `nativeNetwork` is a hard network boundary. The generic applicability
+// algorithm intentionally keeps a previous intersection when two unrelated
+// filters conflict, but that fail-open behavior must never re-enable a
+// non-Native controller for this filter.
+const NATIVE_NETWORK_FILTER_KEYS = new Set(['nativeNetwork', 'native_network']);
+
 // AdMob and ChatGPT Ads should not participate in AI/category-driven searches.
 // These filters belong to the AI-Meta discovery experience, so when they are
 // active in an "all platforms" request we explicitly drop both networks.
@@ -154,6 +165,20 @@ const STATIC_FILTER_NETWORKS = {
 let _cached = null;
 let _cachedAt = 0;
 const CACHE_TTL_MS = 60 * 1000; // 60 seconds
+
+/**
+ * Normalize the SDUI platform applicability forms used by the admin editor.
+ * A wildcard means that the option has no narrower scope than its parent.
+ */
+function normalizeNetworkApplicability(value) {
+  if (value == null) return null;
+  const values = Array.isArray(value) ? value : [value];
+  const normalized = values
+    .map((network) => String(network ?? '').trim().toLowerCase())
+    .filter(Boolean);
+  if (normalized.length === 0 || normalized.includes('all')) return null;
+  return [...new Set(normalized)];
+}
 
 /**
  * Build an index: { bodyKey: [networks...] } from the live SDUI config.
@@ -213,11 +238,14 @@ async function _buildIndex() {
         // Resolve applicability → array of networks (or null if "all")
         const matrixNetworks = matrixNetworksByDocument.get(String(doc._id));
         let networks = matrixNetworks ? [...matrixNetworks] : null;
-        if (Array.isArray(applicability) && applicability.length > 0) {
-          const explicit = applicability.map(p => String(p).toLowerCase());
-          networks = networks ? [...new Set([...networks, ...explicit])] : explicit;
+        const explicitApplicability = normalizeNetworkApplicability(applicability);
+        if (explicitApplicability) {
+          networks = networks
+            ? [...new Set([...networks, ...explicitApplicability])]
+            : explicitApplicability;
         }
-        // 'all', missing, or non-array → null (no restriction)
+        // 'all', missing, or an empty value leaves networks as null (no
+        // restriction), unless the platform matrix supplied a restriction.
 
         for (const bk of matchingBodyKeys) {
           if (!index[bk]) index[bk] = new Set(networks || ALL_NETWORKS);
@@ -233,17 +261,8 @@ async function _buildIndex() {
           const normalizedOptionValue = String(rawOptionValue ?? '').trim().toLowerCase();
           if (!normalizedOptionValue) continue;
 
-          let optionNetworks = optionNetworksFallback;
-          const optionApplicability = option?.platform_applicability;
-          if (Array.isArray(optionApplicability) && optionApplicability.length > 0) {
-            optionNetworks = optionApplicability.map((network) => String(network).toLowerCase());
-          } else if (
-            optionApplicability &&
-            optionApplicability !== 'all' &&
-            typeof optionApplicability === 'string'
-          ) {
-            optionNetworks = [String(optionApplicability).toLowerCase()];
-          }
+          const optionApplicability = normalizeNetworkApplicability(option?.platform_applicability);
+          const optionNetworks = optionApplicability || optionNetworksFallback;
 
           for (const bk of matchingBodyKeys) {
             optionIndex[bk] ||= {};
@@ -331,6 +350,8 @@ async function getApplicableNetworks(reqBody) {
 
   const index = await _getIndex();
   const optionIndex = index._optionIndex || {};
+  const nativeNetworkFilterActive = [...NATIVE_NETWORK_FILTER_KEYS]
+    .some((key) => isActiveValue(reqBody[key]));
   let intersection = null;
 
   for (const [key, value] of Object.entries(reqBody)) {
@@ -405,6 +426,12 @@ async function getApplicableNetworks(reqBody) {
       }
     }
   }
+
+  // Native Network is a selector for the Native index itself. Preserve that
+  // boundary after all other applicability checks, including the generic
+  // empty-intersection fallback, so another active filter cannot make
+  // non-Native ads appear for a Native Network selection.
+  if (nativeNetworkFilterActive) return ['native'];
 
   return intersection && intersection.size > 0 ? Array.from(intersection) : null;
 }

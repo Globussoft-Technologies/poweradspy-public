@@ -87,6 +87,51 @@ describe("filterApplicability > static filter networks (no SDUI required)", () =
     expect(out).toEqual(expect.arrayContaining(["facebook", "instagram", "youtube"]));
   });
 
+  it("Native Network stays Native-only without relying on SDUI option metadata", async () => {
+    getSDUIConfig.mockResolvedValue({});
+    const { getApplicableNetworks } = freshSut();
+    expect(await getApplicableNetworks({ network: "all", nativeNetwork: ["taboola"] }))
+      .toEqual(["native"]);
+  });
+
+  it("Native Network options inherit the parent when SDUI stores option All", async () => {
+    getSDUIConfig.mockResolvedValue({
+      sidebar: [{ filters: [{
+        _id: "native_network_filter",
+        query_param: "nativeNetwork",
+        platform_applicability: ["native"],
+        options: [
+          { value: "taboola", platform_applicability: ["all"] },
+          { value: "outbrain" },
+        ],
+      }] }],
+    });
+    const { getApplicableNetworks } = freshSut();
+    expect(await getApplicableNetworks({ nativeNetwork: ["taboola"] })).toEqual(["native"]);
+  });
+
+  it("option-level All inherits a restricted parent instead of becoming global", async () => {
+    getSDUIConfig.mockResolvedValue({
+      sidebar: [{ filters: [{
+        _id: "parent_scoped_filter",
+        query_param: "parentScopedValue",
+        platform_applicability: ["native"],
+        options: [{ value: "taboola", platform_applicability: ["all"] }],
+      }] }],
+    });
+    const { getApplicableNetworks } = freshSut();
+    expect(await getApplicableNetworks({ parentScopedValue: ["taboola"] })).toEqual(["native"]);
+  });
+
+  it("Native Network remains the boundary when another filter would conflict", async () => {
+    getSDUIConfig.mockResolvedValue({});
+    const { getApplicableNetworks } = freshSut();
+    expect(await getApplicableNetworks({
+      source_app: ["some-admob-app"],
+      nativeNetwork: ["taboola"],
+    })).toEqual(["native"]);
+  });
+
   it("does not query AdMob or ChatGPT Ads for AI-Meta filters", async () => {
     getSDUIConfig.mockResolvedValue({});
     const { getApplicableNetworks } = freshSut();

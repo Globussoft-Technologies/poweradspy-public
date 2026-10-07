@@ -1,5 +1,7 @@
 'use strict';
 
+const { COUNTRY_LABEL_TO_ISO } = require('../../tiktok/helpers/countries');
+
 /**
  * LinkedIn ad/advertiser country-name → ISO normalization helpers.
  * Used by adInsightsController.js's getLinkedinAdCountry (single ad) and
@@ -38,6 +40,20 @@ const LINKEDIN_COUNTRY_ISO_ALIASES = {
   // LinkedIn sends "Côte d'Ivoire" (accented, curly apostrophe): two mismatches
   // at once, so not even case-insensitive matching bridges it.
   'côte d’ivoire': 'CI', "côte d'ivoire": 'CI', 'cote d’ivoire': 'CI', "cote d'ivoire": 'CI',
+  // Short forms LinkedIn sometimes sends instead of the full name. Deliberately an
+  // explicit list — NOT a generic "any 2-letter value is an ISO code" rule: the same
+  // `countries` array carries US state codes ("CA", "MA", "GA"…) that collide with
+  // real ISO codes (Canada, Morocco, Gabon).
+  'us': 'US', 'usa': 'US', 'uk': 'GB',
+  // Spellings the frontend's own country list (new-ui-react utils/countries.js)
+  // resolves but COUNTRY_LABEL_TO_ISO doesn't — kept so dropping no-ISO entries
+  // never hides a country the frontend used to show.
+  'congo (drc)': 'CD',
+  "côte d'ivoire (ivory coast)": 'CI', 'ivory coast': 'CI',
+  'saint kitts and nevis': 'KN', 'st. kitts & nevis': 'KN', 'st kitts and nevis': 'KN',
+  'saint vincent and the grenadines': 'VC', 'st. vincent & grenadines': 'VC',
+  'sao tome and principe': 'ST', 'são tomé & príncipe': 'ST', 'são tomé and príncipe': 'ST',
+  'vatican city': 'VA',
 };
 
 // Looks up a lower-cased country name in LINKEDIN_COUNTRY_ISO_ALIASES — null when
@@ -93,10 +109,51 @@ function isLatinCountryName(s) {
   return /^[\x00-\x7FÀ-ɏ‘’“”–—]+$/.test(s || '');
 }
 
+// Shared country-name → ISO list (also used by tiktok + chatgptads), keyed
+// lower-cased here for case-insensitive lookup; plus the reverse ISO → name.
+const ISO_BY_LABEL = new Map(Object.entries(COUNTRY_LABEL_TO_ISO).map(([name, iso]) => [name.toLowerCase(), iso]));
+const LABEL_BY_ISO = new Map();
+for (const [name, iso] of Object.entries(COUNTRY_LABEL_TO_ISO)) {
+  if (!LABEL_BY_ISO.has(iso)) LABEL_BY_ISO.set(iso, name);
+}
+
+// Multi-country regions the frontend's Country Reach map knows how to expand
+// (CountryAnalytics.jsx REGION_ISO_MAP). They have no single ISO but are kept.
+const DISPLAYABLE_REGIONS = new Set(['DACH', 'BENELUX', 'NORDICS', 'CEE', 'GCC', 'MENA', 'SEA', 'APAC', 'LATAM']);
+
+/**
+ * fixCountryIso, then fall back to the shared COUNTRY_LABEL_TO_ISO list.
+ * Returns null when the name isn't a country (city, US state code, region…).
+ */
+function resolveCountryIso(country, iso) {
+  const fixed = fixCountryIso(country, iso);
+  if (fixed && fixed !== 'null') return fixed;
+  return ISO_BY_LABEL.get(String(country || '').toLowerCase()) || null;
+}
+
+// LinkedIn's `countries` array mixes countries with cities and US state codes —
+// only real countries (resolved ISO) and known multi-country regions are shown.
+function isDisplayableCountry(country, iso) {
+  if (iso) return true;
+  return DISPLAYABLE_REGIONS.has(String(country || '').trim().toUpperCase());
+}
+
+// A short alias ("US", "USA", "UK") displays as the full country name.
+function countryDisplayName(country, iso) {
+  const raw = String(country || '').trim();
+  if (iso && LINKEDIN_COUNTRY_ISO_ALIASES[raw.toLowerCase()] && raw.length <= 3) {
+    return LABEL_BY_ISO.get(iso) || titleCase(raw);
+  }
+  return titleCase(raw);
+}
+
 module.exports = {
   fixCountryIso,
   titleCase,
   isLatinCountryName,
   resolveKnownCountryAlias,
+  resolveCountryIso,
+  isDisplayableCountry,
+  countryDisplayName,
   LINKEDIN_COUNTRY_ISO_ALIASES,
 };

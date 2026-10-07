@@ -352,6 +352,10 @@ function buildGetAdsInsertData(data, network) {
       'dashboard.comments':    data.comments_sort,
       'dashboard.shares':      data.shares_sort,
     });
+  } else if (network === 'Chatgpt') {
+    Object.assign(base, {
+      'filter.ad_type': data.type,
+    });
   } else if (network === 'All') {
     Object.assign(base, {
       'search_by.text':              data.ocr,
@@ -417,6 +421,7 @@ const FILTER_FIELDS_BY_NETWORK = {
   Native:    ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','network','adcategory','subCategory'],
   TikTok:    ['html_content','country','lang','call_to_action','ad_position_filter','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes','comments','shares','popularity','impressions','adBudget','ctr','budget'],
   tiktok:    ['html_content','country','lang','call_to_action','ad_position_filter','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes','comments','shares','popularity','impressions','adBudget','ctr','budget'],
+  Chatgpt:   ['html_content','country','lang','call_to_action','ad_position_filter','type','adcategory','subCategory'],
   All:       ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','celeb','object','logo','affiliate','ecommerce','funnel','source','market_platform','type','type_filter','adcategory','subCategory','likes','comments','shares','popularity','impressions','view','views','adBudget','verified','meta_ads_lib_filter','size','nativeNetwork','ad_sub_position','budget','ctr'],
 };
 
@@ -437,6 +442,12 @@ async function userActivity(req, elastic, logger) {
     const data = req.body;
     if (!data.user_id) {
       return { code: 400, message: 'Missing required param: user_id' };
+    }
+
+    // ChatGPT Ads are stored in user activity as 'Chatgpt', not the internal
+    // 'chatgptads' key — also inside a multi-network list like 'facebook,chatgptads'.
+    if (typeof data.network === 'string' && /chatgptads/i.test(data.network)) {
+      data.network = data.network.replace(/chatgptads/gi, 'Chatgpt');
     }
 
     const userEmail = data.email || 'NA';

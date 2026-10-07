@@ -3604,6 +3604,7 @@ const App = () => {
         isFilterRestricted={isFilterRestricted}
         onDateRestricted={() => showUpgradeOrLoginPrompt("Please login to filter by date")}
         onSortRestricted={() => showUpgradeOrLoginPrompt("Please login to change sorting")}
+        onAdTypeRestricted={() => showUpgradeOrLoginPrompt("Please login to filter by ad type")}
         onAiFilterRestricted={() => showUpgradeOrLoginPrompt("Please login to use AI filters")}
         guest={guest}
         showOnlyFavourites={ui.showSavedAdsPage}

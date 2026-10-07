@@ -1,7 +1,12 @@
 'use strict';
 
 const { normalizeParams } = require('../helpers/paramParser');
-const { fixCountryIso, titleCase, isLatinCountryName } = require('../helpers/countryIso');
+const {
+  isLatinCountryName,
+  resolveCountryIso,
+  isDisplayableCountry,
+  countryDisplayName,
+} = require('../helpers/countryIso');
 
 // ─── 1. getLikeCommentFollowerCount ────────────────────────
 
@@ -154,10 +159,20 @@ async function getLinkedinAdCountry(req, db, logger) {
       isoMap[String(row.nicename).toLowerCase()] = row.iso;
     });
 
-    const resArray = latinNames.map(country => ({
-      country: titleCase(country),
-      iso: fixCountryIso(country, isoMap[country.toLowerCase()] || null),
-    }));
+    // LinkedIn's `countries` array also carries cities ("Berlin") and US state
+    // codes ("CA", "NY") — anything that doesn't resolve to a country ISO (and
+    // isn't a known multi-country region) is dropped here, so the frontend never
+    // mistakes a state code for an ISO code (CA → Canada, MA → Morocco).
+    const resArray = latinNames
+      .map(country => {
+        const iso = resolveCountryIso(country, isoMap[country.toLowerCase()] || null);
+        return { country: countryDisplayName(country, iso), iso };
+      })
+      .filter(entry => isDisplayableCountry(entry.country, entry.iso));
+
+    if (resArray.length === 0) {
+      return { code: 400, message: 'No data found.', data: null };
+    }
 
     // Dedupe by resolved ISO — the aliasing above can now resolve two different
     // LinkedIn spellings (e.g. "Hong Kong SAR" and "Hong Kong SAR China", or
@@ -308,6 +323,8 @@ async function aggregateCountryData(db, hits) {
   // Pass 1 — resolve each raw name's ISO independently (same alias table as
   // getLinkedinAdCountry, so "Hong Kong SAR"/"Hong Kong SAR China" both → HK).
   const resolved = Object.entries(countryMap).map(([name, idSet]) => {
+    // Cities / US state codes resolve to no ISO and are filtered out below —
+    // see getLinkedinAdCountry.
     // Display name always comes from the scraped ES name, never country_data.name —
     // that column turns out to be inconsistently cased per row (e.g. "TURKEY" in
     // ALL CAPS for a row whose own nicename is "Turkey"), which titleCase() can't
@@ -316,10 +333,12 @@ async function aggregateCountryData(db, hits) {
     // through unfixed). getLinkedinAdCountry never had this bug because it never
     // reads country_data.name either.
     const lookup = isoMap.get(name.toLowerCase());
-    const country = titleCase(name);
-    const iso = fixCountryIso(name, lookup?.iso || null);
+    const iso = resolveCountryIso(name, lookup?.iso || null);
+    const country = countryDisplayName(name, iso);
     return { name, country, iso, idSet };
-  });
+  }).filter(entry => isDisplayableCountry(entry.country, entry.iso));
+
+  if (resolved.length === 0) return null;
 
   // Pass 2 — merge entries that resolved to the SAME iso into one row (union
   // their ad ids) instead of showing separate, fragmented-count rows for what
