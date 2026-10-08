@@ -6,6 +6,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PowerAdSpy</title>
 
+    <!-- PWA: installable app. The manifest/apple tags only matter to the
+         browser's install flow and the installed app; theme-color and
+         viewport-fit are added by the script below for standalone launches
+         only, so the website in a normal browser tab is unchanged. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="PowerAdSpy" />
+    <script>
+      // Installed phone app → `pwa-mobile` class on <html>, before first paint
+      // (no flash of the website layout). Standalone via display-mode (Chrome,
+      // Edge, Samsung Internet, Opera, newer iOS) or navigator.standalone (iOS
+      // Safari). KEEP IN SYNC with isInstalledMobileNow in hooks/useInstalledMobile.js.
+      (function markInstalledMobile() {
+        var mq = function (q) { return !!(window.matchMedia && window.matchMedia(q).matches); };
+        var standalone = mq('(display-mode: standalone)') || window.navigator.standalone === true;
+        var phone = window.matchMedia ? mq('(max-width: 767px)') : window.innerWidth < 768;
+        if (standalone && phone) document.documentElement.classList.add('pwa-mobile');
+        if (standalone) {
+          // Installed app only: draw under the notch (safe-area padding handles
+          // it) and tint the status bar; useTheme keeps the colour in sync.
+          var vp = document.querySelector('meta[name="viewport"]');
+          if (vp) vp.setAttribute('content', vp.getAttribute('content') + ', viewport-fit=cover');
+          var tc = document.createElement('meta');
+          tc.name = 'theme-color';
+          tc.content = '#ffffff';
+          document.head.appendChild(tc);
+        }
+      })();
+    </script>
+
     <!-- Google tag (gtag.js), loaded only for the configured rollout environment. -->
     <script>
       (function initializeGoogleAnalytics() {

@@ -54,9 +54,9 @@ const AnalyticsHeader = ({ adId, platform, onClose }) => {
   };
 
   return (
-    <div className={`sticky top-0 z-[210] flex items-center justify-between px-6 py-3 ${theme === 'light' ? 'bg-theme-card border-b border-theme-border' : 'bg-[#0e0e0e]/80 backdrop-blur-md border-b border-white/5'}`}>
-      <div className="flex items-center gap-3">
-        <span className={`text-[20px] font-bold tracking-tight ${theme === 'light' ? 'text-theme-text' : 'text-white'}`}>Ad Analytics for {PLATFORM_DISPLAY_NAMES[platform] || platform}</span>
+    <div className={`sticky top-0 z-[210] flex items-center justify-between px-6 py-3 pwa:gap-2 pwa:px-4 ${theme === 'light' ? 'bg-theme-card border-b border-theme-border' : 'bg-[#0e0e0e]/80 backdrop-blur-md border-b border-white/5'}`}>
+      <div className="flex items-center gap-3 pwa:min-w-0">
+        <span className={`text-[20px] pwa:text-base pwa:truncate font-bold tracking-tight ${theme === 'light' ? 'text-theme-text' : 'text-white'}`}>Ad Analytics for {PLATFORM_DISPLAY_NAMES[platform] || platform}</span>
       </div>
 
       <div className="flex items-center gap-1">

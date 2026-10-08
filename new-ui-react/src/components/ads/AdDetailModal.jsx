@@ -751,16 +751,17 @@ const AdDetailModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 pwa:p-0 pwa:items-end pwa:pt-[calc(60px+env(safe-area-inset-top))]"
       onClick={onClose}
     >
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" />
 
-      {/* Modal content */}
+      {/* Modal content — bottom sheet with a single scroll in the installed phone app (pwa:);
+          close/prev/next sit in the gap above it. */}
       <div
         onClick={(e) => e.stopPropagation()}
-        className="relative z-10 w-full max-w-sm md:max-w-xl lg:max-w-3xl flex justify-center items-center"
+        className="relative z-10 w-full max-w-sm md:max-w-xl lg:max-w-3xl pwa:max-w-none pwa:h-full flex justify-center items-center"
       >
         {/* Keep both controls mounted so rapid clicks at either end cannot
             fall through to the backdrop and close/reopen the modal. */}
@@ -772,7 +773,7 @@ const AdDetailModal = ({
             e.stopPropagation();
             if (hasPrev) onPrev?.();
           }}
-          className={`absolute top-1/2 -translate-y-1/2 -left-4 sm:-left-14 z-10 p-2 rounded-full text-white transition-colors ${
+          className={`absolute top-1/2 -translate-y-1/2 -left-4 sm:-left-14 pwa:fixed pwa:left-auto pwa:right-[100px] pwa:top-[calc(12px+env(safe-area-inset-top))] pwa:translate-y-0 pwa:p-1.5 pwa:z-30 pwa:bg-black/40 z-10 p-2 rounded-full text-white transition-colors ${
             hasPrev
               ? "bg-white/10 hover:bg-white/20"
               : "bg-white/5 opacity-30 cursor-not-allowed"
@@ -788,7 +789,7 @@ const AdDetailModal = ({
             e.stopPropagation();
             if (hasNext) onNext?.();
           }}
-          className={`absolute top-1/2 -translate-y-1/2 -right-4 sm:-right-14 z-10 p-2 rounded-full text-white transition-colors ${
+          className={`absolute top-1/2 -translate-y-1/2 -right-4 sm:-right-14 pwa:fixed pwa:right-14 pwa:top-[calc(12px+env(safe-area-inset-top))] pwa:translate-y-0 pwa:p-1.5 pwa:z-30 pwa:bg-black/40 z-10 p-2 rounded-full text-white transition-colors ${
             hasNext
               ? "bg-white/10 hover:bg-white/20"
               : "bg-white/5 opacity-30 cursor-not-allowed"
@@ -798,7 +799,7 @@ const AdDetailModal = ({
         </button>
 
         <div
-          className={`w-[90vw] relative max-w-sm md:max-w-xl lg:max-w-3xl max-h-[90vh] flex flex-col md:flex-row overflow-hidden rounded-2xl shadow-2xl ${
+          className={`w-[90vw] relative max-w-sm md:max-w-xl lg:max-w-3xl max-h-[90vh] pwa:w-full pwa:max-w-none pwa:h-full pwa:max-h-none pwa:rounded-b-none pwa:rounded-t-[24px] pwa:overflow-y-auto flex flex-col md:flex-row overflow-hidden rounded-2xl shadow-2xl ${
             hasAiMeta ? "border" : ""
           }`}
           style={{
@@ -809,14 +810,14 @@ const AdDetailModal = ({
           {/* Close button */}
           <button
             onClick={onClose}
-            className="absolute top-3 right-3 z-20 p-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white transition-colors"
+            className="absolute top-3 right-3 pwa:fixed pwa:top-[calc(12px+env(safe-area-inset-top))] pwa:p-2 z-20 p-1.5 rounded-full bg-black/40 hover:bg-black/60 text-white transition-colors"
           >
             <X size={16} />
           </button>
 
           {/* Left: Media — vertically centered with blurred image background */}
           <div
-            className="md:w-1/2 relative flex-shrink-0 flex rounded-tl-2xl rounded-bl-2xl items-center justify-center overflow-hidden"
+            className="md:w-1/2 relative flex-shrink-0 flex rounded-tl-2xl rounded-bl-2xl pwa:rounded-none pwa:max-h-[40vh] items-center justify-center overflow-hidden"
             style={{ backgroundColor: "var(--color-surface)" }}
           >
             {showOriginal ? (
@@ -866,7 +867,7 @@ const AdDetailModal = ({
                       <video
                         key={currentVideoUrl}
                         src={currentVideoUrl}
-                        className="w-full h-auto max-h-[90vh] object-contain relative z-[1]"
+                        className="w-full h-auto max-h-[90vh] pwa:max-h-[40vh] object-contain relative z-[1]"
                         autoPlay
                         controls
                         onEnded={() => setIsPlaying(false)}
@@ -879,7 +880,7 @@ const AdDetailModal = ({
                         key={currentEmbedUrl}
                         src={currentEmbedUrl}
                         title={currentTitle || "Video ad"}
-                        className="w-full h-[60vh] max-h-[90vh] relative z-[1] border-0 bg-black"
+                        className="w-full h-[60vh] max-h-[90vh] pwa:h-[40vh] relative z-[1] border-0 bg-black"
                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                         allowFullScreen
                         referrerPolicy="strict-origin-when-cross-origin"
@@ -945,7 +946,7 @@ const AdDetailModal = ({
                         muted
                         playsInline
                         preload="metadata"
-                        className="w-full h-auto max-h-[90vh] object-contain relative z-[1]"
+                        className="w-full h-auto max-h-[90vh] pwa:max-h-[40vh] object-contain relative z-[1]"
                         onLoadedData={() => setLoadedImageSrc(currentImg)}
                         onError={() => setFailedImageSrc(currentImg)}
                       />
@@ -957,7 +958,7 @@ const AdDetailModal = ({
                         data-media-src={displayedImageSrc}
                         alt={currentTitle}
                         decoding="async"
-                        className={`w-full h-auto max-h-[90vh] object-contain relative z-[1] transition-opacity duration-300 ${imgLoaded ? "opacity-100" : "opacity-0"}`}
+                        className={`w-full h-auto max-h-[90vh] pwa:max-h-[40vh] object-contain relative z-[1] transition-opacity duration-300 ${imgLoaded ? "opacity-100" : "opacity-0"}`}
                         onLoad={() => setLoadedImageSrc(displayedImageSrc)}
                         onError={(e) => {
                           e.target.style.display = "none";
@@ -990,7 +991,7 @@ const AdDetailModal = ({
                           playsInline
                           preload="metadata"
                           onError={handleVideoError}
-                          className="w-full h-auto max-h-[90vh] min-h-[320px] object-contain relative z-[1] bg-zinc-900"
+                          className="w-full h-auto max-h-[90vh] pwa:max-h-[40vh] min-h-[320px] pwa:min-h-[220px] object-contain relative z-[1] bg-zinc-900"
                         />
                       ) : (
                         <div className="relative z-[2] flex flex-col items-center justify-center gap-2 w-full min-h-[320px] pointer-events-none">
@@ -1147,7 +1148,7 @@ const AdDetailModal = ({
 
             {/* Right: Details. AI-enriched ads use the inline output treatment;
               ordinary detail modals retain their existing layout. */}
-          <div className="md:w-1/2 relative overflow-y-auto overflow-x-hidden p-5 pt-10 space-y-4">
+          <div className="md:w-1/2 relative overflow-y-auto overflow-x-hidden pwa:overflow-visible pwa:flex-shrink-0 p-5 pt-10 pwa:pt-5 pwa:pb-0 space-y-4">
             <div className="flex flex-col gap-2.5">
               {hasAiMeta && (
                 <div
@@ -2090,8 +2091,8 @@ const AdDetailModal = ({
               );
             })()}
 
-            {/* Action buttons */}
-            <div className="flex gap-2 pt-1">
+            {/* Action buttons — pinned to the bottom of the sheet in the installed phone app */}
+            <div className="flex gap-2 pt-1 pwa:sticky pwa:bottom-0 pwa:z-10 pwa:-mx-5 pwa:px-5 pwa:pt-3 pwa:pb-[calc(12px+env(safe-area-inset-bottom))] pwa:border-t pwa:border-theme-border pwa:bg-theme-card pwa:[&>*]:py-3 pwa:[&>*]:text-[13px]">
               <button
                 onClick={() => {
                   // Keep restricted features discoverable. The parent owns the

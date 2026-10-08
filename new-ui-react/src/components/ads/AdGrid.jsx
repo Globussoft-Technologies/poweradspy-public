@@ -10,6 +10,7 @@ const LOW_VOLUME_NETWORKS = ['quora', 'reddit', 'tiktok', 'linkedin'];
 import { useTranslation } from "react-i18next";
 import Masonry from "./Masonry";
 import MasonryCard from "./MasonryCard";
+import { useInstalledMobile } from "../../hooks/useInstalledMobile";
 import OriginalPreview from "./OriginalPreview";
 import AdDetailModal from "./AdDetailModal";
 import AdFilterBar, { resolveActiveSortLabel, resolveSortPlanAccessId } from "./AdFilterBar";
@@ -1056,7 +1057,13 @@ const AdGrid = ({
   // A result set with no cards has no scrollable content, so its filter/header
   // controls must remain visible even if the previous result set collapsed the
   // header before this search completed.
-  const shouldCollapseHeader = Boolean(isHeaderScrolled && ads.length > 0);
+  // Installed phone app: platforms/filters stay put while scrolling (users lost
+  // them on every scroll), and skipping the toggle also avoids re-rendering the
+  // whole App on scroll, which made the feed stutter on phones.
+  const isInstalledMobile = useInstalledMobile();
+  const isInstalledMobileRef = useRef(isInstalledMobile);
+  isInstalledMobileRef.current = isInstalledMobile;
+  const shouldCollapseHeader = Boolean(isHeaderScrolled && ads.length > 0 && !isInstalledMobile);
 
   // Synchronous lock that serializes page bumps. `loadingMore` is React state,
   // so it only flips to true on the next render — in the gap between issuing a
@@ -1087,7 +1094,7 @@ const AdGrid = ({
       lastClientHeightRef.current = clientHeight;
 
       // Handle sticky header toggle (Hide on scroll down, Show on ANY scroll up)
-      if (onScrollChange) {
+      if (onScrollChange && !isInstalledMobileRef.current) {
         // A change in scrollHeight/clientHeight since the previous event means
         // this scroll was caused by a layout shift — the header's own collapse/
         // expand, or masonry items measuring in — not by the user. Toggling on

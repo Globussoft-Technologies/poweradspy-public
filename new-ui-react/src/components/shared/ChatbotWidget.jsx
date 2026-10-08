@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { isInstalledMobileNow } from '../../hooks/useInstalledMobile';
 
 const CHAT_TOKEN = import.meta.env.VITE_FRESH_CHAT_TOKEN;
 const CHAT_HOST_URL = import.meta.env.VITE_FRESH_CHAT_HOST_URL;
@@ -6,10 +7,15 @@ const CHAT_UUID = import.meta.env.VITE_FRESH_CHAT_WIDGET_UUID;
 
 const ChatbotWidget = () => {
   const initFreshChat = () => {
+    // Installed phone app: the floating launcher covered sheet buttons and
+    // cards, so it's hidden there and chat opens from BottomNav's "More" menu
+    // (window.fcWidget.open()).
+    const hideLauncher = isInstalledMobileNow();
     window?.fcWidget?.init({
       token: CHAT_TOKEN,
       host: CHAT_HOST_URL,
       widgetUuid: CHAT_UUID,
+      ...(hideLauncher ? { config: { headerProperty: { hideChatButton: true } } } : {}),
     });
   };
 

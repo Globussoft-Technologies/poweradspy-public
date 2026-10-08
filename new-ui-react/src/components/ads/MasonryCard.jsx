@@ -983,7 +983,7 @@ const MasonryCard = ({
             <div
               aria-label="AI analysed result"
               title="AI analysed result"
-              className="absolute right-0 top-0 z-30 h-12 w-12 overflow-hidden pointer-events-none transition-opacity duration-200 group-hover:opacity-0"
+              className="absolute right-0 top-0 z-30 h-12 w-12 overflow-hidden pointer-events-none transition-opacity duration-200 group-hover:opacity-0 pwa:opacity-0"
             >
               <div
                 className={`absolute inset-0 shadow-lg ${
@@ -1018,10 +1018,12 @@ const MasonryCard = ({
 
           {/* Top-right: hover-revealed action strip — order: Type, Like, Download, Hide.
               Stays visible while the hide menu is open so the user can click
-              the EyeOff icon again to dismiss without losing track of it. */}
+              the EyeOff icon again to dismiss without losing track of it.
+              Always visible in the installed phone app (pwa:), which has no
+              hover; the AI corner mark above yields the corner to it there. */}
           <div
             className={`absolute top-2.5 right-2.5 z-30 flex items-center gap-1.5 transition-opacity duration-200 ${
-              showHideMenu ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+              showHideMenu ? "opacity-100" : "opacity-0 group-hover:opacity-100 pwa:opacity-100"
             }`}
           >
             {/* Ad type label */}
@@ -1149,7 +1151,7 @@ const MasonryCard = ({
                     prev > 0 ? prev - 1 : carouselImages.length - 1,
                   );
                 }}
-                className="absolute left-2 top-1/2 -translate-y-1/2 z-30 p-1.5 rounded-full bg-black/50 backdrop-blur-md text-white border border-white/20 shadow-lg opacity-0 group-hover/carousel:opacity-100 transition-all hover:bg-black/70"
+                className="absolute left-2 top-1/2 -translate-y-1/2 z-30 p-1.5 rounded-full bg-black/50 backdrop-blur-md text-white border border-white/20 shadow-lg opacity-0 group-hover/carousel:opacity-100 pwa:opacity-100 transition-all hover:bg-black/70"
               >
                 <ChevronLeft size={16} />
               </button>
@@ -1161,7 +1163,7 @@ const MasonryCard = ({
                     prev < carouselImages.length - 1 ? prev + 1 : 0,
                   );
                 }}
-                className="absolute right-2 top-1/2 -translate-y-1/2 z-30 p-1.5 rounded-full bg-black/50 backdrop-blur-md text-white border border-white/20 shadow-lg opacity-0 group-hover/carousel:opacity-100 transition-all hover:bg-black/70"
+                className="absolute right-2 top-1/2 -translate-y-1/2 z-30 p-1.5 rounded-full bg-black/50 backdrop-blur-md text-white border border-white/20 shadow-lg opacity-0 group-hover/carousel:opacity-100 pwa:opacity-100 transition-all hover:bg-black/70"
               >
                 <ChevronRight size={16} />
               </button>

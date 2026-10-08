@@ -76,6 +76,10 @@ const applyThemeToDOM = (themeKey) => {
   root.style.setProperty('--color-text-secondary', t.textSecondary);
   root.style.setProperty('--color-text-muted', t.textMuted);
   root.style.setProperty('--color-accent', t.accent);
+  // Installed-app (PWA) status bar follows the header colour — light mode's
+  // header is overridden to pure white in index.css, not the page bg.
+  document.querySelector('meta[name="theme-color"]')
+    ?.setAttribute('content', themeKey === 'light' ? '#ffffff' : t.bg);
 };
 
 const readInitialTheme = () => {

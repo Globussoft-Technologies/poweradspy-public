@@ -102,14 +102,24 @@ function toAiFilterList(val) {
   return arr.length > 0 ? arr : 'NA';
 }
 
+// AdMob Poster Intelligence rank-by value → label shown in the sidebar.
+const POSTER_INTELLIGENCE_LABELS = {
+  lead_score:                'Top Ranked',
+  occurrence_count:          'Most Seen',
+  days_running:              'Active Days',
+  poster_intelligence_score: 'Poster Intelligence Score',
+};
+
 // ChatGPT sort dropdown label (e.g. 'Oldest First') from the *_sort flag plus
 // order_by — the flag alone can't tell Longest Running from Shortest Running.
 function chatgptSortName(data) {
   const asc = String(data.order_by || '').toLowerCase() === 'asc';
   if (data.hits_sort === 'hits_sort')                       return asc ? 'Least Seen First' : 'Most Seen First';
   if (data.running_longest_sort === 'running_longest_sort') return asc ? 'Shortest Running' : 'Longest Running';
-  if (data.newest_sort === 'newest_sort')                   return asc ? 'Oldest First'     : 'Newest First';
-  return 'NA';
+  // Ad Seen Date — also the fallback, same as the ChatGPT search (paramParser
+  // parseSort): a leftover range filter from another tab can move order_column
+  // off post_date so no *_sort flag is set, yet ChatGPT still sorts by date.
+  return asc ? 'Oldest First' : 'Newest First';
 }
 
 function buildGetAdsInsertData(data, network) {
@@ -141,11 +151,13 @@ function buildGetAdsInsertData(data, network) {
     'filter.gender':         data.gender,
     'filter.lower_age':      data.lower_age,
     'filter.upper_age':      data.upper_age,
-    'lander.affiliates':     data.affiliate,
-    'lander.ecommerce':      data.ecommerce,
-    'lander.funnels':        data.funnel,
-    'lander.sources':        data.source,
-    'lander.marketing':      resolveMarketPlatforms(data.market_platform),
+    // Named after the sidebar filters (older records used lander.affiliates /
+    // lander.ecommerce / lander.funnels / lander.sources / lander.marketing).
+    'filter.affiliate_network':  data.affiliate,
+    'filter.ecommerce_platform': data.ecommerce,
+    'filter.funnel_type':        data.funnel,
+    'filter.traffic_source':     data.source,
+    'filter.marketing_platform': resolveMarketPlatforms(data.market_platform),
     'dashboard.newest_sort':          data.newest_sort,
     'dashboard.running_longest_sort': data.running_longest_sort,
     'dashboard.last_seen_sort':       data.last_seen_sort,
@@ -180,9 +192,33 @@ function buildGetAdsInsertData(data, network) {
   // Quick Filter preset id (e.g. 'tiktok_ugc') the user applied for this search.
   base['dashboard.quick_filter'] = data.quick_filter;
   // "AI analysed only" toggle.
+  // AdMob "Sub Network" filter (e.g. ['GDN', 'Meta Audience Network']).
+  base['filter.sub_network'] = data.sub_network;
+  // Ad Sub Position (TOP / BOTTOM) for every network — the Google and All
+  // branches below set the same field from the same value.
+  base['filter.ad_subPositions'] = data.ad_sub_position;
+  // Image Size ('1080*159,1080*167' → array) for every network — the GDN and
+  // All branches below set the same field the same way.
+  base['filter.image_size'] = data.size && data.size !== 'NA'
+    ? (typeof data.size === 'string' ? data.size.split(',').map(s => s.trim()).filter(Boolean) : data.size)
+    : 'NA';
+  // AdMob "Source App" filter and "Poster Intelligence" (rank-by + range sliders).
+  base['filter.source_app'] = data.source_app;
+  base['dashboard.poster_intelligence'] = POSTER_INTELLIGENCE_LABELS[data.admob_poster_sort] ?? data.admob_poster_sort;
+  base['dashboard.top_ranked_range']  = data.lead_score_range;
+  base['dashboard.most_seen_range']   = data.occurrence_count_range;
+  base['dashboard.active_days_range'] = data.active_days_range;
+  // Google "Transparency Ads" toggle and its Platform dropdown (e.g. 'SHOPPING').
+  base['dashboard.transparency_ads'] = toBoolStr(data.google_transparency_ads);
+  // The frontend sends 'NA' when the Platform dropdown is on All — store 'ALL'.
+  const transparencyPlatform = data.google_transparency_subnetwork;
+  base['dashboard.transparency_platform'] = base['dashboard.transparency_ads'] === 'true'
+    ? (transparencyPlatform && transparencyPlatform !== 'NA' ? transparencyPlatform : 'ALL')
+    : 'NA';
+  // The frontend sends 'false' only on the search right after it's switched off.
   base['dashboard.ai_analysed_only'] = toBoolStr(data.has_ai_meta) === 'true'
     ? 'true'
-    : (data.has_ai_meta === undefined ? 'NA' : 'false');
+    : (data.has_ai_meta === 'false' ? 'false' : 'NA');
 
   if (network === 'facebook') {
     Object.assign(base, {
@@ -373,13 +409,26 @@ function buildGetAdsInsertData(data, network) {
       'dashboard.hits_sort': data.hits_sort,
       'dashboard.sort_by':   chatgptSortName(data),
     });
+    // No ChatGPT sort flag (see chatgptSortName) → the search sorted by Ad Seen Date.
+    if (data.newest_sort !== 'newest_sort' && data.running_longest_sort !== 'running_longest_sort' && data.hits_sort !== 'hits_sort') {
+      base['dashboard.newest_sort'] = 'newest_sort';
+    }
     // Ascending sorts (Oldest First / Shortest Running / Least Seen First) send
-    // the same *_sort flag as their descending pair — record the direction in
-    // the value. The field itself stays so admin `exists` counts still see it.
+    // the same *_sort flag as their descending pair — store them under their own
+    // field instead (admin counts check these fields alongside the originals).
     if (String(data.order_by || '').toLowerCase() === 'asc') {
-      if (data.newest_sort === 'newest_sort')                   base['dashboard.newest_sort']          = 'oldest_sort';
-      if (data.running_longest_sort === 'running_longest_sort') base['dashboard.running_longest_sort'] = 'running_shortest_sort';
-      if (data.hits_sort === 'hits_sort')                       base['dashboard.hits_sort']            = 'least_hits_sort';
+      if (base['dashboard.newest_sort'] === 'newest_sort') {
+        base['dashboard.newest_sort'] = 'NA';
+        base['dashboard.oldest_sort'] = 'oldest_sort';
+      }
+      if (data.running_longest_sort === 'running_longest_sort') {
+        base['dashboard.running_longest_sort']  = 'NA';
+        base['dashboard.running_shortest_sort'] = 'running_shortest_sort';
+      }
+      if (data.hits_sort === 'hits_sort') {
+        base['dashboard.hits_sort']       = 'NA';
+        base['dashboard.least_hits_sort'] = 'least_hits_sort';
+      }
     }
   } else if (network === 'All') {
     Object.assign(base, {
@@ -553,7 +602,8 @@ async function userActivity(req, elastic, logger) {
       const branchNet = isAllOrMulti ? 'All' : net;
       // AI filters count as filters on every network, so an AI-only search
       // is recorded as filterType 'filter_only'.
-      const filterFields = [...(FILTER_FIELDS_BY_NETWORK[branchNet] || []), ...AI_FILTER_FIELDS];
+      const filterFields = [...(FILTER_FIELDS_BY_NETWORK[branchNet] || []), ...AI_FILTER_FIELDS, 'google_transparency_ads', 'sub_network', 'ad_sub_position', 'size',
+        'source_app', 'admob_poster_sort', 'lead_score_range', 'occurrence_count_range', 'active_days_range'];
       // Use actual net for the stored network field, branchNet only for field-mapping branch selection
       const insertData = buildGetAdsInsertData(data, branchNet);
       insertData.network = net; // overwrite with actual value (e.g. 'facebook,instagram' not 'All')
@@ -677,11 +727,11 @@ async function userActivity(req, elastic, logger) {
           'filter.gender':              data.gender,
           'filter.lower_age':           data.lower_age,
           'filter.upper_age':           data.upper_age,
-          'lander.affiliates':          data.affiliate,
-          'lander.ecommerce':           data.ecommerce,
-          'lander.funnels':             data.funnel,
-          'lander.sources':             data.source,
-          'lander.marketing':           resolveMarketPlatforms(data.market_platform),
+          'filter.affiliate_network':   data.affiliate,
+          'filter.ecommerce_platform':  data.ecommerce,
+          'filter.funnel_type':         data.funnel,
+          'filter.traffic_source':      data.source,
+          'filter.marketing_platform':  resolveMarketPlatforms(data.market_platform),
           'dashboard.likes_sort':       data.likes_sort,
           'dashboard.comments_sort':    data.comments_sort,
           'dashboard.shares_sort':      data.shares_sort,

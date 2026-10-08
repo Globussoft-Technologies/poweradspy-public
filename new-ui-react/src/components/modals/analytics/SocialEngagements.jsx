@@ -549,13 +549,13 @@ const SocialEngagements = ({ adId, adLcs, advertiserLcs, postOwnerId, availableY
   }, [level, isDaily, barId, theme, rateData, noData, avgRate]);
 
   return (
-    <div className="px-6">
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="flex items-center gap-2 text-[18px] font-bold tracking-wider text-white/90">
+    <div className="px-6 pwa:px-4">
+      <div className="flex items-center justify-between mb-2 pwa:flex-wrap pwa:gap-y-3 pwa:mb-3">
+        <h3 className="flex items-center gap-2 text-[18px] font-bold tracking-wider text-white/90 pwa:text-theme-text">
           <BarChart2 size={16} className="opacity-60" />
           Social Engagements
         </h3>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 pwa:flex-wrap pwa:gap-y-2">
           <div className={level === 'advertiser' ? 'block' : 'hidden'}>
             <DateRangePicker
               availableYears={availableYears || advertiserLcs?.available_years || []}

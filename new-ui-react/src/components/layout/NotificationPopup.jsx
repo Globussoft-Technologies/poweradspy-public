@@ -33,7 +33,7 @@ function timeAgo(dateStr) {
 const NotificationPopup = ({ notifications, onMarkAllRead, onNotificationClick, onClose }) => {
   return (
     <div
-      className="group absolute right-0 top-full mt-2 w-80 z-[60] rounded-xl p-[2px] overflow-hidden shadow-2xl"
+      className="group absolute right-0 top-full mt-2 w-80 pwa:fixed pwa:inset-x-2 pwa:w-auto z-[60] rounded-xl p-[2px] overflow-hidden shadow-2xl"
       style={{ animation: "notifSlideIn 0.2s ease-out" }}
     >
       {/* Spinning neon gradient border — mirrors the ad-card hover treatment */}

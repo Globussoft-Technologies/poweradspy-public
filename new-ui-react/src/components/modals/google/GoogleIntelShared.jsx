@@ -41,11 +41,11 @@ export const ModalShell = ({ icon, title, subtitle, onClose, zClass = "z-[300]",
 
   return (
   <div
-    className={`fixed inset-0 ${zClass} flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm`}
+    className={`fixed inset-0 ${zClass} flex items-center justify-center p-4 pwa:p-0 pwa:pt-[env(safe-area-inset-top)] pwa:pb-[env(safe-area-inset-bottom)] bg-black/80 backdrop-blur-sm`}
     onClick={onClose}
   >
     <div
-      className="bg-theme-card border border-theme-border w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh]"
+      className="bg-theme-card border border-theme-border w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[88vh] pwa:h-full pwa:max-h-none pwa:rounded-none pwa:border-0"
       onClick={(e) => e.stopPropagation()}
     >
       <div className="px-5 py-4 border-b border-theme-border flex items-center justify-between shrink-0">

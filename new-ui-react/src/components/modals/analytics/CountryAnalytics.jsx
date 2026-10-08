@@ -514,8 +514,8 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
   }, [level, viewMode, selectedCountries, countryMap, maxCount, mapId, theme, noData, countryData, deselected]);
 
   return (
-    <div className="px-6">
-      <div className="flex items-center justify-between mb-2">
+    <div className="px-6 pwa:px-4">
+      <div className="flex items-center justify-between mb-2 pwa:flex-wrap pwa:gap-y-3 pwa:mb-3">
         <h3
           className={`flex items-center gap-2 text-[18px] font-bold tracking-wider ${
             isLight ? "text-slate-800" : "text-white/90"
@@ -524,7 +524,7 @@ const CountryAnalytics = ({ adId, adCountry, advertiserCountry, platform, networ
           <Globe size={16} className="opacity-60" />
           Country Reach
         </h3>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 pwa:flex-wrap pwa:gap-y-2">
           <div className="flex items-center gap-2">
             <span
               className={`text-[14px] font-bold tracking-wider ${viewMode === "map" ? (isLight ? "text-gray-800" : "text-white/90") : isLight ? "text-gray-400" : "text-white/25"}`}

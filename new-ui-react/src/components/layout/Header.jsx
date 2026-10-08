@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { flushSync } from "react-dom";
 import {
   Menu,
   ChevronDown,
   X,
   LogOut,
-  Search,
+  ArrowUp,
   ArrowLeft,
   Share2,
   Check,
@@ -21,11 +22,13 @@ import {
   ArrowLeftRight,
   Sparkles,
   Plus,
+  Search,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { createDashboardShare, buildSearchPayload, trackEvent } from "../../services/api";
 import AutocompleteFilter from "../filters/AutocompleteFilter";
 import { useTheme, THEMES } from "../../hooks/useTheme";
+import { isInstalledMobileNow } from "../../hooks/useInstalledMobile";
 import { useAuth } from "../../hooks/useAuth";
 import powerAdSpyLogo from "../../assets/poweradspy-logo.webp";
 import whatsappLogo from "../../assets/whatsapp.png";
@@ -519,8 +522,13 @@ const Header = ({
       setShareLoading(false);
     }
   };
+  // In the installed phone app the header keeps logo/bell/profile visible and
+  // search opens from its icon, instead of the overlay covering them on load.
+  // Set when the installed-app search pill is tapped: the pill's vertical centre,
+  // so the expanded bar opens in place (null = classic full-screen overlay).
+  const [pwaSearchAnchor, setPwaSearchAnchor] = useState(null);
   const [isSearchOpenMobile, setIsSearchOpenMobile] = useState(
-    window.innerWidth < 768,
+    window.innerWidth < 768 && !isInstalledMobileNow(),
   );
   const searchTypeRef = useRef(null);
 
@@ -698,7 +706,9 @@ const Header = ({
     isAdsLibraryPage && !guest?.isRestricted && sdui.totalActiveFilters > 0;
   return (
     <header
-      className="relative flex h-16 2xl:h-20 min-w-0 shrink-0 items-center justify-between gap-2 overflow-visible border-b border-theme-border bg-theme-bg/95 px-3 py-2 backdrop-blur-md sticky top-0 z-40 sm:px-5"
+      // pwa: the installed phone app wraps to a second row for the search pill;
+      // the website keeps the single fixed-height header row.
+      className="relative flex h-16 2xl:h-20 pwa:h-auto pwa:flex-wrap min-w-0 shrink-0 items-center justify-between gap-2 overflow-visible border-b border-theme-border bg-theme-bg/95 px-3 py-2 backdrop-blur-md sticky top-0 z-40 sm:px-5"
     >
       <div className="flex min-w-0 shrink-0 items-center gap-4">
         <img
@@ -711,14 +721,17 @@ const Header = ({
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && isSearchOpenMobile && (
         <div
           className="fixed inset-0 bg-[#0a0a0a] backdrop-blur-sm z-40 md:hidden"
-          onClick={() => setIsSearchOpenMobile(false)}
+          // In-place expansion: dim the page instead of hiding it. Inline so the
+          // light-theme override that repaints bg-[#0a0a0a] can't win.
+          style={pwaSearchAnchor ? { backgroundColor: "rgba(15, 23, 42, 0.35)" } : undefined}
+          onClick={() => { setIsSearchOpenMobile(false); setPwaSearchAnchor(null); }}
         />
       )}
 
       {/* Center the absolute search controls against the full header, not just
           the remaining flex space between the logo and actions. */}
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
-        <div className="mx-1 flex h-full min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
+        <div className="mx-1 flex h-full pwa:h-12 min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
           {/* Desktop Search bar & Mobile Search Overlay */}
           {/* Keep the bar viewport-centered while reserving enough space for
               the logo and action group at compact breakpoints. */}
@@ -734,16 +747,23 @@ const Header = ({
               }
               ${
                 isSearchOpenMobile
-                  ? "fixed inset-0 z-50 bg-theme-bg/98 backdrop-blur-xl flex items-center px-4 gap-3 pointer-events-auto"
+                  ? pwaSearchAnchor
+                    // Installed phone app: expand in place — a bar centred on the
+                    // small search pill it was opened from, growing out to full width.
+                    ? "fixed inset-x-0 z-50 flex items-center px-3 gap-2 pointer-events-auto bg-transparent animate-[pwaSearchExpand_220ms_ease-out]"
+                    : "fixed inset-0 z-50 bg-theme-bg/98 backdrop-blur-xl flex items-center px-4 gap-3 pointer-events-auto"
                   : "absolute items-center hidden md:flex gap-2"
               }
               ${isScrolled ? "xl:opacity-0 xl:invisible xl:-translate-y-6 xl:pointer-events-none opacity-100 visible translate-y-0" : "opacity-100 visible translate-y-0"}
             `}
+            style={isSearchOpenMobile && pwaSearchAnchor
+              ? { top: pwaSearchAnchor.center - 26, height: 52, bottom: "auto" }
+              : undefined}
           >
             {isSearchOpenMobile && (
               <button
                 onClick={() => setIsSearchOpenMobile(false)}
-                className="p-2 text-theme-text-muted hover:text-theme-text transition-colors"
+                className="p-2 text-theme-text-muted hover:text-theme-text transition-colors pwa:rounded-full pwa:bg-theme-card pwa:p-1.5"
               >
                 <ArrowLeft size={20} />
               </button>
@@ -753,7 +773,7 @@ const Header = ({
               ref={searchBarBoxRef}
               className={`relative flex flex-1 items-center gap-0 transition-all ${
                 aiMode
-                  ? "h-[50px] rounded-[26px] bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] p-0.5"
+                  ? "h-[50px] pwa:h-[44px] rounded-[26px] bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] p-0.5"
                   : aiSearchIdleClass
               }`}
             >
@@ -1063,15 +1083,16 @@ const Header = ({
             {isSearchOpenMobile && (
               <button
                 onClick={() => setIsSearchOpenMobile(false)}
-                className="p-2 text-theme-text-muted hover:text-theme-text transition-colors"
+                className="p-2 text-theme-text-muted hover:text-theme-text transition-colors pwa:rounded-full pwa:bg-theme-card pwa:p-1.5"
               >
                 <X size={20} />
               </button>
             )}
           </div>
 
-          {/* Ad Filter Bar (visible on scroll on desktop) */}
-          <div className="relative h-full min-w-0 w-full">
+          {/* Ad Filter Bar (visible on scroll on desktop). Hidden in the installed
+              phone app so the search pill row gets the full width. */}
+          <div className="relative h-full min-w-0 w-full pwa:hidden">
             <div
               className={`
                 absolute inset-0 transition-all duration-300 ease-in-out
@@ -1114,9 +1135,11 @@ const Header = ({
       {/* Actions stay in normal flow and remain above the centered search when
           the responsive width reaches the available header space. */}
       <div className="relative z-20 flex min-w-0 shrink-0 items-center gap-1 sm:gap-2">
+        {/* Website on phones: search icon opens the full-screen search overlay.
+            The installed phone app uses the search pill row instead. */}
         {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
           <button
-            className="md:hidden sm:p-1.5 text-theme-text-muted hover:text-theme-text transition-colors"
+            className="md:hidden pwa:hidden sm:p-1.5 text-theme-text-muted hover:text-theme-text transition-colors"
             onClick={() => setIsSearchOpenMobile(true)}
           >
             <Search size={20} />
@@ -1192,7 +1215,7 @@ const Header = ({
 
         {/* Notification bell — logged-in users only */}
         {!isLanding && !isGuestMode && !guest?.isGuest && (
-          <div className="relative hidden sm:block" ref={notifRef}>
+          <div className="relative hidden sm:block pwa:block" ref={notifRef}>
             <button
               id="notification-bell"
               onClick={() => setNotifOpen((prev) => !prev)}
@@ -1218,7 +1241,7 @@ const Header = ({
         )}
 
         {/* Language Switcher */}
-        <div className="relative hidden sm:block" ref={langRef}>
+        <div className="relative hidden sm:block pwa:block" ref={langRef}>
           <button
             onClick={() => setLangOpen((prev) => !prev)}
             title={t("language")}
@@ -1259,7 +1282,7 @@ const Header = ({
             --color-* vars updates in lockstep. */}
         <AnimatedThemeToggler
           title={t("toggle_theme", "Toggle theme")}
-          className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg text-theme-text-muted transition-all hover:bg-theme-text/[0.08] hover:text-theme-text sm:flex [&_svg]:h-4 [&_svg]:w-4 2xl:h-9 2xl:w-9 2xl:[&_svg]:h-[18px] 2xl:[&_svg]:w-[18px]"
+          className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg text-theme-text-muted transition-all hover:bg-theme-text/[0.08] hover:text-theme-text sm:flex pwa:flex [&_svg]:h-4 [&_svg]:w-4 2xl:h-9 2xl:w-9 2xl:[&_svg]:h-[18px] 2xl:[&_svg]:w-[18px]"
         />
 
         {/* Fullscreen toggle — currently hidden via `hidden` class; the
@@ -1274,8 +1297,12 @@ const Header = ({
         </button>
 
         <div className="relative group order-2">
+          {/* Installed phone app only: tabIndex lets a tap focus the avatar; the
+              pwa:group-focus-within classes below open the menu on that tap,
+              since there is no hover. The website keeps hover-only behaviour. */}
           <div
-            className="w-6 h-6 2xl:w-8 2xl:h-8 rounded-lg bg-[#335296] flex items-center justify-center text-[11px] 2xl:text-sm font-black cursor-pointer hover:bg-[#3762c1] transition-colors text-white"
+            tabIndex={isInstalledMobileNow() ? 0 : undefined}
+            className="pwa:outline-none w-6 h-6 2xl:w-8 2xl:h-8 rounded-lg bg-[#335296] flex items-center justify-center text-[11px] 2xl:text-sm font-black cursor-pointer hover:bg-[#3762c1] transition-colors text-white"
             title={isGuestMode ? "Guest" : (user?.name || user?.email || "")}
           >
             {isLanding || isGuestMode
@@ -1283,7 +1310,7 @@ const Header = ({
               : (user?.name || user?.email || "U").charAt(0).toUpperCase()}
           </div>
           <div
-            className={`group/dropdown absolute right-0 top-full mt-1 ${isLanding || isGuestMode ? "w-max min-w-[110px]" : "w-56"} rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 p-[2px] overflow-hidden`}
+            className={`group/dropdown absolute right-0 top-full mt-1 ${isLanding || isGuestMode ? "w-max min-w-[110px]" : "w-56"} rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible pwa:group-focus-within:opacity-100 pwa:group-focus-within:visible transition-all z-50 p-[2px] overflow-hidden`}
           >
             {/* Spinning neon gradient border — fires only when the dropdown
                 itself is hovered (group/dropdown), not when the avatar is. */}
@@ -1446,6 +1473,60 @@ const Header = ({
           </div>
         )}
       </div>
+
+      {/* Installed phone app only: second header row with a compact search pill
+          (purple in AI mode, plain otherwise). Tapping it expands the search bar
+          in place. The website keeps its search icon + full-screen overlay. */}
+      {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
+        <button
+          type="button"
+          onClick={(e) => {
+            // Installed phone app: remember where the pill is so the search bar
+            // expands right there instead of jumping to the top of the screen.
+            const r = e.currentTarget.getBoundingClientRect();
+            const inPlace = isInstalledMobileNow();
+            // Render the overlay synchronously, then focus its input inside this
+            // same tap so the phone keyboard opens right away.
+            flushSync(() => {
+              setPwaSearchAnchor(inPlace ? { center: r.top + r.height / 2 } : null);
+              setIsSearchOpenMobile(true);
+            });
+            document.querySelector("header input")?.focus();
+          }}
+          aria-label={t("search_placeholder", "Search")}
+          // pwa: same spot, centred, as a smaller pill (shorter, ~2/3 width);
+          // tapping it expands in place to full width.
+          className={`hidden pwa:flex h-8 w-full basis-full items-stretch rounded-full max-w-[68%] mx-auto ${
+            aiMode
+              ? "bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] p-0.5"
+              : theme === "light"
+                ? "border border-[#dfe2ee]"
+                : "border border-theme-border"
+          }`}
+        >
+          <span className="flex min-w-0 flex-1 items-center gap-2 pwa:gap-1.5 rounded-full bg-theme-card px-3 pwa:px-2.5">
+            <Plus
+              size={16}
+              strokeWidth={2.2}
+              className={`shrink-0 ${aiMode ? "text-[#7c3aed]" : "text-theme-text"}`}
+            />
+            <span
+              className={`min-w-0 flex-1 truncate text-left text-xs pwa:text-[11px] ${
+                localQuery ? "text-theme-text" : "text-theme-text-muted"
+              }`}
+            >
+              {localQuery ||
+                (aiMode
+                  ? t(
+                      "ai_search_placeholder",
+                      "Describe what you're looking for — e.g. Facebook video ads for weight loss in the US"
+                    )
+                  : normalSearchPlaceholder)}
+            </span>
+            {aiMode && <ArrowUp size={16} className="shrink-0 text-theme-text" />}
+          </span>
+        </button>
+      )}
     </header>
   );
 };

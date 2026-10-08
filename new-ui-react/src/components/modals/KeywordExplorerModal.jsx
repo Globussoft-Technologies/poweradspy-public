@@ -69,7 +69,7 @@ const KeywordExplorerModal = ({ keyword, onClose, onAdvertiserClick, onOpenKeywo
 
       {/* Drawer panel */}
       <div
-        className={`absolute top-0 right-0 bottom-0 w-[640px] max-w-[94vw] bg-theme-card border-l border-theme-border shadow-2xl flex flex-col transform transition-transform duration-300 ease-out ${
+        className={`absolute top-0 right-0 bottom-0 w-[640px] max-w-[94vw] pwa:w-full pwa:max-w-none pwa:border-l-0 pwa:pt-[env(safe-area-inset-top)] pwa:pb-[env(safe-area-inset-bottom)] bg-theme-card border-l border-theme-border shadow-2xl flex flex-col transform transition-transform duration-300 ease-out ${
           shown ? "translate-x-0" : "translate-x-full"
         }`}
       >

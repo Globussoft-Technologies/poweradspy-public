@@ -239,16 +239,16 @@ const LanderDetails = ({
   if (isProcessing || hasError || !resolvedScreenshotUrl) return null;
 
   return (
-    <div className="px-6">
-      <div className="flex items-center justify-between mb-2">
+    <div className="px-6 pwa:px-4">
+      <div className="flex items-center justify-between mb-2 pwa:flex-wrap pwa:gap-y-3 pwa:mb-3">
         <h3
-          className={`flex items-center gap-2 text-[18px] font-bold tracking-wider ${isLight ? "text-gray-800" : "text-white/90"}`}
+          className={`flex items-center gap-2 text-[18px] font-bold tracking-wider pwa:whitespace-nowrap ${isLight ? "text-gray-800" : "text-white/90"}`}
         >
           <Monitor size={16} className="opacity-60" />
           Lander Details
         </h3>
         {!isProcessing && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pwa:flex-wrap">
             <button
               type="button"
               onClick={() => setShowPreview(true)}

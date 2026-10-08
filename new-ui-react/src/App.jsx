@@ -16,6 +16,8 @@ import {
 import { getDashboardAdNavigation } from "./utils/dashboardAdNavigation";
 import { classifyError, getFilterCountBucket, getNetworkContext, trackAdAction, trackAnalyticsPageView, trackGuestRoutePageView, trackProductEvent } from "./utils/googleAnalytics";
 import { useTheme } from "./hooks/useTheme";
+
+import { useInstalledMobile } from "./hooks/useInstalledMobile";
 import { useAuth } from "./hooks/useAuth";
 import {
   fetchAds,
@@ -70,6 +72,7 @@ import { ADMOB_FRONTEND_ENABLED } from './constants';
 // Components
 import Header from "./components/layout/Header";
 import Sidebar from "./components/layout/Sidebar";
+import BottomNav from "./components/layout/BottomNav";
 import AdGrid from "./components/ads/AdGrid";
 import { resolveActiveSortLabel } from "./components/ads/AdFilterBar";
 import AIAnalysisModal from "./components/modals/AIAnalysisModal";
@@ -145,6 +148,7 @@ const pruneSavedHiddenSnapshotStore = (store) => {
 
 import ChatbotWidget from "./components/shared/ChatbotWidget";
 import NotificationPermissionPrompt from "./components/layout/NotificationPermissionPrompt";
+import InstallAppPrompt from "./components/layout/InstallAppPrompt";
 import UnsubscribePage from "./components/UnsubscribePage";
 
 const USE_SAMPLE_DATA = false;
@@ -371,6 +375,8 @@ const App = () => {
   // ── SDUI State ───────────────────────────────────────────────────────
   const sdui = useSDUI();
   const { theme, colors } = useTheme();
+  // Installed PWA on a phone: swap the sidebar nav for an app-style bottom nav.
+  const isInstalledMobile = useInstalledMobile();
 
   // Category taxonomy (major category → subcategories) from the SDUI config.
   // Passed to AnalyticsModal so it can show ALL major categories an ad's
@@ -1996,6 +2002,41 @@ const App = () => {
           // AI categories are searched by ID; user activity logs their names.
           aiCategoryNames: getAiFilterOptionLabels(_aiMetaDoc, 'ai_category_id', sdui.filterValues?.ai_category_id),
           aiSubcategoryNames: getAiFilterOptionLabels(_aiMetaDoc, 'ai_subcategory_id', sdui.filterValues?.ai_subcategory_id),
+          // Languages are searched by code (en); user activity logs the name (English).
+          languageLabels: Object.fromEntries(
+            (sdui.config?.sidebar || [])
+              .flatMap((doc) => doc?.filters || [])
+              .filter((filter) => filter?._id === 'language_filter')
+              .flatMap((filter) => filter.options || [])
+              .filter((option) => option?.value != null && option?.label)
+              .map((option) => [String(option.value), String(option.label)]),
+          ),
+          // Landing-page filters are searched by value (shopify); user activity
+          // logs the sidebar label (Shopify). Keyed by SDUI filter id.
+          filterOptionLabels: Object.fromEntries(
+            ['ecommerce_platform_filter', 'marketing_platform_filter', 'funnel_filter', 'affiliate_network_filter', 'source_filter',
+              'admob_network_filter', 'sub_network_filter',
+              'admob_source_app_filter', 'source_app_filter']
+              .map((filterId) => [filterId, Object.fromEntries(
+                (sdui.config?.sidebar || [])
+                  .flatMap((doc) => doc?.filters || [])
+                  .filter((filter) => filter?._id === filterId)
+                  .flatMap((filter) => filter.options || [])
+                  .filter((option) => option?.value != null && option?.label)
+                  .map((option) => [String(option.value), String(option.label)]),
+              )]),
+          ),
+          // Categories / subcategories may be searched by ID (1001, 10010001);
+          // user activity logs the names. Keyed by value, cat_id and sub_cat_id.
+          categoryLabels: Object.fromEntries(
+            (sdui.config?.sidebar?.find((doc) => doc?._id === 'category')?.filters || [])
+              .flatMap((filter) => filter?.options || [])
+              .flatMap((option) => [option, ...(option?.children || option?.sub_options || [])])
+              .filter((option) => option?.label)
+              .flatMap((option) => [option.value, option.cat_id, option.sub_cat_id]
+                .filter((key) => key != null && key !== '')
+                .map((key) => [String(key), String(option.label)])),
+          ),
           searchQuery: ui.searchQuery,
           searchIn: ui.searchIn,
           exactSearch: ui.exactSearch,
@@ -2010,6 +2051,12 @@ const App = () => {
           // An explicitly scoped list prevents buildSearchPayload from
           // serializing this request as network="all" and widening SDUI scope.
           isAllTab: isAllActive && !isScopedAllRequest,
+          // The visible tab, even when the request above is narrowed to a
+          // network list — user activity logs it as network "All".
+          isAllTabSelected: isAllActive,
+          // The tabs the user selected (plan-permitted), before filter scopes
+          // narrow them to searchPlatforms — user activity logs these.
+          selectedPlatforms: permittedPlatforms,
           _aiSearchExecution: aiSearchExecutionRef.current,
           ...(_projCtx || {}),
         };
@@ -3592,9 +3639,28 @@ const App = () => {
     return null;
   }
 
+  // Shared by the Sidebar nav and the installed-app BottomNav.
+  const handleNavPageChange = (val) => {
+    if (guest?.isPublicLanding) { guest.showGuestWarning('Please login to access this feature'); return; }
+    if (val === 'intelligence') {
+      // Own URL so reload stays on Market Trends (URL-sync effect sets state).
+      navigate('/market-trends');
+      dispatch(setShowSavedAdsPage(false));
+      return;
+    }
+    if (location.pathname === '/market-trends') navigate('/');
+    dispatch(setActivePage(val));
+    dispatch(setShowSavedAdsPage(false));
+  };
+  const handleToggleSavedAdsPage = () => {
+    const next = !ui.showSavedAdsPage;
+    dispatch(setActivePage('ads'));
+    dispatch(setShowSavedAdsPage(next));
+  };
+
   return (
     <div
-      className="h-screen flex flex-col font-sans selection:bg-[#3762c1]/20 overflow-hidden transition-colors duration-300"
+      className="h-screen pwa:h-[100dvh] pwa:pt-[env(safe-area-inset-top)] flex flex-col font-sans selection:bg-[#3762c1]/20 overflow-hidden transition-colors duration-300"
       style={{ backgroundColor: colors.bg, color: colors.text }}
     >
       <Header
@@ -3650,25 +3716,15 @@ const App = () => {
         activeTab={ui.activeTab}
       />
 
-      <div className="flex flex-1 overflow-hidden">
+      {/* pwa: bottom padding keeps page content clear of the fixed BottomNav (h-14). */}
+      <div className="flex flex-1 overflow-hidden pwa:pb-[calc(56px+env(safe-area-inset-bottom))]">
         <Sidebar
           isOpen={ui.isSidebarOpen}
           setIsOpen={(val) => dispatch(setSidebarOpen(val))}
           sdui={sdui}
           onGenerateStrategy={handleGenerateCampaign}
           activePage={ui.activePage}
-          onPageChange={(val) => {
-            if (guest?.isPublicLanding) { guest.showGuestWarning('Please login to access this feature'); return; }
-            if (val === 'intelligence') {
-              // Own URL so reload stays on Market Trends (URL-sync effect sets state).
-              navigate('/market-trends');
-              dispatch(setShowSavedAdsPage(false));
-              return;
-            }
-            if (location.pathname === '/market-trends') navigate('/');
-            dispatch(setActivePage(val));
-            dispatch(setShowSavedAdsPage(false));
-          }}
+          onPageChange={handleNavPageChange}
           isFilterRestricted={isFilterRestricted}
           filterHasPlanEntry={filterHasPlanEntry}
           onRestricted={() => {
@@ -3684,11 +3740,7 @@ const App = () => {
           isLoggedIn={!guest?.isRestricted}
           allowedPlatforms={adsAllowedPlatforms}
           showSavedAdsPage={ui.showSavedAdsPage}
-          onShowSavedAdsPage={() => {
-            const next = !ui.showSavedAdsPage;
-            dispatch(setActivePage('ads'));
-            dispatch(setShowSavedAdsPage(next));
-          }}
+          onShowSavedAdsPage={handleToggleSavedAdsPage}
           onOpenKeywordsExplorer={openKeywordsExplorerPage}
           searchIn={ui.searchIn}
         />
@@ -3955,6 +4007,27 @@ const App = () => {
         )}
       </div>
 
+      {isInstalledMobile && (
+        <BottomNav
+          activePage={ui.activePage}
+          showSavedAdsPage={ui.showSavedAdsPage}
+          onPageChange={handleNavPageChange}
+          onShowSavedAdsPage={handleToggleSavedAdsPage}
+          onOpenKeywordsExplorer={openKeywordsExplorerPage}
+          onOpenFilters={() => dispatch(setSidebarOpen(true))}
+          activeFilterCount={sdui.totalActiveFilters}
+          guest={guest}
+          onRestricted={() => showUpgradeOrLoginPrompt("Please login to use this feature")}
+          canAccessProjects={canAccessProjects}
+          projectsAccessResolved={projectsAccess.resolved}
+          projectsAccessUnavailable={projectsAccess.unavailable}
+          intelligenceEnabled={intelUIEnabled}
+          keywordExplorerEnabled={keywordExplorerUIEnabled}
+          isLoggedIn={!guest?.isRestricted}
+          allowedPlatforms={adsAllowedPlatforms}
+        />
+      )}
+
       <AnalyticsModal
         ad={hasAdAnalyticsAccess ? selectedAdForAnalytics : null}
         categoryOptions={categoryOptions}
@@ -4046,7 +4119,7 @@ const App = () => {
       />
 
       {actionError && (
-        <div className="fixed bottom-16 left-1/2 -translate-x-1/2 z-[400] px-4 py-2.5 bg-red-500/15 border border-red-500/30 rounded-xl backdrop-blur-md flex items-center gap-2 animate-in slide-in-from-bottom-2">
+        <div className="fixed bottom-16 pwa:bottom-[calc(72px+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-[400] px-4 py-2.5 bg-red-500/15 border border-red-500/30 rounded-xl backdrop-blur-md flex items-center gap-2 animate-in slide-in-from-bottom-2">
           <span className="text-xs font-medium text-red-400">
             {actionError}
           </span>
@@ -4128,7 +4201,7 @@ const App = () => {
         <div
           className={`fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 ${
             toast.position === 'bottom'
-              ? 'bottom-16 slide-in-from-bottom-4'
+              ? 'bottom-16 pwa:bottom-[calc(72px+env(safe-area-inset-bottom))] slide-in-from-bottom-4'
               : 'top-[140px] slide-in-from-top-4'
           }`}
           style={{
@@ -4229,6 +4302,9 @@ const App = () => {
 
       {/* Push Notification Permission Prompt */}
       <NotificationPermissionPrompt />
+
+      {/* "Install PowerAdSpy" banner — phone browsers only (see component) */}
+      <InstallAppPrompt />
     </div>
   );
 };

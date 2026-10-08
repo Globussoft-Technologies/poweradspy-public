@@ -399,11 +399,11 @@ const SavedAdsPage = ({
   return (
     <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden bg-theme-bg">
       {/* Toolbar */}
-      <div className="px-5 pt-3 pb-3 border-b border-theme-border">
+      <div className="px-5 pt-3 pb-3 pwa:px-4 border-b border-theme-border">
         <div className="flex flex-wrap items-center gap-2">
-          {/* Platform tabs */}
-          <div className="flex items-center min-w-0 flex-1">
-            <div className="flex w-fit bg-theme-card rounded-xl gap-0.5 border p-1 hide-scrollbar border-theme-border overflow-x-auto ">
+          {/* Platform tabs — own full-width row in the installed phone app (pwa:) */}
+          <div className="flex items-center min-w-0 flex-1 pwa:basis-full">
+            <div className="flex w-fit pwa:w-full bg-theme-card rounded-xl gap-0.5 border p-1 hide-scrollbar pwa-scrollbar pwa:pb-1.5 border-theme-border overflow-x-auto ">
               <PlatformTab
                 label="All"
                 active={isAllActive}

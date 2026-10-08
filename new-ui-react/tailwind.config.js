@@ -1,3 +1,5 @@
+import plugin from 'tailwindcss/plugin';
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -37,5 +39,15 @@ export default {
       },
       plugins: [],
     }
-  }
+  },
+  plugins: [
+    // `pwa:` — installed app on a phone-sized screen, in any browser that can
+    // install it (Chrome, Edge, Samsung Internet, Opera, iOS Safari). Keyed off
+    // the `pwa-mobile` class the inline script in index.html puts on <html>,
+    // so the website (any browser, any width) and the installed desktop app
+    // keep their current UI. Detection logic lives in hooks/useInstalledMobile.js.
+    plugin(({ addVariant }) => {
+      addVariant('pwa', '.pwa-mobile &');
+    }),
+  ],
 }

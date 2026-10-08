@@ -2715,7 +2715,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               Advertiser website, name or description
             </label>
             <form
-              className="flex gap-3"
+              className="flex gap-3 pwa:flex-col"
               onSubmit={(event) => {
                 event.preventDefault();
                 handleNextPhase();
@@ -2775,7 +2775,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               <button
                 type="submit"
                 disabled={!websiteLink}
-                className={`px-6 py-3.5 rounded-xl font-bold flex items-center gap-2 transition-all shadow-lg ${websiteLink ? "bg-[#335296] hover:bg-[#3762c1] text-white shadow-[#3759a3]/25 cursor-pointer" : "bg-theme-border text-theme-text-muted cursor-not-allowed"}`}
+                className={`px-6 py-3.5 rounded-xl font-bold flex items-center gap-2 pwa:justify-center transition-all shadow-lg ${websiteLink ? "bg-[#335296] hover:bg-[#3762c1] text-white shadow-[#3759a3]/25 cursor-pointer" : "bg-theme-border text-theme-text-muted cursor-not-allowed"}`}
               >
                 Continue <ChevronRight size={18} />
               </button>

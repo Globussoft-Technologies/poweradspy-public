@@ -150,6 +150,7 @@ import {
   Check,
 } from "lucide-react";
 import { useTheme } from "../../hooks/useTheme";
+import { useInstalledMobile } from "../../hooks/useInstalledMobile";
 import { resolveAnalyticsFilterValueLabel } from "../../hooks/useSDUI";
 import { useAdInsights } from "../../hooks/useAdInsights";
 import { useInterestBehaviour } from "../../hooks/useInterestBehaviour";
@@ -1641,6 +1642,9 @@ const AnalyticsModal = ({
 }) => {
   const { theme } = useTheme();
   const isLight = theme === 'light';
+  // Installed phone app: full-screen modal, creative shown inline at the top
+  // (the floating side preview is lg-only, so its reserved margin is dropped).
+  const isInstalledMobile = useInstalledMobile();
 const isAdmob =
   normalizePlatformSlug(ad?.network || ad?.platform) === "admob";
 // ChatGPT Ads: the card `id` is the extension's 12-digit ad_id, but the insights API
@@ -2562,12 +2566,12 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
 
   return (
     <div
-      className={`fixed inset-0 z-[200] flex items-center justify-center p-4 backdrop-blur-xl animate-in fade-in zoom-in-95 ${isLight ? "bg-black/40" : "bg-[#0a0a0a]/90"}`}
+      className={`fixed inset-0 z-[200] flex items-center justify-center p-4 pwa:p-0 pwa:items-end pwa:pt-[calc(60px+env(safe-area-inset-top))] backdrop-blur-xl pwa:backdrop-blur-sm animate-in fade-in zoom-in-95 ${isLight ? "bg-black/40" : "bg-[#0a0a0a]/90"}`}
     >
       {hasPrev && (
         <button
           onClick={onPrev}
-          className={`absolute left-2 top-1/2 -translate-y-1/2 z-[210] w-9 h-9 rounded-full flex items-center justify-center transition-all backdrop-blur-sm border-2 ${isLight ? "bg-white/80 border-black/30" : "bg-white/5 border-white/30"}`}
+          className={`absolute left-2 top-1/2 -translate-y-1/2 pwa:left-4 pwa:top-[calc(12px+env(safe-area-inset-top))] pwa:translate-y-0 pwa:shadow-lg z-[210] w-9 h-9 rounded-full flex items-center justify-center transition-all backdrop-blur-sm border-2 ${isLight ? "bg-white/80 border-black/30" : "bg-white/5 border-white/30"}`}
           title="Previous (←)"
         >
           <ChevronLeft size={18} />
@@ -2576,15 +2580,15 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
       {hasNext && (
         <button
           onClick={onNext}
-          className={`absolute right-2 top-1/2 -translate-y-1/2 z-[210] w-9 h-9 rounded-full flex items-center justify-center transition-all backdrop-blur-sm border-2 ${isLight ? "bg-white/80 border-black/30" : "bg-white/5 border-white/30"}`}
+          className={`absolute right-2 top-1/2 -translate-y-1/2 pwa:right-4 pwa:top-[calc(12px+env(safe-area-inset-top))] pwa:translate-y-0 pwa:shadow-lg z-[210] w-9 h-9 rounded-full flex items-center justify-center transition-all backdrop-blur-sm border-2 ${isLight ? "bg-white/80 border-black/30" : "bg-white/5 border-white/30"}`}
           title="Next (→)"
         >
           <ChevronRight size={18} />
         </button>
       )}
       <div
-        className={`w-full max-w-[1240px] rounded-[32px] overflow-hidden flex flex-col relative group border-2 ${isLight ? "bg-white border-black/30 shadow-2xl" : "bg-[#0e0e0e] border-white/30 shadow-[0_0_100px_rgba(0,0,0,0.8)]"}`}
-        style={{ maxHeight: "94vh" }}
+        className={`w-full max-w-[1240px] rounded-[32px] pwa:rounded-b-none pwa:rounded-t-[24px] pwa:border-0 pwa:h-full overflow-hidden flex flex-col relative group border-2 ${isLight ? "bg-white border-black/30 shadow-2xl" : "bg-[#0e0e0e] border-white/30 shadow-[0_0_100px_rgba(0,0,0,0.8)]"}`}
+        style={{ maxHeight: isInstalledMobile ? "none" : "94vh" }}
       >
         {!isLight && (
           <div className="absolute top-0 left-1/4 w-1/2 h-64 bg-[#3762c1]/10 blur-[120px] opacity-50" />
@@ -2644,10 +2648,30 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
           ref={scrollRef}
           className="flex-1 overflow-y-auto scrollbar-thin modal-scroll py-4 relative z-10"
         >
+          {isInstalledMobile && (
+            <div className="px-4 pb-4">
+              <div
+                className={`rounded-xl overflow-hidden relative ${isLight ? "bg-gray-50" : "bg-[#131313]"}`}
+                style={{ maxHeight: "36vh" }}
+              >
+                <CreativePreview
+                  key={processedAd.id}
+                  d={d}
+                  ad={processedAd}
+                  ctx={ctx}
+                  isTikTok={isTikTok}
+                  isLight={isLight}
+                  activeIndex={activeIndex}
+                  setActiveIndex={setActiveIndex}
+                />
+              </div>
+            </div>
+          )}
+
           {/* ── Hero Section ────────────────────────────────────── */}
           <div
-            className="px-6 pb-6"
-            style={{ marginRight: `${creativeInitialWidth + 3}%` }}
+            className="px-6 pb-6 pwa:px-4"
+            style={{ marginRight: isInstalledMobile ? 0 : `${creativeInitialWidth + 3}%` }}
           >
             <div className="space-y-4">
               {/* Advertiser */}
@@ -2832,7 +2856,7 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
                 className={`rounded-2xl border-2 ${isLight ? "bg-gray-50/50 border-gray-200" : "bg-white/[0.02] border-white/10"}`}
               >
                 <div
-                  className={`grid grid-cols-2 divide-x ${
+                  className={`grid grid-cols-2 divide-x pwa:grid-cols-1 pwa:divide-x-0 ${
                     isLight ? "divide-gray-200" : "divide-white/10"
                   }`}
                 >
@@ -2844,7 +2868,8 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
                     return (
                     <div
                       key={i}
-                      className={`flex items-center justify-between px-4 py-3 ${
+                      // pwa: single column on phones — every row but the last gets a divider.
+                      className={`flex items-center justify-between px-4 py-3 pwa:gap-3 pwa:border-b pwa:last:border-b-0 ${isLight ? "pwa:border-gray-200" : "pwa:border-white/10"} ${
                         isEvenRow
                           ? isLight
                             ? "border-b border-gray-200"

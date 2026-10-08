@@ -517,9 +517,10 @@ const BasicInfo = ({
                 ) : (
                   // Single URL — original display logic
                   <div
-                    className={`flex items-center gap-3 px-4 py-3 transition-all group ${i < arr.length - 1 ? (isLight ? "border-b border-gray-200" : "border-b border-white/5") : ""} ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
+                    // pwa: label on its own line so the URL gets the full row width on phones.
+                    className={`flex items-center gap-3 px-4 py-3 pwa:flex-wrap pwa:gap-y-1 transition-all group ${i < arr.length - 1 ? (isLight ? "border-b border-gray-200" : "border-b border-white/5") : ""} ${isLight ? "hover:bg-black/[0.01]" : "hover:bg-white/[0.03]"}`}
                   >
-                    <div className="flex items-center gap-2 shrink-0 w-44">
+                    <div className="flex items-center gap-2 shrink-0 w-44 pwa:w-full">
                       {url.icon && (
                         <url.icon
                           size={13}
@@ -531,7 +532,7 @@ const BasicInfo = ({
                       </span>
                     </div>
                     <span
-                      className={`text-[14px] truncate max-w-[60%] text-right ${isLight ? "font-bold text-gray-900" : "font-semibold text-white/85"}`}
+                      className={`text-[14px] truncate max-w-[60%] text-right pwa:flex-1 pwa:min-w-0 pwa:max-w-none pwa:text-left ${isLight ? "font-bold text-gray-900" : "font-semibold text-white/85"}`}
                     >
                       {url.value || "—"}
                     </span>

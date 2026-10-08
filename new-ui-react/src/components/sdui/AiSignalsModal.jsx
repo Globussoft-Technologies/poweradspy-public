@@ -825,9 +825,9 @@ const AiSignalsModal = ({
     : null;
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 sm:p-4">
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 sm:p-4 pwa:p-0 pwa:pt-[env(safe-area-inset-top)] pwa:pb-[env(safe-area-inset-bottom)]">
       <div
-        className="flex h-[min(760px,94vh)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-theme-border bg-theme-surface shadow-2xl"
+        className="flex h-[min(760px,94vh)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-theme-border bg-theme-surface shadow-2xl pwa:h-full pwa:rounded-none pwa:border-0"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex shrink-0 items-center gap-3 border-b border-theme-border px-5 py-4 sm:px-6">

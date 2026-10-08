@@ -80,8 +80,8 @@ const AudienceSection = ({ interests = [], behaviours = [], confidenceScore = nu
       ) : (
         <div className={`rounded-xl overflow-hidden border ${isLight ? 'bg-gray-50/50 border-gray-200 shadow-sm' : 'bg-white/[0.02] border border-white/5'}`}>
           {visibleCategories.map(({ key, label, icon: Icon, color }, idx) => (
-            <div key={key} className={`flex gap-3 px-3.5 py-2.5 transition-all group ${idx < visibleCategories.length - 1 ? (isLight ? 'border-b border-gray-200' : 'border-b border-white/5') : ''} ${isLight ? 'bg-white hover:bg-gray-50' : 'hover:bg-white/[0.03]'}`}>
-              <div className="flex items-center gap-1.5 shrink-0 w-28">
+            <div key={key} className={`flex gap-3 px-3.5 py-2.5 pwa:flex-col pwa:gap-2 transition-all group ${idx < visibleCategories.length - 1 ? (isLight ? 'border-b border-gray-200' : 'border-b border-white/5') : ''} ${isLight ? 'bg-white hover:bg-gray-50' : 'hover:bg-white/[0.03]'}`}>
+              <div className="flex items-center gap-1.5 shrink-0 w-28 pwa:w-auto">
                  <Icon size={12} className={`text-${color}-400 ${isLight ? 'opacity-90' : 'opacity-60'} group-hover:opacity-100 transition-opacity`} />
                  <span className={`text-[10px] font-bold uppercase ${isLight ? 'text-gray-400' : `text-${color}-400/90`}`}>{label}</span>
               </div>

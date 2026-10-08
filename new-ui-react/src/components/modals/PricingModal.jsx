@@ -138,10 +138,10 @@ const PricingModal = ({
     .join(', ');
 
   return (
-    <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-5xl lg:scale-75 2xl:scale-100 bg-theme-surface border border-theme-border rounded-xl shadow-2xl flex flex-col overflow-hidden max-h-[95vh]">
+    <div className="fixed inset-0 z-[999999] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 pwa:p-0 pwa:pt-[env(safe-area-inset-top)] pwa:pb-[env(safe-area-inset-bottom)]">
+      <div className="w-full max-w-5xl lg:scale-75 2xl:scale-100 bg-theme-surface border border-theme-border rounded-xl shadow-2xl flex flex-col overflow-hidden max-h-[95vh] pwa:h-full pwa:max-h-none pwa:rounded-none pwa:border-0">
         {/* Header */}
-        <div className="relative z-50 flex justify-between items-center px-6 py-4 border-b border-white/10 bg-theme-surface">
+        <div className="relative z-50 flex justify-between items-center px-6 py-4 pwa:px-4 pwa:flex-wrap pwa:gap-3 border-b border-white/10 bg-theme-surface">
           <div>
             <h2 className="text-2xl font-bold bg-gradient-to-r from-[#6b99ff] to-[#3762c1] bg-clip-text text-transparent">
               Choose Your Plan

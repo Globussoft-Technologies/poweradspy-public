@@ -429,7 +429,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
   }, [filterValues]);
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative pwa:static" ref={dropdownRef}>
       {/* Calendar Button */}
       <button
         ref={btnRef}
@@ -449,7 +449,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
 
       {showTip && (
         <div
-          className="fixed z-[9999] px-3 py-1.5 text-[12px] font-semibold rounded-lg whitespace-nowrap pointer-events-none"
+          className="fixed z-[9999] px-3 py-1.5 text-[12px] font-semibold rounded-lg whitespace-nowrap pointer-events-none pwa:hidden"
           style={{
             left: tipPos.x,
             top: tipPos.y,
@@ -466,10 +466,13 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
 
       {/* Dropdown Content */}
       {isOpen && (
-        <div className="absolute top-full sm:right-0 mt-2 scale-75 2xl:scale-100 origin-top-left sm:origin-top-right min-w-[300px] sm:min-w-[480px] bg-theme-bg border border-theme-border rounded-xl shadow-2xl z-50 flex flex-col">
+        // Installed phone app (pwa:): compact dropdown right under the calendar
+        // button, screen-wide minus the page gutters, instead of a 75%-scaled
+        // popover that overflows the screen.
+        <div className="absolute top-full sm:right-0 mt-2 scale-75 2xl:scale-100 origin-top-left sm:origin-top-right min-w-[300px] sm:min-w-[480px] pwa:left-0 pwa:scale-100 pwa:min-w-0 pwa:w-[300px] pwa:max-w-[calc(100vw-24px)] pwa:max-h-[55dvh] pwa:overflow-y-auto pwa-scrollbar pwa:z-[60] bg-theme-bg border border-theme-border rounded-xl shadow-2xl z-50 flex flex-col">
           {/* Tabs for Date Types */}
-          <div className="p-3 border-b border-[#363840]/70 bg-theme-surface">
-            <div className={`flex gap-2 ${restrictToAdSeenOnly ? "justify-center" : ""}`}>
+          <div className="p-3 pwa:p-2 border-b border-[#363840]/70 bg-theme-surface">
+            <div className={`flex gap-2 pwa:gap-1 ${restrictToAdSeenOnly ? "justify-center" : ""}`}>
               {dateTypeOptions.map((opt) => (
                 <button
                   key={opt.id}
@@ -513,7 +516,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
             </div>
 
             {/* CALENDAR */}
-            <div className="p-4 flex-1">
+            <div className="p-4 pwa:p-2 flex-1">
               <style>{`
                 .custom-rdp-wrapper {
                   --rdp-cell-size: 38px;
@@ -799,7 +802,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
           </div>
 
           {/* Footer — selected range display + close */}
-          <div className="px-5 py-3 bg-theme-surface border-t border-[#363840]/70 flex items-center justify-between">
+          <div className="px-5 py-3 pwa:px-3 pwa:py-2 pwa:gap-2 bg-theme-surface border-t border-[#363840]/70 flex items-center justify-between">
             <div className="flex flex-col">
               <span className="text-[10px] text-white/60 uppercase whitespace-nowrap tracking-widest font-bold">
                 Selected Range
@@ -818,13 +821,13 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
                   onDateChange?.(activeDateType, null);
                 }}
                 disabled={!dates[activeDateType]}
-                className={`px-5 py-1.5 text-[12px] font-bold border border-[#363840]/80 hover:border-white/20 rounded-lg hover:text-white ${dates[activeDateType] ? "text-white bg-[#335296] border-[#5a5c66]/40 hover:opacity-80" : "text-white/70"} transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#363840]/80 disabled:hover:text-white/70`}
+                className={`px-5 pwa:px-2.5 py-1.5 text-[12px] font-bold border border-[#363840]/80 hover:border-white/20 rounded-lg hover:text-white ${dates[activeDateType] ? "text-white bg-[#335296] border-[#5a5c66]/40 hover:opacity-80" : "text-white/70"} transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-[#363840]/80 disabled:hover:text-white/70`}
               >
                 Clear Filter
               </button>
               <button
                 onClick={() => setIsOpen(false)}
-                className="px-5 py-1.5 text-[12px] font-bold text-white/70 border border-[#363840]/80 hover:border-white/20 rounded-lg hover:text-white transition-colors"
+                className="px-5 pwa:px-2.5 py-1.5 text-[12px] font-bold text-white/70 border border-[#363840]/80 hover:border-white/20 rounded-lg hover:text-white transition-colors"
               >
                 Close
               </button>

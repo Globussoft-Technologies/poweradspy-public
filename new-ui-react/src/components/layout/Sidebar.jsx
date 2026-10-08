@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LayoutGrid, Library, Hash, TrendingUp, Menu, Bookmark } from "lucide-react";
+import { LayoutGrid, Library, Hash, TrendingUp, Menu, Bookmark, X } from "lucide-react";
 import NavItem from "../shared/NavItem";
 import SectionLabel from "../shared/SectionLabel";
 import SidebarDivider from "../shared/SidebarDivider";
@@ -151,8 +151,11 @@ const Sidebar = ({
         />
       )}
 
+      {/* Installed phone app (pwa:): navigation lives in BottomNav, so the
+          collapsed icon strip is hidden and the open sidebar becomes a
+          filters-only bottom sheet (opened from BottomNav's "Filters" tab). */}
       <aside
-        className={`${isOpen ? "w-56" : "w-16"} ${isOpen ? "fixed md:relative" : "relative"} inset-y-0 left-0 z-50 md:z-20 bg-theme-bg transition-[width] duration-300 flex-shrink-0 flex flex-col overflow-hidden`}
+        className={`${isOpen ? "w-56" : "w-16 pwa:hidden"} ${isOpen ? "fixed md:relative" : "relative"} inset-y-0 left-0 z-50 md:z-20 bg-theme-bg transition-[width] duration-300 flex-shrink-0 flex flex-col overflow-hidden pwa:inset-x-0 pwa:top-auto pwa:bottom-0 pwa:w-full pwa:h-[72dvh] pwa:z-[60] pwa:rounded-t-[24px] pwa:border-t pwa:border-theme-border pwa:shadow-2xl pwa:pb-[env(safe-area-inset-bottom)]`}
       >
         {/* Fading Gradient Border */}
         <div
@@ -164,8 +167,24 @@ const Sidebar = ({
         />
 
         <div className="flex-1 py-2 flex flex-col min-h-0">
+          {/* Bottom-sheet header (installed phone app only) */}
+          <div className="hidden pwa:flex flex-col items-center px-4 pb-2 border-b border-theme-border">
+            <span className="mb-2 h-1 w-10 rounded-full bg-theme-text-muted/40" />
+            <div className="flex w-full items-center justify-between">
+              <span className="text-base font-bold text-theme-text">{t("filters")}</span>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                aria-label="Close filters"
+                className="p-2 -mr-2 rounded-lg text-theme-text-muted"
+              >
+                <X size={20} />
+              </button>
+            </div>
+          </div>
+
           {/* Nav */}
-          <div className="flex items-center justify-between px-1">
+          <div className="flex items-center justify-between px-1 pwa:hidden">
             <SectionLabel label={t("explore")} collapsed={!isOpen} />
             <button
               onClick={() => setIsOpen(!isOpen)}
@@ -175,7 +194,7 @@ const Sidebar = ({
             </button>
           </div>
 
-          <div className="px-2 space-y-0.5 mb-1">
+          <div className="px-2 space-y-0.5 mb-1 pwa:hidden">
             <NavItem
               icon={<LayoutGrid size={isOpen ? 16 : 18} />}
               label={t("all_projects")}
@@ -254,11 +273,14 @@ const Sidebar = ({
           {/* Only show filters on Ads Library page */}
           {activePage === "ads" && !showSavedAdsPage && isOpen && (
             <div className="flex flex-col flex-1 min-h-0">
-              {<SidebarDivider />}
-              {<SectionLabel label={t("filters")} />}
+              <div className="pwa:hidden">
+                <SidebarDivider />
+                <SectionLabel label={t("filters")} />
+              </div>
 
-              {/* SDUI-driven Sidebar Filters */}
-              <div className="flex-1 overflow-y-auto scrollbar-hide">
+              {/* SDUI-driven Sidebar Filters — visible scrollbar in the phone sheet */}
+              <div className="flex-1 overflow-y-auto scrollbar-hide pwa-scrollbar pwa:pt-2">
+
                 {loading ? (
                   <div className="px-3 py-4 text-[10px] text-theme-text-muted">
                     {t("loading_filters")}

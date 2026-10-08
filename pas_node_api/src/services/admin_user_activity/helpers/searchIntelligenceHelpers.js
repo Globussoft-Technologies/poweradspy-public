@@ -173,6 +173,12 @@ const ACTIVITY_TYPE_FIELDS = {
     'filter.ad_categories', 'filter.ad_subCategories', 'filter.status',
     'filter.sort_by', 'filter.platform', 'filter.native_network',
     'filter.ctr', 'filter.budget',
+    'dashboard.transparency_ads',
+    'filter.affiliate_network', 'filter.ecommerce_platform', 'filter.funnel_type',
+    'filter.traffic_source', 'filter.marketing_platform',
+    'filter.sub_network', 'filter.source_app', 'filter.ad_subPositions', 'filter.image_size',
+    'dashboard.poster_intelligence', 'dashboard.top_ranked_range',
+    'dashboard.most_seen_range', 'dashboard.active_days_range',
   ],
   other_activity: [
     'dashboard.exportsAds', 'favourite_ad_id', 'unfavourite_ad_id',
@@ -187,6 +193,8 @@ const ACTIVITY_TYPE_FIELDS = {
     'dashboard.shares_sort', 'dashboard.popularity_sort',
     'dashboard.impressions_sort', 'dashboard.views_sort',
     'dashboard.hits_sort',
+    // ChatGPT ascending sorts (Oldest First / Shortest Running / Least Seen First).
+    'dashboard.oldest_sort', 'dashboard.running_shortest_sort', 'dashboard.least_hits_sort',
   ],
 };
 
@@ -257,11 +265,15 @@ const FILTER_LABEL_MAP = {
   'filter.native_network': 'Native Network',
   'filter.ctr': 'CTR',
   'filter.budget': 'Budget',
+  'filter.sub_network': 'Sub Network',
+  'filter.source_app': 'Source App',
 };
 
 const DASHBOARD_SORT_MAP = {
   'dashboard.newest_sort': 'Sort: Newest',
   'dashboard.running_longest_sort': 'Sort: Running Longest',
+  'dashboard.oldest_sort': 'Sort: Oldest',
+  'dashboard.running_shortest_sort': 'Sort: Running Shortest',
   'dashboard.last_seen_sort': 'Sort: Last Seen',
   'dashboard.domain_sort': 'Sort: Domain',
   'dashboard.likes_sort': 'Sort: Likes',
@@ -288,6 +300,10 @@ const RANGE_PAIRS = [
   { label: 'Ad Seen', range: 'dashboard.ad_seen', sort: null },
   { label: 'Post Date', range: 'dashboard.post_date', sort: null },
   { label: 'First Seen', range: 'dashboard.first_seen', sort: null },
+  // AdMob Poster Intelligence range sliders (stored as "min-max").
+  { label: 'Top Ranked', range: 'dashboard.top_ranked_range', sort: null },
+  { label: 'Most Seen', range: 'dashboard.most_seen_range', sort: null },
+  { label: 'Active Days', range: 'dashboard.active_days_range', sort: null },
 ];
 
 const SEARCH_BY_LABEL_MAP = {
@@ -303,6 +319,12 @@ const LANDER_LABEL_MAP = {
   'lander.funnels': 'Funnel Type',
   'lander.sources': 'Traffic Source',
   'lander.marketing': 'Lander: Marketing',
+  // Current field names (the lander.* keys above are kept for older records).
+  'filter.affiliate_network': 'Affiliate Network',
+  'filter.ecommerce_platform': 'Ecommerce Platform',
+  'filter.funnel_type': 'Funnel Type',
+  'filter.traffic_source': 'Traffic Source',
+  'filter.marketing_platform': 'Marketing Platform',
 };
 
 const SORT_BY_LABEL_MAP = {
@@ -315,6 +337,7 @@ const ARRAY_JOIN_KEYS = new Set([
   'Country', 'Language', 'CTA', 'Ad Position', 'Ad Sub-Position',
   'Category', 'Sub-Category', 'Platform', 'Network', 'Image Size',
   'Affiliate Network', 'Ecommerce Platform', 'Funnel Type', 'Traffic Source', 'Lander: Marketing',
+  'Marketing Platform', 'Sub Network', 'Source App',
   'Native Network', 'Budget',
 ]);
 
@@ -463,6 +486,8 @@ function parseFilterPills(s, other_activity) {
     filterPills.push(`Sort: ${sortName}`);
     usedSortKeys.add('dashboard.newest_sort');
     usedSortKeys.add('dashboard.running_longest_sort');
+    usedSortKeys.add('dashboard.oldest_sort');
+    usedSortKeys.add('dashboard.running_shortest_sort');
   }
 
   for (const [key, label] of Object.entries(DASHBOARD_SORT_MAP)) {
@@ -492,6 +517,18 @@ function parseFilterPills(s, other_activity) {
   filterPills.push(...parseAiFilterPills(s));
 
   if (s['dashboard.ai_analysed_only'] === 'true') filterPills.push('AI Analysed Only');
+  // 'false' is only stored on the search right after the toggle was switched off.
+  else if (s['dashboard.ai_analysed_only'] === 'false') filterPills.push('AI Analysed Only: Off');
+
+  const posterIntelligence = s['dashboard.poster_intelligence'];
+  if (posterIntelligence && posterIntelligence !== 'NA') {
+    filterPills.push(`Poster Intelligence: ${posterIntelligence}`);
+  }
+
+  if (s['dashboard.transparency_ads'] === 'true') {
+    const tp = s['dashboard.transparency_platform'];
+    filterPills.push(tp && tp !== 'NA' ? `Transparency Ads: ${tp}` : 'Transparency Ads');
+  }
 
   return filterPills;
 }

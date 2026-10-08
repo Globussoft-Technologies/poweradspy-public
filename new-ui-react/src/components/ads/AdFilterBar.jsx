@@ -396,9 +396,9 @@ const AdFilterBar = ({
     >
       {/* Platform tabs */}
       <div
-        className={`flex items-center min-w-[120px] ${!showPlatformsOnMobile ? "hidden md:flex" : "flex"} ${!hasActiveFilter ? "flex-1 2xl:flex-initial" : ""}`}
+        className={`flex items-center min-w-[120px] ${!showPlatformsOnMobile ? "hidden md:flex" : "flex"} ${!hasActiveFilter ? "flex-1 2xl:flex-initial" : ""} pwa:w-full pwa:flex-none`}
       >
-        <div className="flex w-full max-w-[760px] items-center gap-0.5 overflow-x-auto rounded-xl border border-theme-border bg-theme-card p-1 hide-scrollbar 2xl:w-auto">
+        <div className="flex w-full max-w-[760px] items-center gap-0.5 overflow-x-auto rounded-xl border border-theme-border bg-theme-card p-1 hide-scrollbar pwa-scrollbar pwa:pb-1.5 2xl:w-auto">
           <PlatformTab
             label="All"
             active={isAllActive}
@@ -437,10 +437,14 @@ const AdFilterBar = ({
       </div>
 
       {/* Right side controls */}
-      <div className="flex items-center gap-2 flex-wrap shrink-0">
+      {/* pwa: this row is the anchor for the Date / Ad Type / Sort dropdowns
+          (their own wrappers go static), so each opens right under the row,
+          aligned to the screen gutters, whichever button opened it. */}
+      <div className="flex items-center gap-2 flex-wrap shrink-0 pwa:relative">
+
         <AdDateDropdown onDateChange={onDateChange} filterValues={sdui?.filterValues} isTikTok={specificPlatforms.length === 1 && specificPlatforms[0]?.toLowerCase() === "tiktok"} isAdmobOnly={isAdmobOnly} disableTooltips={disableTooltips} isChatgptOnly={isChatgptOnly} isFilterRestricted={isFilterRestricted} onRestricted={onDateRestricted} />
         {/* Ad Type Filter — hidden when no options available for current platform */}
-        {AD_TYPE_OPTIONS.length > 0 && <div className="relative" ref={adTypeFilterRef}>
+        {AD_TYPE_OPTIONS.length > 0 && <div className="relative pwa:static" ref={adTypeFilterRef}>
           <button
             ref={filterBtnRef}
             onMouseEnter={handleFilterMouseEnter}
@@ -469,7 +473,7 @@ const AdFilterBar = ({
           </button>
           {showFilterTip && !disableTooltips && (
             <div
-              className="fixed z-[9999] px-3 py-1.5 text-[12px] font-semibold rounded-lg whitespace-nowrap pointer-events-none"
+              className="fixed z-[9999] px-3 py-1.5 text-[12px] font-semibold rounded-lg whitespace-nowrap pointer-events-none pwa:hidden"
               style={{
                 left: filterTipPos.x,
                 top: filterTipPos.y,
@@ -484,8 +488,10 @@ const AdFilterBar = ({
             </div>
           )}
           {showAdTypeFilter && (
-            <div className="absolute top-full right-0 mt-1 w-[205px] max-h-[240px] overflow-y-auto overscroll-contain custom-scrollbar bg-theme-card border border-theme-border rounded-xl shadow-xl z-50 py-1">
-              <p className="sticky top-0 z-10 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-theme-text-muted bg-theme-card border-b border-theme-border mb-1">
+            // Installed phone app: compact 2-column dropdown under the filter row
+            // (anchored right-0 to this button it opened off the screen's left edge).
+            <div className="absolute top-full right-0 mt-1 w-[205px] max-h-[240px] pwa:left-0 pwa:right-auto pwa:mt-2 pwa:w-[calc(100vw-24px)] pwa:max-h-[38dvh] pwa:z-[60] overflow-y-auto overscroll-contain custom-scrollbar pwa-scrollbar pwa:grid pwa:grid-cols-2 pwa:content-start bg-theme-card border border-theme-border rounded-xl shadow-xl z-50 py-1">
+              <p className="sticky top-0 z-10 pwa:col-span-2 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-theme-text-muted bg-theme-card border-b border-theme-border mb-1">
                 {t("ad_type")}
               </p>
               {AD_TYPE_OPTIONS.map((opt) => {
@@ -523,7 +529,7 @@ const AdFilterBar = ({
                     setSelAdTypes([]);
                     setShowAdTypeFilter(false);
                   }}
-                  className="w-full text-left px-4 py-2 text-[11px] font-semibold text-red-400 hover:text-red-300 border-t border-theme-border mt-1 transition-colors"
+                  className="w-full text-left px-4 py-2 pwa:col-span-2 text-[11px] font-semibold text-red-400 hover:text-red-300 border-t border-theme-border mt-1 transition-colors"
                 >
                   {t("clear")}
                 </button>
@@ -533,7 +539,7 @@ const AdFilterBar = ({
         </div>}
         {/* Sort filter */}
         {visibleSortTabs.length > 0 && (
-          <div className="relative" ref={moreTabsRef}>
+          <div className="relative pwa:static" ref={moreTabsRef}>
             <div className="relative">
               <button
                 ref={sortBtnRef}
@@ -551,7 +557,7 @@ const AdFilterBar = ({
               </button>
               {showSortTip && !disableTooltips && (
                 <div
-                  className="fixed z-[9999] px-3 py-1.5 text-[12px] font-semibold rounded-lg whitespace-nowrap pointer-events-none"
+                  className="fixed z-[9999] px-3 py-1.5 text-[12px] font-semibold rounded-lg whitespace-nowrap pointer-events-none pwa:hidden"
                   style={{
                     left: sortTipPos.x,
                     top: sortTipPos.y,
@@ -567,7 +573,7 @@ const AdFilterBar = ({
               )}
             </div>
             {showMoreTabs && (
-              <div className="absolute top-full lg:right-0 mt-1 bg-theme-card border border-theme-border rounded-xl shadow-xl z-50 py-1 min-w-[220px]">
+              <div className="absolute top-full lg:right-0 mt-1 pwa:left-0 pwa:right-auto pwa:mt-2 pwa:w-[calc(100vw-24px)] pwa:max-h-[42dvh] pwa:overflow-y-auto pwa:z-[60] pwa-scrollbar bg-theme-card border border-theme-border rounded-xl shadow-xl z-50 py-1 min-w-[220px]">
                 {visibleSortTabs.map((tab) => {
                   const tabValue = tab.value ?? tab.label ?? tab;
                   const tabLabel = tab.label ?? tab;

@@ -116,6 +116,102 @@ a font * {
   pointer-events: none !important;
 }
 
+/* "Install PowerAdSpy" banner (phone browsers): hide the Freshchat launcher
+   while it's showing, it sits in the same corner over the Install button. */
+body.pwa-install-open #fc_frame {
+  display: none !important;
+}
+
+/* Installed-app search: the small pill grows out to full width in place. */
+@keyframes pwaSearchExpand {
+  from { transform: scaleX(0.68); opacity: 0.6; }
+  to { transform: scaleX(1); opacity: 1; }
+}
+
+/* ── Installed PWA on a phone ──
+   Keyed off the `pwa-mobile` class on <html> (set by the inline script in
+   index.html, same class the `pwa:` Tailwind variant uses) rather than a
+   display-mode media query, so it also works on iPhone/iPad home-screen apps,
+   where older iOS only reports standalone via navigator.standalone. */
+html.pwa-mobile body {
+  /* No rubber-band bounce / pull-to-refresh, no grey tap flash — app feel. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* Visible scrollbar in phone sheets (filters, ad type, sort) and the
+   platform tab rows, so users can tell the list scrolls. Styling it also
+   makes Android Chrome draw it permanently instead of only mid-scroll.
+   Overrides .scrollbar-hide there. */
+.pwa-mobile .pwa-scrollbar.pwa-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-text-muted) 22%, transparent) transparent;
+  -ms-overflow-style: auto;
+}
+.pwa-mobile .pwa-scrollbar.pwa-scrollbar::-webkit-scrollbar {
+  display: block;
+  width: 4px;
+  height: 4px;
+}
+.pwa-mobile .pwa-scrollbar.pwa-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text-muted) 22%, transparent);
+  border-radius: 4px;
+}
+.pwa-mobile .pwa-scrollbar.pwa-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* Scroll performance: backdrop blurs are re-painted every frame on phones
+   (dozens of blurred badges/buttons over card images) and made the feed lag.
+   The elements already sit on semi-opaque backgrounds, so they look nearly
+   identical without the blur. */
+.pwa-mobile .backdrop-blur-sm,
+.pwa-mobile .backdrop-blur-md,
+.pwa-mobile .backdrop-blur-lg,
+.pwa-mobile .backdrop-blur-xl {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* Compact scale for phones: rem-based Tailwind sizes shrink ~7%, and the
+   large fixed-px headings/values used across the app step down a notch so
+   screens don't feel zoomed-in. */
+html.pwa-mobile {
+  font-size: 15px;
+}
+.pwa-mobile .text-\[20px\] { font-size: 17px; }
+.pwa-mobile .text-\[18px\] { font-size: 15px; }
+.pwa-mobile .text-\[16px\] { font-size: 14px; }
+.pwa-mobile .text-\[14px\] { font-size: 13px; }
+/* Date filter sheet: compact calendar centred in the sheet (cells were
+   stretching to the full screen width). */
+.pwa-mobile .custom-rdp-wrapper.custom-rdp-wrapper {
+  --rdp-cell-size: 34px;
+  --rdp-day-height: 34px;
+  --rdp-day-width: 34px;
+  --rdp-day_button-height: 32px;
+  --rdp-day_button-width: 32px;
+}
+/* react-day-picker sets its size vars on .rdp-root itself, so override there. */
+.pwa-mobile .custom-rdp-wrapper .rdp-root {
+  --rdp-day-height: 32px;
+  --rdp-day-width: 34px;
+  --rdp-day_button-height: 30px;
+  --rdp-day_button-width: 30px;
+  --rdp-nav-height: 32px;
+  width: max-content;
+  margin: 0 auto;
+  font-size: 13px;
+}
+/* Freshchat's floating launcher covers sheet buttons and cards on phones,
+   so it stays hidden until BottomNav's "Chat with us" adds .pwa-chat-open
+   (removed again when the chat window closes). */
+html.pwa-mobile body:not(.pwa-chat-open) #fc_frame {
+  display: none !important;
+}
+/* Freshchat launcher sits above the BottomNav instead of on top of it. */
+.pwa-mobile #fc_frame,
+.pwa-mobile #fc_frame.fc-widget-normal {
+  bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+}
+
 @layer base {
   .theme {
     --font-heading: var(--font-sans);

@@ -34,7 +34,7 @@ const NotificationPermissionPrompt = () => {
   };
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-[450px] animate-[slideUp_0.4s_ease-out]">
+    <div className="fixed bottom-4 right-4 z-50 w-[450px] pwa:left-4 pwa:w-auto pwa:bottom-[calc(72px+env(safe-area-inset-bottom))] animate-[slideUp_0.4s_ease-out]">
       <div className="bg-[#eef4fb] border-2 border-[#185FA5] rounded-xl shadow-[0_0_0_2px_rgba(24,95,165,0.12),0_0_10px_1px_rgba(24,95,165,0.4),0_4px_16px_rgba(0,0,0,0.1)] p-4 relative overflow-hidden">
         {/* Decorative blur background */}
         <div className="absolute -top-40 -right-40 w-80 h-80 bg-[#185FA5]/5 rounded-full blur-3xl"></div>

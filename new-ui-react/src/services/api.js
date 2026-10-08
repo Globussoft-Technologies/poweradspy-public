@@ -2026,6 +2026,34 @@ function sumRequestedTotal(metaTotal, networkArr, isAll) {
 const USER_ACTIVITY_DEDUPE_MS = 5000;
 let lastUserActivity = { key: null, at: 0 };
 
+// "AI analysed only" toggle for the activity log: 'true' on every search while
+// it's on, 'false' only on the first logged search after it's switched off,
+// 'NA' (not stored) otherwise — so 'false' marks the toggle-off, not the default.
+// Filter value(s) → display label(s) for the activity log. A value with no
+// label is kept as-is; 'NA' / empty passes through unchanged.
+function toActivityLabels(val, labels) {
+  if (!labels) return val;
+  if (Array.isArray(val)) return val.map((item) => labels[String(item)] ?? item);
+  if (val === undefined || val === null || val === '' || val === 'NA') return val;
+  return labels[String(val)] ?? val;
+}
+
+// Range slider value → "min-max" for the activity log. Accepts [min, max] or
+// { min, max }; anything else (incl. 'NA') passes through.
+function toActivityRange(val) {
+  if (Array.isArray(val)) return val.length >= 2 ? `${val[0]}-${val[1]}` : (val.length === 1 ? String(val[0]) : 'NA');
+  if (val && typeof val === 'object') return `${val.min ?? ''}-${val.max ?? ''}`;
+  return val ?? 'NA';
+}
+
+let lastLoggedAiAnalysedOnly = false;
+function aiAnalysedOnlyActivityValue(isOn) {
+  const wasOn = lastLoggedAiAnalysedOnly;
+  lastLoggedAiAnalysedOnly = isOn;
+  if (isOn) return 'true';
+  return wasOn ? 'false' : 'NA';
+}
+
 async function trackUserActivity(payload, meta, info = {}) {
   if (!PAS_API_BASE) return;
   const authUser = getAuthUser();
@@ -2156,7 +2184,25 @@ async function trackUserActivity(payload, meta, info = {}) {
     ),
     quick_filter:         payload.quick_filter         ?? 'NA',
     // "AI analysed only" toggle — stored as dashboard.ai_analysed_only.
-    has_ai_meta:          payload.has_ai_meta === true ? 'true' : 'false',
+    has_ai_meta:          aiAnalysedOnlyActivityValue(payload.has_ai_meta === true),
+    // Google "Transparency Ads" toggle + its Platform dropdown (e.g. SHOPPING;
+    // 'NA' when All) — stored as dashboard.transparency_ads / transparency_platform.
+    google_transparency_ads:        payload.google_transparency_ads === true ? 'true' : 'NA',
+    google_transparency_subnetwork: payload.google_transparency_subnetwork ?? 'NA',
+    // AdMob "Sub Network" — labels resolved in fetchAds' activityPayload.
+    sub_network:          payload.sub_network          ?? 'NA',
+    // Ad Sub Position (Google / AdMob) — previously only sent by the Google,
+    // Pinterest and All blocks below, so an AdMob search dropped it.
+    ad_sub_position:      payload.ad_sub_position      ?? 'NA',
+    // Image Size (GDN / AdMob) — previously only sent by the GDN and All blocks.
+    size:                 payload.size                 ?? 'NA',
+    // AdMob "Source App" (labels resolved in activityPayload) and "Poster
+    // Intelligence": rank-by option + its three range sliders.
+    source_app:             payload.source_app             ?? 'NA',
+    admob_poster_sort:      payload.admobPosterSort        ?? 'NA',
+    lead_score_range:       toActivityRange(payload.leadScoreRange),
+    occurrence_count_range: toActivityRange(payload.occurrenceCountRange),
+    active_days_range:      toActivityRange(payload.activeDaysRange),
     method:               'getAds',
     // adsCountOnSerach is mapped as `long` in Elasticsearch, so it must stay
     // numeric — concatenating payload.error_message onto it (e.g.
@@ -2482,18 +2528,25 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   const shouldTrackActivity = !filters.skip || filters.skip === 0;
   const activityPayload = (errorMessage) => ({
     ...payload,
-    // "AI analysed only" drops networks without AI-Meta (e.g. ChatGPT) from the
-    // search. If that empties the list, log the tab the user actually picked.
-    ...(Array.isArray(payload.network) && payload.network.length === 0
+    // AI filters / "AI analysed only" drop networks without AI-Meta (AdMob,
+    // ChatGPT) from the search request, so payload.network can be narrower than
+    // the tabs the user picked (or empty). Log the tabs the user actually picked:
+    // selectedPlatforms (before App.jsx narrows them by filter scope), else
+    // activePlatforms / activePlatform.
+    ...(Array.isArray(payload.network) &&
+        ((Array.isArray(filters.selectedPlatforms) && filters.selectedPlatforms.length) ||
+         (Array.isArray(filters.activePlatforms) && filters.activePlatforms.length) || filters.activePlatform)
       ? {
-          network: (Array.isArray(filters.activePlatforms) && filters.activePlatforms.length
+          network: (Array.isArray(filters.selectedPlatforms) && filters.selectedPlatforms.length
+            ? filters.selectedPlatforms
+            : Array.isArray(filters.activePlatforms) && filters.activePlatforms.length
             ? filters.activePlatforms
             : [filters.activePlatform])
             .filter(Boolean)
             .map((p) => String(p).toLowerCase()),
         }
       : {}),
-    isAllTab:            filters.isAllTab,
+    isAllTab:            filters.isAllTab === true || filters.isAllTabSelected === true,
     project_name:             filters.project_name        ?? 'NA',
     competitor_name:          filters.competitor_name     ?? 'NA',
     competitor_platform:      filters.competitor_platform ?? 'NA',
@@ -2505,6 +2558,39 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     // is still recorded.
     ai_category:              hasActiveFilterValue(filters.aiCategoryNames)    ? filters.aiCategoryNames    : payload.ai_category_id,
     ai_subcategory:           hasActiveFilterValue(filters.aiSubcategoryNames) ? filters.aiSubcategoryNames : payload.ai_subcategory_id,
+    // Landing-page filters: the log stores the sidebar labels (shopify → Shopify).
+    ecommerce:                toActivityLabels(payload.ecommerce,       filters.filterOptionLabels?.ecommerce_platform_filter),
+    market_platform:          toActivityLabels(payload.market_platform, filters.filterOptionLabels?.marketing_platform_filter),
+    funnel:                   toActivityLabels(payload.funnel,          filters.filterOptionLabels?.funnel_filter),
+    affiliate:                toActivityLabels(payload.affiliate,       filters.filterOptionLabels?.affiliate_network_filter),
+    source:                   toActivityLabels(payload.source,          filters.filterOptionLabels?.source_filter),
+    // AdMob "Sub Network" (GDN, Meta Audience Network, …) — stored as filter.sub_network.
+    sub_network:              toActivityLabels(payload.sub_network ?? 'NA', {
+                                ...filters.filterOptionLabels?.admob_network_filter,
+                                ...filters.filterOptionLabels?.sub_network_filter,
+                              }),
+    // AdMob "Source App" — stored as filter.source_app.
+    source_app:               toActivityLabels(payload.source_app ?? 'NA', {
+                                ...filters.filterOptionLabels?.admob_source_app_filter,
+                                ...filters.filterOptionLabels?.source_app_filter,
+                              }),
+    // Categories / subcategories may be searched by ID; the log stores the names.
+    // An ID with no SDUI option is kept as-is.
+    adcategory:               Array.isArray(payload.adcategory)
+                                ? payload.adcategory.map((id) => filters.categoryLabels?.[id] ?? id)
+                                : payload.adcategory,
+    subCategory:              Array.isArray(payload.subCategory)
+                                ? payload.subCategory.map((id) => filters.categoryLabels?.[id] ?? id)
+                                : (payload.subCategory && payload.subCategory !== 'NA'
+                                    ? (filters.categoryLabels?.[payload.subCategory] ?? payload.subCategory)
+                                    : payload.subCategory),
+    // Languages are searched by code (en); the log stores the name (English).
+    // A code with no SDUI option is kept as-is.
+    lang:                     Array.isArray(payload.lang)
+                                ? payload.lang.map((code) => filters.languageLabels?.[code] ?? code)
+                                : (payload.lang && payload.lang !== 'NA'
+                                    ? (filters.languageLabels?.[payload.lang] ?? payload.lang)
+                                    : payload.lang),
     // AI colors are searched by hex (#E03131); the log stores the name (Red).
     // A hex outside the fixed palette is kept as-is.
     ai_colors:                Array.isArray(payload.ai_colors)
