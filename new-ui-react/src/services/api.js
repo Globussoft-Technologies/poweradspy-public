@@ -1233,6 +1233,11 @@ export const fetchGemini = async (prompt, retryCount = 0) => {
 // Per-platform filter support map — which platforms support each filter field.
 // Used by buildSearchPayload to skip irrelevant fields when querying specific platforms.
 // Also exported so App.jsx can decide whether to skip TikTok or generic API calls entirely.
+const AI_META_NETWORKS = [
+  'facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin',
+  'reddit', 'quora', 'pinterest', 'google', 'tiktok',
+];
+
 export const FILTER_PLATFORM_SUPPORT = {
   likes:          ['facebook', 'instagram', 'youtube', 'linkedin', 'reddit', 'tiktok', 'quora'],
   shares:         ['facebook', 'tiktok'],
@@ -1265,10 +1270,36 @@ export const FILTER_PLATFORM_SUPPORT = {
   activeDaysRange: ['admob'],
   native_network: ['native'],
   // AdMob and ChatGPT Ads are intentionally excluded: neither index exposes
-  // the PAS AI-Meta fields required by AI filters.
-  has_ai_meta:    ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'pinterest', 'google', 'tiktok'],
+  // the PAS AI-Meta fields required by AI filters. Keep the individual AI
+  // fields explicit too, so a mixed request can drop only an ineligible
+  // network instead of rejecting the complete search.
+  has_ai_meta:    AI_META_NETWORKS,
+  ai_ad_type:     AI_META_NETWORKS,
+  ai_intent:      AI_META_NETWORKS,
+  ai_hook:        AI_META_NETWORKS,
+  ai_offering_type: AI_META_NETWORKS,
+  ai_offer_type:  AI_META_NETWORKS,
+  ai_colors:      AI_META_NETWORKS,
+  ai_category_id: AI_META_NETWORKS,
+  ai_subcategory_id: AI_META_NETWORKS,
   language:       ['facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin', 'reddit', 'quora', 'tiktok', 'pinterest', 'google', 'chatgptads'],
 };
+
+// These capabilities are bounded by the platform matrix/data model. SDUI may
+// narrow them, but stale filter metadata must not re-enable AdMob for AI or
+// Language searches when its index does not expose those fields.
+const MATRIX_BOUND_CAPABILITIES = new Set([
+  'has_ai_meta',
+  'ai_ad_type',
+  'ai_intent',
+  'ai_hook',
+  'ai_offering_type',
+  'ai_offer_type',
+  'ai_colors',
+  'ai_category_id',
+  'ai_subcategory_id',
+  'language',
+]);
 
 // SDUI option labels remain configuration data. This allowlist only defines
 // the logical request keys accepted by the API's AI-Meta filter contract.
@@ -1294,7 +1325,16 @@ const hasActiveFilterValue = (value) => {
 // Returns true if at least one platform in `nets` supports the named filter field.
 // Accepts an optional dynamic map (from config) that overrides the hardcoded fallback.
 const platformSupports = (nets, field, dynamicMap) => {
-  const supported = (dynamicMap && dynamicMap[field]) || FILTER_PLATFORM_SUPPORT[field];
+  const configured = dynamicMap && dynamicMap[field];
+  const configuredNetworks = Array.isArray(configured)
+    ? configured
+    : configured == null
+      ? null
+      : [configured];
+  const hardcoded = FILTER_PLATFORM_SUPPORT[field];
+  const supported = MATRIX_BOUND_CAPABILITIES.has(field) && configuredNetworks && hardcoded
+    ? configuredNetworks.filter((network) => hardcoded.includes(String(network).toLowerCase()))
+    : configuredNetworks || hardcoded;
   if (!supported) return true; // unknown field — pass through
   // ALL tab sends 'all' as platform — treat it as supporting every filter
   if (nets.some(p => p.toLowerCase() === 'all')) return true;
@@ -1562,11 +1602,15 @@ export const buildSearchPayload = (filters = {}) => {
   // use the user's actual selected platforms so the API returns "No ads found" naturally.
   const finalNetworks = networks.length > 0 ? networks : baseNetworks;
   const aiMetaNetworks = effectiveHasAiMetaRequested
-    ? finalNetworks.filter((network) => ps([network], 'has_ai_meta'))
+    ? finalNetworks.filter((network) =>
+      ps([network], 'has_ai_meta') &&
+      Object.keys(aiMetaFilterPayload).every((field) => ps([network], field))
+    )
     : finalNetworks;
 
-  // No frontend network narrowing — all selected platforms are always queried.
-  // Each backend controller reads only the fields it supports and ignores the rest.
+  // For AI-Meta searches send the already narrowed list even when the UI is on
+  // All. This is a client-side safety net; the common controller repeats the
+  // same applicability check so stale clients cannot reintroduce a leak.
   const resolvedNetworks = googleTransparencyEnabled ? ['google'] : aiMetaNetworks;
 
   // youtube_display_ads: include YouTube DISPLAY ads (ad_origin === 'youtube_display' —
@@ -1620,6 +1664,7 @@ export const buildSearchPayload = (filters = {}) => {
 
   // lang: add 'un' when 'en' is present (mirrors PHP logic)
   const resolvedLang = v(lang) !== 'NA' ? v(lang) : v(languageFilter);
+  const languageIsExplicit = resolvedLang !== 'NA';
 
   // ad_position: use ["FEED","VIDEOFEED"] when popularity or impressions filter is active
   // Only send ad_position when the user explicitly set it — no auto-default fallback.
@@ -1628,9 +1673,13 @@ export const buildSearchPayload = (filters = {}) => {
 
   // Map sortBy → order_column — covers all common SDUI value aliases per sort option
   const SORT_MAP = {
-    // newest
-    newest: 'post_date', post_date: 'post_date', new: 'post_date',
-    '-created_at': 'post_date',
+    // Ad Seen Date. `created_at`/`newest` are SDUI display values; the
+    // Common Ads Search wire contract is the lowercase `last_seen` field.
+    newest: 'last_seen', latest: 'last_seen', new: 'last_seen',
+    created_at: 'last_seen', '-created_at': 'last_seen',
+    last_seen: 'last_seen', lastseen: 'last_seen',
+    // Publication date remains a separate, explicit wire sort.
+    post_date: 'post_date',
     // popular / popularity
     popular: 'popularity', popularity: 'popularity', popularity_score: 'popularity',
     '-popularity_score': 'popularity',
@@ -1653,9 +1702,8 @@ export const buildSearchPayload = (filters = {}) => {
     // impressions
     impressions: 'impression', impression: 'impression', impressions_sort: 'impression',
     '-impressions': 'impression',
-    // last seen
-    last_seen: 'LastSeen', lastseen: 'LastSeen', last_seen_sort: 'LastSeen',
-    '-last_seen_at': 'LastSeen',
+    // Legacy aliases still resolve to the modern lowercase wire value.
+    last_seen_sort: 'last_seen', '-last_seen_at': 'last_seen',
     // hits
     hits: 'hits', hit: 'hits',
     // domain
@@ -1668,7 +1716,9 @@ export const buildSearchPayload = (filters = {}) => {
   };
   const globalSortInput = admobPosterSort ? (filters.sorting || '') : (sortBy || filters.sorting || '');
   const rawSort = String(globalSortInput || '').toLowerCase();
-  let order_column = SORT_MAP[rawSort] || SORT_MAP[globalSortInput] || 'post_date';
+  // The default visible sort is Ad Seen Date, so keep the default wire field
+  // aligned with that control instead of silently falling back to post_date.
+  let order_column = SORT_MAP[rawSort] || SORT_MAP[globalSortInput] || 'last_seen';
 
   // Extra aggressive mapping for common sort variants
   if (rawSort.includes('domain')) order_column = 'domain_date';
@@ -1676,7 +1726,7 @@ export const buildSearchPayload = (filters = {}) => {
 
   // When sort is Newest (default), auto-sort by the most-recently-changed range metric.
   // _autoSortField is set in useSDUI whenever a slider changes — tracks last user interaction.
-  if (order_column === 'post_date') {
+  if (order_column === 'post_date' || order_column === 'last_seen') {
     const autoSortField = filters['_autoSortField'];
     const RANGE_SORT_MAP = {
       likes: 'likes', like: 'likes', likes_range: 'likes', engagement_likes: 'likes',
@@ -1706,7 +1756,9 @@ export const buildSearchPayload = (filters = {}) => {
     // plan's allowed platforms.  `resolvedNetworks` is still used above/below
     // for platform-specific filter shaping. Google Transparency is an explicit
     // Google-only mode, so it retains its narrowed request.
-    network: filters.isAllTab === true && !googleTransparencyEnabled ? 'all' : resolvedNetworks,
+    network: filters.isAllTab === true && !googleTransparencyEnabled && !effectiveHasAiMetaRequested
+      ? 'all'
+      : resolvedNetworks,
     admobPosterSort: admobPosterSort || 'NA',
     leadScoreRange: ps(resolvedNetworks, 'leadScoreRange') ? v(leadScoreRange) : 'NA',
     occurrenceCountRange: ps(resolvedNetworks, 'occurrenceCountRange') ? v(occurrenceCountRange) : 'NA',
@@ -1716,9 +1768,11 @@ export const buildSearchPayload = (filters = {}) => {
     advertiser,
     domain,
     keyword,
-    newest_sort: order_column === 'post_date' ? 'newest_sort' : 'NA',
+    // Modern requests carry the explicit order_column/order_by pair. Keep
+    // legacy flags disabled so network-specific parsers cannot override it.
+    newest_sort: 'NA',
     running_longest_sort: order_column === 'days_running' ? 'running_longest_sort' : 'NA',
-    last_seen_sort: order_column === 'LastSeen' ? 'LastSeen_sort' : 'NA',
+    last_seen_sort: 'NA',
     likes_sort: order_column === 'likes' ? 'likes_sort' : 'NA',
     comments_sort: order_column === 'comment' ? 'comments_sort' : 'NA',
     shares_sort: order_column === 'share' ? 'shares_sort' : 'NA',
@@ -1830,7 +1884,9 @@ export const buildSearchPayload = (filters = {}) => {
     tags: 'NA',
     version: 'NA',
     selected_user: 'NA',
-    lang: ps(resolvedNetworks, 'language') ? resolvedLang : 'NA',
+    // Preserve an explicit Language request for the backend capability
+    // intersection. Dropping it here would broaden an AdMob-only search.
+    lang: languageIsExplicit ? resolvedLang : (ps(resolvedNetworks, 'language') ? resolvedLang : 'NA'),
     discoverer_user_id: 'NA',
     likes: ps(resolvedNetworks, 'likes') ? v(likesRange) : 'NA',
     comments: ps(resolvedNetworks, 'comments') ? v(commentsRange) : 'NA',
@@ -1892,7 +1948,9 @@ export const buildSearchPayload = (filters = {}) => {
     size: Array.isArray(imageSize)
       ? (imageSize.length > 0 ? imageSize.join(',') : 'NA')
       : v(imageSize),
-    language: ps(resolvedNetworks, 'language') ? (resolvedLang !== 'NA' ? resolvedLang : 'en') : 'NA',
+    language: languageIsExplicit
+      ? resolvedLang
+      : (ps(resolvedNetworks, 'language') ? 'en' : 'NA'),
     // Additive metadata flag — `language` above always carries a value
     // (silently defaulting to 'en') whenever any resolved network supports
     // it, even if the user never touched the Language filter. This flag is
@@ -1900,7 +1958,7 @@ export const buildSearchPayload = (filters = {}) => {
     // used server-side to decide whether Language should narrow which
     // networks are searched (e.g. exclude AdMob, which has no language data)
     // without changing `language`'s existing behavior for anything else.
-    language_explicit: resolvedLang !== 'NA',
+    language_explicit: languageIsExplicit,
     ad_position_filter: v(adPositionFilter) !== 'NA' ? adPositionFilter : 'NA',
     userkeyword: false,
     country_session: 0,
@@ -2517,7 +2575,7 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     '-popularity_score': 'popularity', popularity_sort: 'popularity',
     impressions: 'impression', impression: 'impression', '-impressions': 'impression',
     impression_sort: 'impression', impressions_range: 'impression',
-    newest: 'last_seen', latest: 'last_seen', post_date: 'last_seen',
+    newest: 'last_seen', latest: 'last_seen', post_date: 'post_date',
     '-created_at': 'last_seen', created_at: 'last_seen', new: 'last_seen',
     last_seen: 'last_seen',
     likes: 'likes', like: 'likes', '-engagement_score': 'likes',

@@ -80,6 +80,7 @@ describe("resolveSortChipLabel", () => {
 
   it("uses the configured ad-seen-date label", () => {
     expect(resolveSortChipLabel("created_at", sortTabs)).toBe("Ad Seen Date");
+    expect(resolveSortChipLabel("post_date")).toBe("Post Date");
   });
 
   it("renders the selected sort direction for the sorting chip", () => {

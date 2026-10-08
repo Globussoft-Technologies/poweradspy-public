@@ -71,6 +71,7 @@ const AiQuickFilters = ({
   // its AI fields happen to be equivalent. Only an explicit planner value or
   // a direct quick-filter interaction may select the visible shortcut.
   const matchingPreset = findActiveAiQuickFilterPreset(filterValues, doc, presets);
+  const hasPrompt = Boolean(String(aiPrompt || '').trim());
   const explicitlySelectedPreset = activeQuickFilterId
     ? presets.find((preset) => preset.id === activeQuickFilterId)
     : null;
@@ -80,8 +81,14 @@ const AiQuickFilters = ({
       )
     : false;
   const activePreset = activeQuickFilterId !== undefined
-    ? (explicitPresetIsApplied ? explicitlySelectedPreset : null)
-    : String(aiPrompt || '').trim()
+    // A planner-selected preset is authoritative while its AI prompt is
+    // active. Planner tiers may contain only a subset of the preset values,
+    // so requiring an exact full-preset match incorrectly clears the visual
+    // selection even though the backend applied the requested strategy.
+    ? (explicitlySelectedPreset && (explicitPresetIsApplied || hasPrompt)
+      ? explicitlySelectedPreset
+      : null)
+    : hasPrompt
       ? null
       : matchingPreset;
   const hasAiFilters = hasActiveAiFilters(filterValues, doc);

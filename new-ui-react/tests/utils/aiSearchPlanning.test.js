@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatPlanningUnsupportedMessage,
   findNextExecutablePlanningTier,
-  getPlanningNotices,
+  getPlanningNote,
   getPlanningQuickFilterId,
   getPlanningSummary,
   getPlanningSuggestions,
@@ -22,6 +22,7 @@ describe("AI search planning helpers", () => {
 
   it("distinguishes an explicit preset from no preset", () => {
     expect(getPlanningQuickFilterId({ quick_filter: "app_install" })).toBe("app_install");
+    expect(getPlanningQuickFilterId({}, { quick_filter: "local_lead" })).toBe("local_lead");
     expect(getPlanningQuickFilterId({ quick_filter: "" })).toBeNull();
     expect(getPlanningQuickFilterId({})).toBeNull();
   });
@@ -45,27 +46,28 @@ describe("AI search planning helpers", () => {
     expect(getPlanningSuggestions({})).toEqual([]);
   });
 
-  it("resolves the selected tier summary and displayable notices", () => {
+  it("resolves DS summary text and optional note", () => {
     const planning = {
       summary: "Facebook ads - Category: Footwear",
       notices: [{ kind: "scope", message: " Searched Facebook only " }],
+      note: "Some networks were excluded by the selected filter.",
       tiers: [
         { summary: "Facebook ads - Category: Footwear" },
         { summary: "Facebook ads - Keyword: shoes" },
       ],
     };
 
-    expect(getPlanningSummary(planning, 1)).toBe("Facebook ads - Keyword: shoes");
-    expect(getPlanningNotices(planning)).toEqual([
-      { kind: "scope", message: "Searched Facebook only" },
-    ]);
+    expect(getPlanningSummary(planning, 1)).toBe("Facebook ads - Category: Footwear");
+    expect(getPlanningNote(planning)).toBe("Some networks were excluded by the selected filter.");
+    expect(getPlanningNote({ notices: [{ message: "Do not render this" }] })).toBe("");
+    expect(getPlanningNote({ note: { message: "Do not stringify this" } })).toBe("");
   });
 
-  it("removes a duplicate in-progress prefix from the completed summary", () => {
+  it("preserves the summary wording supplied by DS", () => {
     expect(getPlanningSummary({ summary: "Searching for: Weight-loss ads" }))
-      .toBe("Weight-loss ads");
+      .toBe("Searching for: Weight-loss ads");
     expect(getPlanningSummary({ summary: "Searched: Country: India" }))
-      .toBe("Country: India");
+      .toBe("Searched: Country: India");
   });
 
   it("falls back to response-level planning metadata", () => {
@@ -74,10 +76,10 @@ describe("AI search planning helpers", () => {
       0,
       { summary: "Facebook ads - Country: India" },
     )).toBe("Facebook ads - Country: India");
-    expect(getPlanningNotices(
+    expect(getPlanningNote(
       { tiers: [] },
-      { notices: [{ kind: "choice", message: " Selected Taboola " }] },
-    )).toEqual([{ kind: "choice", message: "Selected Taboola" }]);
+      { note: " Selected Taboola " },
+    )).toBe("Selected Taboola");
   });
 
   it("does not treat platform-only or unsupported-only plans as executable", () => {

@@ -181,8 +181,15 @@ describe("AiQuickFilters", () => {
     expect(payload).toEqual({ presets: expect.any(Array) });
     expect(payload.presets).toHaveLength(8);
     expect(payload.presets.every((preset) => preset.id && preset.payload)).toBe(true);
+    const adTypePresets = payload.presets.filter((preset) =>
+      ["tiktok_ugc", "luxury_brand"].includes(preset.id),
+    );
+    const otherPresets = payload.presets.filter((preset) =>
+      !["tiktok_ugc", "luxury_brand"].includes(preset.id),
+    );
+    expect(adTypePresets.every((preset) => preset.payload.network.join(",") === "facebook")).toBe(true);
+    expect(otherPresets.every((preset) => preset.payload.network.join(",") === "facebook,instagram")).toBe(true);
     expect(payload.presets.every((preset) => (
-      preset.payload.network.join(",") === "facebook,instagram" &&
       preset.payload.advertiser === "lead gen" &&
       preset.payload.exact_search === 1
     ))).toBe(true);
@@ -287,6 +294,22 @@ describe("AiQuickFilters", () => {
     await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
     expect(
       screen.getByRole("button", { name: /App Install/i }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps a planner-selected preset active when its tier contains fewer values", async () => {
+    render(
+      <AiQuickFilters
+        document={doc}
+        filterValues={{ ai_category_id: ["1010"] }}
+        aiPrompt="Show the local lead ads"
+        activeQuickFilterId="local_lead"
+      />,
+    );
+
+    await waitFor(() => expect(fetchAiQuickFilterAvailability).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole("button", { name: /Local Lead/i }),
     ).toHaveAttribute("aria-pressed", "true");
   });
 

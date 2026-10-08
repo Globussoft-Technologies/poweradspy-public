@@ -19,8 +19,12 @@ export const getPlanningUnsupported = (planning) =>
  * Quick-filter presets are explicit planner metadata, not something inferred
  * from equivalent AI fields. Empty values deliberately resolve to null.
  */
-export const getPlanningQuickFilterId = (planning) => {
-  const value = planning?.quick_filter;
+export const getPlanningQuickFilterId = (planning, fallbackPlanning = null) => {
+  // Tier metadata can repeat only part of the response-level planning object.
+  // Preserve an explicit response-level preset when the selected tier omits it.
+  const value = planning?.quick_filter !== undefined && planning?.quick_filter !== null
+    ? planning.quick_filter
+    : fallbackPlanning?.quick_filter;
   if (value === undefined || value === null) return null;
   const normalized = String(value).trim();
   return normalized || null;
@@ -46,23 +50,17 @@ export const getPlanningSuggestions = (planning) => {
 };
 
 /**
- * Resolve the summary for the tier that actually ran. The fallback planning
- * object keeps this compatible with responses that attach metadata only once
- * at the response level rather than repeating it on every payload item.
+ * Keep DS's summary text intact. The result context renders this value
+ * directly, so the website does not add or remove its own "Searched" copy.
  */
-const normalizePlanningSummary = (value) => String(value || '')
-  .trim()
-  // The result banner owns the completed-state "Searched:" label. DS may
-  // still return its older in-progress "Searching for:" prefix in summary.
-  .replace(/^(?:searched|searching\s+for)\s*:\s*/i, '')
-  .trim();
+const normalizePlanningSummary = (value) => String(value || '').trim();
 
 export const getPlanningSummary = (planning, tierIndex = 0, fallbackPlanning = null) => {
   const candidates = [
-    planning?.tiers?.[tierIndex]?.summary,
     planning?.summary,
-    fallbackPlanning?.tiers?.[tierIndex]?.summary,
+    planning?.tiers?.[tierIndex]?.summary,
     fallbackPlanning?.summary,
+    fallbackPlanning?.tiers?.[tierIndex]?.summary,
   ];
   for (const candidate of candidates) {
     const summary = normalizePlanningSummary(candidate);
@@ -72,19 +70,17 @@ export const getPlanningSummary = (planning, tierIndex = 0, fallbackPlanning = n
 };
 
 /**
- * Keep only displayable planner notices while preserving their ready-to-show
- * message and kind for the UI. Empty or malformed entries are ignored.
+ * Read DS's optional note without inventing a website message. Response-level
+ * metadata is used as a fallback for older payloads that repeat planning only
+ * on the selected tier.
  */
-export const getPlanningNotices = (planning, fallbackPlanning = null) => {
-  const noticeSources = [planning?.notices, fallbackPlanning?.notices];
-  const source = noticeSources.find((notices) => Array.isArray(notices) && notices.length > 0) || [];
-  return source
-    .filter((notice) => notice && typeof notice === 'object')
-    .map((notice) => ({
-      kind: typeof notice.kind === 'string' ? notice.kind.trim() : '',
-      message: typeof notice.message === 'string' ? notice.message.trim() : '',
-    }))
-    .filter((notice) => notice.message);
+export const getPlanningNote = (planning, fallbackPlanning = null) => {
+  const candidates = [planning?.note, fallbackPlanning?.note];
+  for (const candidate of candidates) {
+    const note = typeof candidate === 'string' ? candidate.trim() : '';
+    if (note) return note;
+  }
+  return '';
 };
 
 export const getPlanningOutcome = (planning) => {
@@ -179,23 +175,4 @@ export const formatPlanningUnsupportedMessage = (unsupported) => {
     .filter(Boolean);
   if (reasons.length) return reasons.join(' ');
   return 'This requested operation is not currently supported.';
-};
-
-/**
- * Partial compatibility is executable, but the planner deliberately removed
- * networks that cannot honor one of the requested filters. Keep that detail
- * visible instead of making the result look like a complete network search.
- */
-export const formatPlanningCapabilityMessage = (planning) => {
-  const excluded = Array.isArray(planning?.capability?.excluded_networks)
-    ? planning.capability.excluded_networks
-    : [];
-  const labels = excluded.map((entry) => {
-    if (typeof entry === 'string') return entry;
-    return entry?.network || entry?.name || entry?.platform || null;
-  }).filter(Boolean);
-  if (labels.length) {
-    return `Some requested networks were excluded because they cannot apply the requested filter: ${labels.join(', ')}.`;
-  }
-  return String(planning?.reason || '').trim();
 };

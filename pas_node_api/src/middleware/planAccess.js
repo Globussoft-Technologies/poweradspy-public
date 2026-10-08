@@ -16,6 +16,15 @@ const log = logger.createChild('plan-access');
 // (e.g. Basic 2026), regardless of what the user actually clicked.
 const SILENT_STRIP_FILTERS = new Set(['ad_position', 'language']);
 
+// Platform capability mismatches are data-routing concerns for the common
+// search fan-out. Keep those fields intact on this route so the controller can
+// drop only unsupported networks while still searching the eligible ones.
+function isCommonAdsSearchRequest(req) {
+  const path = String(req?.path || req?.originalUrl || req?.url || '')
+    .split('?')[0];
+  return path === '/ads/search' || path.endsWith('/common/ads/search');
+}
+
 /**
  * When the versioned Plan Control gate has already evaluated Ads Search, its
  * effective network list must also drive downstream dispatch. Keeping the
@@ -126,6 +135,7 @@ async function planAccessMiddleware(req, res, next) {
     // Get subscription type from JWT (aMember or SQL user)
     // Check userSubscriptionType first (aMember users), fallback to plan_id (SQL users)
     const planId = req.user?.userSubscriptionType || req.user?.plan_id;
+    const preservePlatformRestrictedSearch = isCommonAdsSearchRequest(req);
 
     if (planId === undefined || planId === null) {
       log.warn('planAccessMiddleware: No subscription type found on req.user', { userId: req.user?.id });
@@ -195,7 +205,9 @@ async function planAccessMiddleware(req, res, next) {
         ({
           planRestricted: aMemberPlanRestricted,
           platformRestricted: aMemberPlatformRestricted,
-        } = planAccessService.stripRestrictedFilters(req.body, filterStatus, aMemberSduiMap));
+        } = planAccessService.stripRestrictedFilters(req.body, filterStatus, aMemberSduiMap, {
+          preservePlatformRestricted: preservePlatformRestrictedSearch,
+        }));
       }
 
       // ad_position and other defaults are silently stripped (see module-level SILENT_STRIP_FILTERS).
@@ -221,7 +233,7 @@ async function planAccessMiddleware(req, res, next) {
 
       const aMemberHardPlatformRestricted = aMemberPlatformRestricted.filter(f => !SILENT_STRIP_FILTERS.has(f));
 
-      if (aMemberHardPlatformRestricted.length > 0) {
+      if (aMemberHardPlatformRestricted.length > 0 && !preservePlatformRestrictedSearch) {
         log.info('Blocked aMember request — platform-restricted filters used', {
           userId: req.user?.id,
           planId,
@@ -286,7 +298,9 @@ async function planAccessMiddleware(req, res, next) {
       ({
         planRestricted,
         platformRestricted,
-      } = planAccessService.stripRestrictedFilters(req.body, filterStatus, sduiQueryParamMap));
+      } = planAccessService.stripRestrictedFilters(req.body, filterStatus, sduiQueryParamMap, {
+        preservePlatformRestricted: preservePlatformRestrictedSearch,
+      }));
     }
 
     // // Filters that the frontend always sends as defaults (not user-selected).
@@ -315,7 +329,7 @@ async function planAccessMiddleware(req, res, next) {
 
     const hardPlatformRestricted = platformRestricted.filter(f => !SILENT_STRIP_FILTERS.has(f));
 
-    if (hardPlatformRestricted.length > 0) {
+    if (hardPlatformRestricted.length > 0 && !preservePlatformRestrictedSearch) {
       log.info('Blocked request — platform-restricted filters used', {
         userId: req.user?.id,
         planId,

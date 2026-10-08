@@ -123,13 +123,13 @@ describe("filterApplicability > static filter networks (no SDUI required)", () =
     expect(await getApplicableNetworks({ parentScopedValue: ["taboola"] })).toEqual(["native"]);
   });
 
-  it("Native Network remains the boundary when another filter would conflict", async () => {
+  it("Native Network returns no networks when another active filter conflicts", async () => {
     getSDUIConfig.mockResolvedValue({});
     const { getApplicableNetworks } = freshSut();
     expect(await getApplicableNetworks({
       source_app: ["some-admob-app"],
       nativeNetwork: ["taboola"],
-    })).toEqual(["native"]);
+    })).toEqual([]);
   });
 
   it("does not query AdMob or ChatGPT Ads for AI-Meta filters", async () => {
@@ -194,12 +194,12 @@ describe("filterApplicability > static filter networks (no SDUI required)", () =
     expect(out).not.toContain("tiktok");
   });
 
-  it("conflicting filters whose intersection is empty → preserves more permissive set", async () => {
+  it("conflicting filters whose intersection is empty → returns no applicable networks", async () => {
     getSDUIConfig.mockResolvedValue({});
     const { getApplicableNetworks } = freshSut();
-    // budget=tiktok, adBudget=[fb,ig,yt] → intersection empty → keep adBudget set
+    // budget=tiktok, adBudget=[fb,ig,yt] → no network supports both filters.
     const out = await getApplicableNetworks({ adBudget: [1, 2], budget: "Low" });
-    expect(out).not.toContain("tiktok");
+    expect(out).toEqual([]);
   });
 });
 
@@ -345,6 +345,65 @@ describe("filterApplicability > SDUI-derived index", () => {
     expect(categoryNetworks).not.toContain("admob");
 
     expect(await getApplicableNetworks({ source_app: ["Cricket App"] })).toEqual(["admob"]);
+  });
+
+  it("does not let filter-level Language applicability widen the matrix", async () => {
+    getSDUIConfig.mockResolvedValue({
+      navbar: [{
+        _id: "platforms",
+        filters: [{
+          platform_filter_matrix: {
+            facebook: ["language"],
+            admob: ["country", "source"],
+          },
+        }],
+      }],
+      sidebar: [{
+        _id: "language",
+        filters: [{
+          _id: "language_filter",
+          query_param: "language",
+          platform_applicability: ["facebook", "admob"],
+        }],
+      }],
+    });
+    const { getApplicableNetworks } = freshSut();
+
+    expect(await getApplicableNetworks({
+      language: ["en"],
+      language_explicit: true,
+    })).toEqual(["facebook"]);
+  });
+
+  it("does not let option-level applicability widen the platform matrix", async () => {
+    getSDUIConfig.mockResolvedValue({
+      navbar: [{
+        _id: "platforms",
+        filters: [{
+          platform_filter_matrix: {
+            facebook: ["cta"],
+            admob: ["country", "source"],
+          },
+        }],
+      }],
+      sidebar: [{
+        _id: "cta",
+        filters: [{
+          _id: "cta_filter",
+          query_param: "cta",
+          platform_applicability: ["facebook", "admob"],
+          options: [{
+            value: "add_to_cart",
+            platform_applicability: ["facebook", "admob"],
+          }],
+        }],
+      }],
+    });
+    const { getApplicableNetworks } = freshSut();
+
+    expect(await getApplicableNetworks({
+      call_to_action: ["add_to_cart"],
+    })).toEqual(["facebook"]);
   });
 
   it("section without docs (non-array) skipped", async () => {

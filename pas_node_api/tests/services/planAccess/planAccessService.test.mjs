@@ -166,13 +166,13 @@ describe("planAccessService > getAllowedPlatforms", () => {
   it("returns platforms whose plan_lists include planId", () => {
     const svc = freshSut();
     const config = [{ _id: "platform_access", platform_plans: { facebook: [5, 10], instagram: [10] } }];
-    expect(svc.getAllowedPlatforms(5, config)).toEqual(["facebook"]);
+    expect(svc.getAllowedPlatforms(5, config)).toEqual(["facebook", "admob", "chatgptads"]);
     expect(svc.getAllowedPlatforms(10, config)).toEqual(expect.arrayContaining(["facebook", "instagram"]));
   });
   it("non-array plan_list entries skipped", () => {
     const svc = freshSut();
     const config = [{ _id: "platform_access", platform_plans: { facebook: "not-array" } }];
-    expect(svc.getAllowedPlatforms(5, config)).toEqual([]);
+    expect(svc.getAllowedPlatforms(5, config)).toEqual(["admob", "chatgptads"]);
   });
 });
 
@@ -329,6 +329,18 @@ describe("planAccessService > stripRestrictedFilters", () => {
     const body = { keyword: "test" };
     const out = freshSut().stripRestrictedFilters(body, { keyword_search: { enabled: false, planAllowed: true } });
     expect(out.platformRestricted).toEqual(["keyword"]);
+  });
+  it("preserves platformRestricted fields when common search will filter networks", () => {
+    const body = { keyword: "test" };
+    const out = freshSut().stripRestrictedFilters(
+      body,
+      { keyword_search: { enabled: false, planAllowed: true } },
+      {},
+      { preservePlatformRestricted: true },
+    );
+
+    expect(out.platformRestricted).toEqual(["keyword"]);
+    expect(body.keyword).toBe("test");
   });
   it("FILTER_ID_ALIASES fallback: cta → call_to_action", () => {
     // sduiQueryParamMap routes call_to_action body key to 'cta' filter (which is blocked).

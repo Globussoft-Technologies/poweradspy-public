@@ -464,11 +464,16 @@ const FILTER_ID_ALIASES = {
  * @param {object} body         - req.body
  * @param {object} filterStatus - { filterId: { enabled, planAllowed } } from getFilterStatus()
  * @param {object} sduiQueryParamMap - dynamic map built from sdui_config collection
+ * @param {object} options            - optional behavior flags
+ * @param {boolean} options.preservePlatformRestricted - keep a filter in the
+ *        body so common search can drop unsupported networks without widening
+ *        the request
  */
-function stripRestrictedFilters(body, filterStatus, sduiQueryParamMap = {}) {
+function stripRestrictedFilters(body, filterStatus, sduiQueryParamMap = {}, options = {}) {
   const planRestricted = [];
   const platformRestricted = [];
   if (!body || !filterStatus) return { planRestricted, platformRestricted };
+  const preservePlatformRestricted = options.preservePlatformRestricted === true;
 
   // Merge: sduiQueryParamMap covers new SDUI elements added via admin dashboard;
   // BODY_KEY_TO_FILTER_ID takes priority for existing hardcoded filters (spread order matters).
@@ -500,12 +505,15 @@ function stripRestrictedFilters(body, filterStatus, sduiQueryParamMap = {}) {
 
     if (fs && fs.enabled === false) {
       log.info('[STRIP-DEBUG]', { bodyKey, filterId, val, enabled: fs.enabled, planAllowed: fs.planAllowed });
-      delete body[bodyKey];
       if (!fs.planAllowed) {
         // Plan has no access to this filter at all → upgrade modal
+        delete body[bodyKey];
         planRestricted.push(bodyKey);
       } else {
-        // Plan is allowed but the selected platform is restricted → platform message
+        // Plan is allowed but the selected platform is restricted. Common
+        // search keeps the field so filterApplicability can remove only the
+        // unsupported network; other callers retain the legacy strip behavior.
+        if (!preservePlatformRestricted) delete body[bodyKey];
         platformRestricted.push(bodyKey);
       }
     }

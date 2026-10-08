@@ -151,10 +151,9 @@ const STATIC_FILTER_NETWORKS = {
   activeDaysRange: ['admob'],
 };
 
-// `nativeNetwork` is a hard network boundary. The generic applicability
-// algorithm intentionally keeps a previous intersection when two unrelated
-// filters conflict, but that fail-open behavior must never re-enable a
-// non-Native controller for this filter.
+// `nativeNetwork` is a hard network boundary. It is still reduced to Native
+// after the common-capability intersection so unrelated filters cannot widen
+// it back to another controller.
 const NATIVE_NETWORK_FILTER_KEYS = new Set(['nativeNetwork', 'native_network']);
 
 // AdMob and ChatGPT Ads should not participate in AI/category-driven searches.
@@ -240,8 +239,12 @@ async function _buildIndex() {
         let networks = matrixNetworks ? [...matrixNetworks] : null;
         const explicitApplicability = normalizeNetworkApplicability(applicability);
         if (explicitApplicability) {
+          // The platform matrix describes the fields that actually exist on
+          // each index. Filter-level applicability may narrow that set, but it
+          // must never widen it (for example, Language must not re-enable
+          // AdMob when the matrix omits Language from the AdMob row).
           networks = networks
-            ? [...new Set([...networks, ...explicitApplicability])]
+            ? networks.filter((network) => explicitApplicability.includes(network))
             : explicitApplicability;
         }
         // 'all', missing, or an empty value leaves networks as null (no
@@ -262,7 +265,13 @@ async function _buildIndex() {
           if (!normalizedOptionValue) continue;
 
           const optionApplicability = normalizeNetworkApplicability(option?.platform_applicability);
-          const optionNetworks = optionApplicability || optionNetworksFallback;
+          // Option-level applicability may narrow the parent filter, but it must
+          // not widen a platform matrix that says the field is unavailable.
+          const optionNetworks = optionApplicability
+            ? (networks
+              ? optionApplicability.filter((network) => networks.includes(network))
+              : optionApplicability)
+            : optionNetworksFallback;
 
           for (const bk of matchingBodyKeys) {
             optionIndex[bk] ||= {};
@@ -339,11 +348,11 @@ function getActiveValues(value) {
  * Logic: for each active body field, look up its applicable networks.
  * Final result = intersection of all those network sets.
  *
- * Failure modes that fall back to `null` (no restriction) instead of breaking:
+ * Cases that intentionally return `null` (no restriction) instead of breaking:
  *   - No active filters at all
  *   - Active filters all map to "all networks" applicability
- *   - Intersection collapses to empty (conflicting filters) — fall back rather
- *     than blocking every network and returning zero results everywhere
+ *   - Intersection collapses to empty (conflicting filters) — return an empty
+ *     list so the controller can report no ads without broadening the query.
  */
 async function getApplicableNetworks(reqBody) {
   if (!reqBody || typeof reqBody !== 'object') return null;
@@ -395,11 +404,10 @@ async function getApplicableNetworks(reqBody) {
     if (intersection === null) {
       intersection = new Set(allowed);
     } else {
-      const next = new Set(allowed.filter(n => intersection.has(n)));
-      // Don't let intersection collapse to empty — that would block all
-      // networks and return zero results. Keep the previous (more permissive)
-      // intersection if the new filter would zero it out.
-      if (next.size > 0) intersection = next;
+      // A network must support every active filter. Keeping the previous set
+      // when this becomes empty would silently ignore the newest filter and
+      // return broader results than the user requested.
+      intersection = new Set(allowed.filter(n => intersection.has(n)));
     }
   }
 
@@ -416,12 +424,13 @@ async function getApplicableNetworks(reqBody) {
     const langValue = reqBody.language ?? reqBody.lang;
     if (isActiveValue(langValue)) {
       const allowed = index['language'] || index['lang'];
-      if (allowed && allowed.length > 0 && allowed.length < ALL_NETWORKS.length) {
+      // An empty matrix result is an explicit "no supported network" result,
+      // not the same as a missing language capability declaration.
+      if (Array.isArray(allowed) && allowed.length < ALL_NETWORKS.length) {
         if (intersection === null) {
           intersection = new Set(allowed);
         } else {
-          const next = new Set(allowed.filter(n => intersection.has(n)));
-          if (next.size > 0) intersection = next;
+          intersection = new Set(allowed.filter(n => intersection.has(n)));
         }
       }
     }
@@ -431,9 +440,17 @@ async function getApplicableNetworks(reqBody) {
   // boundary after all other applicability checks, including the generic
   // empty-intersection fallback, so another active filter cannot make
   // non-Native ads appear for a Native Network selection.
-  if (nativeNetworkFilterActive) return ['native'];
+  if (nativeNetworkFilterActive) {
+    // Keep the Native boundary, but preserve an empty intersection when a
+    // second active filter is unsupported by Native. Returning Native here in
+    // that case would make the controller ignore the unsupported filter.
+    if (intersection && !intersection.has('native')) return [];
+    return ['native'];
+  }
 
-  return intersection && intersection.size > 0 ? Array.from(intersection) : null;
+  // An empty Set means active filters have no common-capability network. Keep
+  // it distinct from null, which means no filter restricted applicability.
+  return intersection ? Array.from(intersection) : null;
 }
 
 /**

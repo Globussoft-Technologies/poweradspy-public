@@ -147,9 +147,9 @@ describe("api > fetchAds frontend safety-net sort", () => {
     const out = await api.fetchAds();
     expect(out.ads[0].id).toBe(1);
   });
-  it("sortBy='lastseen' hits payload.last_seen_sort else-if (line 1229)", async () => {
-    // 'lastseen' is in SORT_MAP → order_column='LastSeen' → payload.last_seen_sort='LastSeen_sort'.
-    // It is NOT in SORT_BY_FIELD_MAP → first if misses → falls into 1229 else-if.
+  it("sortBy='lastseen' retains the last_seen wire sort", async () => {
+    // The request uses order_column='last_seen' and disables legacy sort flags;
+    // the client-side fallback still orders the returned cards safely.
     globalThis.fetch.mockResolvedValueOnce(makeRes([
       { ad_id: 1, last_seen: "2025-01-01" },
       { ad_id: 2, last_seen: "2026-01-01" },

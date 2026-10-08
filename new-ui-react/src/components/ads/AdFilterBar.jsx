@@ -14,6 +14,9 @@ import {
 const SORT_TO_PLAN_ACCESS_ID = {
   newest: 'newest_sort',
   newest_sort: 'newest_sort',
+  last_seen: 'newest_sort',
+  lastseen: 'newest_sort',
+  last_seen_sort: 'newest_sort',
   created_at: 'newest_sort',
   'ad seen date': 'newest_sort',
   likes: 'likes_sort',
@@ -71,7 +74,9 @@ export const resolveSortPlanAccessId = (label, value) => {
 const SORT_VALUE_ALIASES = {
   newest: "created_at",
   newest_sort: "created_at",
-  post_date: "created_at",
+  last_seen: "created_at",
+  lastseen: "created_at",
+  last_seen_sort: "created_at",
   "-created_at": "created_at",
   popular: "popularity_score",
   popularity: "popularity_score",

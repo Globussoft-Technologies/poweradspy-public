@@ -696,6 +696,24 @@ describe("useSDUI > effectivePlatforms", () => {
     expect(result.current.effectivePlatforms).toEqual(["youtube"]);
   });
 
+  it("option-level All inherits the parent filter scope", async () => {
+    // A wildcard child must inherit the parent scope instead of widening it.
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{ _id: "d", filters: [{
+        _id: "language_filter",
+        query_param: "language",
+        platform_applicability: ["facebook", "instagram"],
+        options: [{ value: "en", platform_applicability: "all" }],
+      }] }],
+    }));
+    const scoped = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => { scoped.result.current.setActivePlatforms(["facebook", "instagram", "gdn"]); });
+    act(() => { scoped.result.current.setFilter("language_filter", ["en"]); });
+    expect(scoped.result.current.effectivePlatforms).toEqual(["facebook", "instagram"]);
+    expect(scoped.result.current.hasPlatformScopedFilters).toBe(true);
+  });
+
   it("intersection empty → returns activePlatforms (escape hatch)", async () => {
     fetchSpy.mockResolvedValue(makeConfig({
       sidebar: [{ _id: "d", filters: [{ _id: "fbOnly", platform_applicability: "facebook" }] }],
@@ -705,6 +723,20 @@ describe("useSDUI > effectivePlatforms", () => {
     act(() => { result.current.setActivePlatforms(["youtube"]); });
     act(() => { result.current.setFilter("fbOnly", ["x"]); });
     expect(result.current.effectivePlatforms).toEqual(["youtube"]);
+  });
+
+  it("intersects the scopes of multiple active filters", async () => {
+    fetchSpy.mockResolvedValue(makeConfig({
+      sidebar: [{ _id: "d", filters: [
+        { _id: "first_filter", platform_applicability: ["facebook", "instagram"] },
+        { _id: "second_filter", platform_applicability: ["instagram", "youtube"] },
+      ] }],
+    }));
+    const { result } = renderHook(() => useSDUI());
+    await act(async () => { await Promise.resolve(); });
+    act(() => { result.current.setActivePlatforms(["facebook", "instagram", "youtube"]); });
+    act(() => { result.current.setAllFilters({ first_filter: ["x"], second_filter: ["y"] }); });
+    expect(result.current.effectivePlatforms).toEqual(["instagram"]);
   });
 
   it("sorting alias matches sort_by filter", async () => {
@@ -1322,6 +1354,7 @@ describe("useSDUI > derived adTypeOptions + filterPlatformSupport", () => {
         _id: "d", filters: [
           { _id: "fbOnly", platform_applicability: "facebook" },
           { _id: "anyAll", platform_applicability: "all" },
+          { _id: "language_filter", query_param: "language", platform_applicability: ["facebook"] },
           { _id: "noId" }, // no _id-less items skipped
           { platform_applicability: "instagram" }, // no _id
         ],
@@ -1330,6 +1363,7 @@ describe("useSDUI > derived adTypeOptions + filterPlatformSupport", () => {
     const { result } = renderHook(() => useSDUI());
     await act(async () => { await Promise.resolve(); });
     expect(result.current.filterPlatformSupport.fbOnly).toEqual(["facebook"]);
+    expect(result.current.filterPlatformSupport.language).toEqual(["facebook"]);
     expect(result.current.filterPlatformSupport.anyAll).toBeUndefined();
   });
 });

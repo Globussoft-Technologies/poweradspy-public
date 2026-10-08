@@ -73,6 +73,75 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('ignores the default full_payload post_date when no sort was requested', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: {
+        ai_category_id: ['1010'],
+        has_ai_meta: true,
+      },
+      full_payload: {
+        ai_category_id: ['1010'],
+        has_ai_meta: true,
+        order_column: 'post_date',
+        order_by: 'desc',
+        newest_sort: 'NA',
+        last_seen_sort: 'NA',
+        impression_sort: 'NA',
+        popularity_sort: 'NA',
+        domain_sort: 'NA',
+        running_longest_sort: 'NA',
+      },
+    });
+
+    expect(normalized).not.toHaveProperty('order_column');
+    expect(normalized).not.toHaveProperty('order_by');
+    expect(mapArgsToFilters(normalized, {}).unmappedDetails).toEqual([]);
+  });
+
+  it('removes a copied post_date default from args when planning has no sort constraint', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: {
+        ai_intent: ['app_install'],
+        has_ai_meta: true,
+        order_column: 'post_date',
+        order_by: 'desc',
+      },
+      full_payload: {
+        ai_intent: ['app_install'],
+        has_ai_meta: true,
+        order_column: 'post_date',
+        order_by: 'desc',
+        newest_sort: 'NA',
+      },
+      planning: {
+        intent: {
+          constraints: [{ field: 'ai_intent', wire_field: 'ai_intent' }],
+        },
+      },
+    });
+
+    expect(normalized).not.toHaveProperty('order_column');
+    expect(normalized).not.toHaveProperty('order_by');
+    expect(mapArgsToFilters(normalized, {}).unmappedDetails).toEqual([]);
+  });
+
+  it('keeps an explicit post_date sort when planning declares it', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: { order_column: 'post_date', order_by: 'desc' },
+      full_payload: { order_column: 'post_date', order_by: 'desc' },
+      planning: {
+        intent: {
+          constraints: [{
+            field: 'sort',
+            wire_fields: ['order_column', 'order_by'],
+          }],
+        },
+      },
+    });
+
+    expect(normalized).toMatchObject({ order_column: 'post_date', order_by: 'desc' });
+  });
+
   it('ignores the full_payload type default when the planner did not request an ad type', () => {
     const normalized = normalizeAiSearchArgs({
       args: { keyword: 'weight-loss products' },
@@ -373,6 +442,58 @@ describe('aiSearchMapper', () => {
 
     expect(mapped.sortBy).toBe('popularity_score');
     expect(mapped.sortDirection).toBe('desc');
+    expect(mapped.unmappedDetails).toEqual([]);
+  });
+
+  it('preserves DS last_seen sorting as the Common Ads Search wire value', () => {
+    const mapped = mapArgsToFilters({
+      country: ['India'],
+      order_column: 'last_seen',
+      order_by: 'desc',
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'sort_by',
+          type: 'radio',
+          options: [{ label: 'Ad Seen Date', value: 'newest' }],
+        }],
+      }],
+      sidebar: [{
+        filters: [{
+          _id: 'country_filter',
+          type: 'checkbox',
+          options: [{ label: 'India', value: 'India' }],
+        }],
+      }],
+    }, {
+      date_filter: { field: 'post_date', preset: 'last_30_days' },
+    });
+
+    expect(mapped.sortBy).toBe('last_seen');
+    expect(mapped.sortDirection).toBe('desc');
+    expect(mapped.filterValues).toMatchObject({
+      country_filter: ['India'],
+      post_date_btn_sort: 'last_30_days',
+    });
+    expect(mapped.unmappedDetails).toEqual([]);
+  });
+
+  it('keeps an explicit post_date sort separate from Ad Seen Date', () => {
+    const mapped = mapArgsToFilters({
+      order_column: 'post_date',
+      order_by: 'asc',
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'sort_by',
+          type: 'radio',
+          options: [{ label: 'Post Date', value: 'post_date' }],
+        }],
+      }],
+    });
+
+    expect(mapped.sortBy).toBe('post_date');
+    expect(mapped.sortDirection).toBe('asc');
     expect(mapped.unmappedDetails).toEqual([]);
   });
 

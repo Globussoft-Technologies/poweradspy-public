@@ -232,6 +232,24 @@ describe("middleware/planAccess > planAccessMiddleware (SQL user path)", () => {
     expect(res.body.showSubscriptionModal).toBe(false);
   });
 
+  it("common Ads Search keeps platform mismatches for per-network filtering", async () => {
+    planSvc.getConfig.mockResolvedValue([{}]);
+    planSvc.stripRestrictedFilters.mockReturnValue({ planRestricted: [], platformRestricted: ["country"] });
+    const { planAccessMiddleware } = freshSut();
+    const req = { user: { plan_id: 1 }, path: "/ads/search", body: {}, query: {} };
+    const next = vi.fn();
+
+    await planAccessMiddleware(req, mkRes(), next);
+
+    expect(next).toHaveBeenCalled();
+    expect(planSvc.stripRestrictedFilters).toHaveBeenCalledWith(
+      req.body,
+      expect.any(Object),
+      expect.any(Object),
+      { preservePlatformRestricted: true },
+    );
+  });
+
   it("500 on unexpected throw", async () => {
     planSvc.getConfig.mockRejectedValue(new Error("boom"));
     const { planAccessMiddleware } = freshSut();
@@ -310,6 +328,29 @@ describe("middleware/planAccess > planAccessMiddleware (aMember user path)", () 
       { user: { userSubscriptionType: 69, platformAccess: {} }, body: {}, query: {} }, res, vi.fn()
     );
     expect(res.statusCode).toBe(403);
+  });
+
+  it("aMember common Ads Search keeps platform mismatches for per-network filtering", async () => {
+    planSvc.getConfig.mockResolvedValue([{}]);
+    planSvc.stripRestrictedFilters.mockReturnValue({ planRestricted: [], platformRestricted: ["country"] });
+    const { planAccessMiddleware } = freshSut();
+    const req = {
+      user: { userSubscriptionType: 69, platformAccess: {} },
+      path: "/ads/search",
+      body: {},
+      query: {},
+    };
+    const next = vi.fn();
+
+    await planAccessMiddleware(req, mkRes(), next);
+
+    expect(next).toHaveBeenCalled();
+    expect(planSvc.stripRestrictedFilters).toHaveBeenCalledWith(
+      req.body,
+      expect.any(Object),
+      expect.any(Object),
+      { preservePlatformRestricted: true },
+    );
   });
 
   it("aMember ad_position silently stripped → passes through", async () => {

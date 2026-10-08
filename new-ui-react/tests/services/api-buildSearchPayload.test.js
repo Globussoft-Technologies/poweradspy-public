@@ -95,6 +95,36 @@ describe("buildSearchPayload > AI-Meta", () => {
     expect(payload.has_ai_meta).toBe(true);
   });
 
+  it("intersects every active AI field's platform support", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["facebook", "instagram"],
+      ai_intent: ["app_install"],
+      filterPlatformSupport: { ai_intent: ["facebook"] },
+    });
+
+    expect(payload.network).toEqual(["facebook"]);
+  });
+
+  it("does not let stale SDUI support re-enable AdMob for AI fields", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["facebook", "admob"],
+      ai_intent: ["app_install"],
+      filterPlatformSupport: { ai_intent: ["facebook", "admob"] },
+    });
+
+    expect(payload.network).toEqual(["facebook"]);
+  });
+
+  it("narrows an All-tab AI request before it reaches the API", () => {
+    const payload = buildSearchPayload({
+      activePlatforms: ["facebook", "admob"],
+      ai_intent: ["app_install"],
+      isAllTab: true,
+    });
+
+    expect(payload.network).toEqual(["facebook"]);
+  });
+
   it("returns no networks for an AdMob-only AI-meta request", () => {
     const payload = buildSearchPayload({
       activePlatforms: ["admob"],
@@ -199,10 +229,32 @@ describe("buildSearchPayload > searchIn modes", () => {
 });
 
 describe("buildSearchPayload > sortBy mapping", () => {
-  it("'newest' → post_date with newest_sort flag", () => {
+  it("'newest' UI value → last_seen wire field with legacy flags disabled", () => {
     const p = buildSearchPayload({ sortBy: "newest" });
+    expect(p.order_column).toBe("last_seen");
+    expect(p.order_by).toBe("desc");
+    expect(p.newest_sort).toBe("NA");
+    expect(p.last_seen_sort).toBe("NA");
+  });
+  it("'created_at' UI value → last_seen wire field", () => {
+    const p = buildSearchPayload({ sortBy: "created_at", sortDirection: "asc" });
+    expect(p.order_column).toBe("last_seen");
+    expect(p.order_by).toBe("asc");
+    expect(p.newest_sort).toBe("NA");
+    expect(p.last_seen_sort).toBe("NA");
+  });
+  it("explicit last_seen uses the lowercase wire value", () => {
+    const p = buildSearchPayload({ sortBy: "last_seen" });
+    expect(p.order_column).toBe("last_seen");
+    expect(p.newest_sort).toBe("NA");
+    expect(p.last_seen_sort).toBe("NA");
+  });
+  it("explicit post_date remains the publication-date wire sort", () => {
+    const p = buildSearchPayload({ sortBy: "post_date", sortDirection: "asc" });
     expect(p.order_column).toBe("post_date");
-    expect(p.newest_sort).toBe("newest_sort");
+    expect(p.order_by).toBe("asc");
+    expect(p.newest_sort).toBe("NA");
+    expect(p.last_seen_sort).toBe("NA");
   });
   it("'popular' → popularity", () => {
     expect(buildSearchPayload({ sortBy: "popular" }).order_column).toBe("popularity");
@@ -222,8 +274,8 @@ describe("buildSearchPayload > sortBy mapping", () => {
   it("uses filters.sorting fallback when sortBy absent", () => {
     expect(buildSearchPayload({ sorting: "likes" }).order_column).toBe("likes");
   });
-  it("unknown sort → post_date default", () => {
-    expect(buildSearchPayload({ sortBy: "unknown" }).order_column).toBe("post_date");
+  it("unknown sort → last_seen default", () => {
+    expect(buildSearchPayload({ sortBy: "unknown" }).order_column).toBe("last_seen");
   });
   it("forwards an explicit ascending direction", () => {
     const p = buildSearchPayload({ sortBy: "popular", sortDirection: "asc" });
@@ -232,7 +284,7 @@ describe("buildSearchPayload > sortBy mapping", () => {
   });
 
   it("all named-sort flag fields produced correctly", () => {
-    // 'views' is not in SORT_MAP — sortBy='views' falls through to post_date.
+    // 'views' is not in SORT_MAP — sortBy='views' falls through to last_seen.
     const map = {
       likes: "likes_sort",
       comments: "comments_sort",
@@ -245,7 +297,11 @@ describe("buildSearchPayload > sortBy mapping", () => {
     };
     for (const [sortBy, flagField] of Object.entries(map)) {
       const p = buildSearchPayload({ sortBy });
-      expect(p[flagField]).not.toBe("NA");
+      if (sortBy === "last_seen") {
+        expect(p[flagField]).toBe("NA");
+      } else {
+        expect(p[flagField]).not.toBe("NA");
+      }
     }
   });
 });
@@ -650,6 +706,16 @@ describe("buildSearchPayload > lang + size", () => {
   it("language default 'en' when no lang on supported platform", () => {
     const p = buildSearchPayload({ activePlatforms: ["facebook"] });
     expect(p.language).toBe("en");
+  });
+  it("preserves explicit Language for backend capability filtering", () => {
+    const p = buildSearchPayload({
+      language: "fr",
+      activePlatforms: ["admob"],
+      filterPlatformSupport: { language: ["admob"] },
+    });
+    expect(p.lang).toBe("fr");
+    expect(p.language).toBe("fr");
+    expect(p.language_explicit).toBe(true);
   });
   it("size from array → joined with commas", () => {
     const p = buildSearchPayload({ image_size: ["LARGE", "MEDIUM"], activePlatforms: ["gdn"] });

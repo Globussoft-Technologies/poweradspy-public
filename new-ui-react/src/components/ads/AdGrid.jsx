@@ -79,7 +79,9 @@ export const formatDatePresetLabel = (value) => {
 const SORT_CHIP_VALUE_ALIASES = {
   newest: "created_at",
   newest_sort: "created_at",
-  post_date: "created_at",
+  last_seen: "created_at",
+  lastseen: "created_at",
+  last_seen_sort: "created_at",
   "-created_at": "created_at",
   popular: "popularity_score",
   popularity: "popularity_score",
@@ -111,9 +113,11 @@ const normalizeSortChipValue = (value) => {
 const LAST_SEEN_SORT_VALUES = new Set([
   "newest",
   "newest_sort",
-  "post_date",
   "created_at",
   "-created_at",
+  "last_seen",
+  "lastseen",
+  "last_seen_sort",
   "latest",
   "new",
 ]);
@@ -128,6 +132,7 @@ const SORT_LABEL_MAP = {
   shares: "Shares", share: "Shares",
   hits: "Hits", hit: "Hits",
   last_seen: "Last Seen", lastseen: "Last Seen", "-last_seen_at": "Last Seen",
+  post_date: "Post Date",
   "ad seen date": "Ad Seen Date",
   running_days: "Ad Running Days", days_running: "Ad Running Days",
   running_longest: "Ad Running Days", longest_running: "Ad Running Days",
@@ -253,7 +258,7 @@ const AdGrid = ({
   onAiQuickFilterApply,
   aiCapabilityMessage = null,
   aiSearchSummary = "",
-  aiSearchNotices = [],
+  aiSearchNote = "",
   onAiSearchPlanContextDismiss,
   aiSearchSuggestions = [],
   onAiSuggestionSelect,
@@ -288,7 +293,7 @@ const AdGrid = ({
   const hasAiResultSource = Boolean(String(aiPrompt || "").trim()) || aiQuickFilterId != null;
   const isAiSearchResult = hasAiResultSource && isAiFilteredResult;
   const hasAiSearchPlanContext =
-    Boolean(aiSearchSummary) || aiSearchNotices.length > 0;
+    Boolean(aiSearchSummary) || Boolean(aiSearchNote);
   const hasAiSearchSuggestions = aiSearchSuggestions.length > 0;
 
   // "Total Ads" = the ES match total from the backend (`adsMeta` is per-network
@@ -1208,20 +1213,15 @@ const AdGrid = ({
                 <div className="min-w-0 flex-1 space-y-1">
                   {aiSearchSummary && (
                     <p className="whitespace-pre-line break-words text-xs leading-5 text-theme-text-muted">
-                      <span className="font-bold text-theme-text">Searched:</span>{" "}
                       {aiSearchSummary}
                     </p>
                   )}
-                  {aiSearchNotices.map((notice, index) => (
-                    <p
-                      key={`${notice.kind || "notice"}-${notice.message}-${index}`}
-                      className="flex items-start gap-1.5 text-[10px] leading-4 text-theme-text-muted"
-                      data-notice-kind={notice.kind || undefined}
-                    >
+                  {aiSearchNote && (
+                    <p className="flex items-start gap-1.5 text-[10px] leading-4 text-theme-text-muted">
                       <Info size={11} className="mt-0.5 shrink-0 text-[#8b5cf6]" />
-                      <span className="min-w-0 break-words">{notice.message}</span>
+                      <span className="min-w-0 break-words">{aiSearchNote}</span>
                     </p>
-                  ))}
+                  )}
                 </div>
                 <button
                   type="button"

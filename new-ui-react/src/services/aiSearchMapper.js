@@ -247,7 +247,13 @@ function applyStableField(filter, stateKey, rawValues, filterValues, unmapped, f
 function mapSortValue(orderColumn) {
   const c = norm(orderColumn);
   if (/domain/.test(c) && /(reg|registration|date)/.test(c)) return 'domain_sort';
-  if (/post ?date|date|created|newest|recent/.test(c)) return 'newest';
+  // DS uses `last_seen` for the UI's Ad Seen Date / Newest sort. Keep it as a
+  // distinct semantic value so environments that expose a LastSeen option can
+  // use it, while the alias list below still falls back to the live `newest`
+  // SDUI value used by the current frontend.
+  if (/last ?seen|lastseen/.test(c)) return 'last_seen';
+  if (/post[_ ]?date/.test(c)) return 'post_date';
+  if (/date|created|newest|recent/.test(c)) return 'newest';
   // Keep metric sorts distinct. Mapping impressions to Popular silently
   // changed the user's requested ordering and sent popularity_sort instead.
   if (/impression/.test(c)) return 'impressions';
@@ -583,7 +589,13 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     const semantic = mapSortValue(args.order_column);
     const sortFilter = findFilter(config, FILTER_IDS.sort);
     if (semantic) {
-      if (sortFilter) {
+      // `last_seen` is the stable Common Ads Search wire value for the
+      // frontend's Ad Seen Date control. Do not replace it with the SDUI
+      // display value (`newest`/`created_at`), because that would serialize
+      // the request as post_date and change the requested date dimension.
+      if (semantic === 'last_seen') {
+        sortBy = semantic;
+      } else if (sortFilter) {
         // SDUI has used several aliases for the same visible sort. Keep the
         // validation against live options, but accept the contract value and
         // the legacy UI value so AI Search does not reject a valid sort when
@@ -597,8 +609,10 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
               : semantic === 'running_longest'
                 ? ['running_days', 'running_longest', 'ad_running_days', 'ad_running_days_sort']
                 : semantic === 'newest'
-                  ? ['newest', 'created_at', 'post_date']
-                  : [semantic];
+                  ? ['newest', 'created_at', '-created_at']
+                  : semantic === 'post_date'
+                    ? ['post_date', 'post date']
+                    : [semantic];
         const r = sortCandidates
           .map((candidate) => resolveOption(sortFilter, candidate))
           .find((value) => value !== undefined);
@@ -864,6 +878,17 @@ export function normalizeAiSearchArgs(payload = {}) {
   const fullPayload = payload?.full_payload && typeof payload.full_payload === 'object'
     ? payload.full_payload
     : {};
+  const planning = payload?.planning;
+  const planningConstraints = Array.isArray(planning?.intent?.constraints)
+    ? planning.intent.constraints
+    : [];
+  const hasExplicitPlannerSort = planningConstraints.some((constraint) => {
+    const field = norm(constraint?.field);
+    const wireFields = Array.isArray(constraint?.wire_fields)
+      ? constraint.wire_fields.map(norm)
+      : [];
+    return field === 'sort' || wireFields.includes('order column') || wireFields.includes('order by');
+  });
   const passthroughKeys = [
     // These are part of the AI search contract. Keep them when only the
     // full_payload tier contains them so sort/type intent cannot disappear
@@ -894,9 +919,50 @@ export function normalizeAiSearchArgs(payload = {}) {
     'domain_date_btn_sort',
   ];
 
+  const legacySortKeys = [
+    'newest_sort',
+    'last_seen_sort',
+    'impression_sort',
+    'popularity_sort',
+    'domain_sort',
+    'running_longest_sort',
+    'likes_sort',
+    'comments_sort',
+    'shares_sort',
+    'views_sort',
+    'adBudget_sort',
+  ];
+  const hasActiveLegacySort = legacySortKeys.some((key) => {
+    const value = fullPayload[key];
+    return value !== undefined && value !== null &&
+      String(value).trim() !== '' && String(value).trim().toUpperCase() !== 'NA';
+  });
+  // DS full_payload can carry Common Search's default post_date even when the
+  // prompt did not request sorting. Do not turn that default into an AI sort:
+  // Ad Seen Date is last_seen, while an explicit post_date sort remains valid.
+  const ignoreInheritedDefaultPostDateSort =
+    norm(fullPayload.order_column) === 'post date' &&
+    !hasActiveLegacySort &&
+    !hasExplicitPlannerSort &&
+    (args.order_column == null || norm(args.order_column) === 'post date');
+
   let changed = false;
   const merged = { ...args };
   for (const key of passthroughKeys) {
+    if (
+      ignoreInheritedDefaultPostDateSort &&
+      (key === 'order_column' || key === 'order_by')
+    ) {
+      // Some planner revisions copy the Common Search default into `args` as
+      // well as `full_payload`. Remove that copy unless planning explicitly
+      // contains a sort constraint; otherwise the UI reports a false `sort`
+      // capability error before supported networks are searched.
+      if (Object.prototype.hasOwnProperty.call(merged, key)) {
+        delete merged[key];
+        changed = true;
+      }
+      continue;
+    }
     if (merged[key] != null || fullPayload[key] == null) continue;
     merged[key] = fullPayload[key];
     changed = true;
@@ -907,7 +973,6 @@ export function normalizeAiSearchArgs(payload = {}) {
   // the search: only a term explicitly classified as a subject is eligible,
   // and consumed phrases are never search terms. This does not touch genuine
   // subject keywords or mutate the planner metadata returned by DS.
-  const planning = payload?.planning;
   const searchTermRole = String(planning?.search_term_role || '').trim().toLowerCase();
   const consumedPhrases = Array.isArray(planning?.consumed_phrases)
     ? planning.consumed_phrases.map((phrase) => String(phrase || '').trim().toLowerCase()).filter(Boolean)

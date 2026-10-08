@@ -41,10 +41,9 @@ import { planAiSearch } from "./services/aiSearchService";
 import { mapArgsToFilters, normalizeAiSearchArgs } from "./services/aiSearchMapper";
 import { getAiFilterKeys, getAiFilterOptionLabels, resolveActiveAiQuickFilterPreset } from "./utils/aiQuickFilterPresets";
 import {
-  formatPlanningCapabilityMessage,
   formatPlanningUnsupportedMessage,
   findNextExecutablePlanningTier,
-  getPlanningNotices,
+  getPlanningNote,
   getPlanningOutcome,
   getPlanningQuickFilterId,
   getPlanningSummary,
@@ -542,15 +541,15 @@ const App = () => {
   // The selected planner tier's explanation is transient UI metadata. It is
   // never copied into the Common Ads Search payload.
   const [aiSearchSummary, setAiSearchSummary] = useState("");
-  const [aiSearchNotices, setAiSearchNotices] = useState([]);
+  const [aiSearchNote, setAiSearchNote] = useState("");
   const clearAiSearchDisplay = useCallback(() => {
     setAiSearchSuggestions([]);
     setAiSearchSummary("");
-    setAiSearchNotices([]);
+    setAiSearchNote("");
   }, []);
   const dismissAiSearchPlanContext = useCallback(() => {
     setAiSearchSummary("");
-    setAiSearchNotices([]);
+    setAiSearchNote("");
   }, []);
   const [useSample, setUseSample] = useState(USE_SAMPLE_DATA);
 
@@ -1028,6 +1027,19 @@ const App = () => {
     isCustomPlan
       ? isPlanNetworkAllowed(planAllowedPlatforms, network)
       : isAdsSearchNetworkAllowed(planAllowedPlatforms, network);
+  const getPlanScopedAiNetworks = useCallback((networks) => {
+    const candidates = Array.isArray(networks) ? networks : [];
+    if (!Array.isArray(planAllowedPlatforms)) return candidates;
+
+    // DS full_payload.network can contain the unrestricted network vocabulary.
+    // Keep AI's visible selection aligned with the same plan boundary used by
+    // the normal Ads Library request instead of highlighting unsearched tabs.
+    return candidates.filter((network) => (
+      isCustomPlan
+        ? isPlanNetworkAllowed(planAllowedPlatforms, network)
+        : isAdsSearchNetworkAllowed(planAllowedPlatforms, network)
+    ));
+  }, [isCustomPlan, planAllowedPlatforms]);
   const adsAllowedPlatforms = useMemo(() => {
     if (isCustomPlan || !Array.isArray(planAllowedPlatforms) || !ADMOB_FRONTEND_ENABLED) {
       return planAllowedPlatforms;
@@ -1895,12 +1907,21 @@ const App = () => {
       if (page === 0) setError(null);
       try {
         const isLanding = landingAd?._fromUrl;
-        // Use activePlatforms (user's selection) not effectivePlatforms — each filter's
-        // per-platform field gating is handled inside buildSearchPayload via platformSupports,
-        // so all selected platforms are always queried and unsupported filter fields are sent as 'NA'.
+        // Start with the plan-permitted selection, then apply the intersection
+        // of active SDUI filter scopes. This is important for option-level
+        // "All": it inherits the parent filter's platform applicability and
+        // must not turn the request back into a global All-network search.
         const permittedPlatforms = Array.isArray(planAllowedPlatforms)
           ? sdui.activePlatforms.filter((network) => isCurrentPlanNetworkAllowed(network))
           : sdui.activePlatforms;
+        const permittedPlatformSet = new Set(permittedPlatforms.map(network =>
+          String(network).trim().toLowerCase()
+        ));
+        const scopedPlatforms = sdui.effectivePlatforms.filter(network =>
+          permittedPlatformSet.has(String(network).trim().toLowerCase())
+        );
+        const searchPlatforms = scopedPlatforms.length > 0 ? scopedPlatforms : permittedPlatforms;
+        const isScopedAllRequest = isAllActive && sdui.hasPlatformScopedFilters;
 
         // A persisted/deep-linked selection can predate the current published
         // policy. Never translate an empty permitted set into the API builder's
@@ -1952,7 +1973,7 @@ const App = () => {
         // Meta Ads Library is only supported on Facebook/Instagram.
         const _metaAdsLibActive = _ttValActive('meta_ads_lib_filter');
         const _metaAdsLibUnsupported = _metaAdsLibActive &&
-          !permittedPlatforms.some(p => p.toLowerCase() === 'facebook' || p.toLowerCase() === 'instagram');
+          !searchPlatforms.some(p => p.toLowerCase() === 'facebook' || p.toLowerCase() === 'instagram');
 
         const _projCtx = page === 0 ? projectContextRef.current : null;
         if (page === 0) projectContextRef.current = null;
@@ -1980,31 +2001,15 @@ const App = () => {
           selCountries: sdui.selCountries,
           sortBy: sdui.sortBy,
           sortDirection: aiSearchExecutionRef.current?.sortDirection || sdui.sortDirection || 'desc',
-          activePlatforms: permittedPlatforms,
-          activePlatform: permittedPlatforms[0] || 'facebook',
+          activePlatforms: searchPlatforms,
+          activePlatform: searchPlatforms[0] || 'facebook',
           skip: page,
           filterPlatformSupport: sdui.filterPlatformSupport,
-          isAllTab: isAllActive,
+          // An explicitly scoped list prevents buildSearchPayload from
+          // serializing this request as network="all" and widening SDUI scope.
+          isAllTab: isAllActive && !isScopedAllRequest,
           _aiSearchExecution: aiSearchExecutionRef.current,
           ...(_projCtx || {}),
-        };
-
-        // Keep unsupported filters selected and visible as chips, but do not
-        // let a known platform mismatch reach the API as a false plan denial.
-        const _hasUnsupportedPlatformFilter =
-          !isCustomPlan &&
-          !isLanding &&
-          !isPublicLanding &&
-          !isGuestMode &&
-          sdui.hasUnsupportedActiveFiltersFor?.(permittedPlatforms);
-        const _unsupportedFilterResult = {
-          ads: [],
-          availableNetworks: permittedPlatforms,
-          noDataMessage: 'No ads found',
-          meta: {
-            total: Object.fromEntries(permittedPlatforms.map(platform => [platform, 0])),
-            hasMore: false,
-          },
         };
 
         // ── Single API call for all platforms including TikTok ──────────────────
@@ -2029,8 +2034,6 @@ const App = () => {
             })()
           : isGuestMode
           ? await guestSearchAds(guest.guestToken, page)
-          : _hasUnsupportedPlatformFilter
-          ? _unsupportedFilterResult
           : _metaAdsLibUnsupported
           ? await (async () => {
               const d = await fetchAds({ ..._searchParams, activePlatforms: ['facebook', 'instagram'], activePlatform: 'facebook', skip: 0 }, { signal: controller.signal });
@@ -2291,6 +2294,8 @@ const App = () => {
     searchTrigger,
     page,
     sdui.loading,
+    sdui.effectivePlatforms,
+    sdui.hasPlatformScopedFilters,
     guest?.loading,
     location.pathname,
     projectContextTrigger,
@@ -2684,8 +2689,11 @@ const App = () => {
     // Commit a mapped payload to app state; the debounced loadAds effect refetches.
     // Replace only the previous AI-owned keys so manual filters survive a new
     // prompt, while stale AI filters cannot leak into the next query.
-    const commit = (mapped, planning = null, tierIndex = 0, refId = null, notice = null) => {
-      setAiCapabilityMessage(notice);
+    const commit = (mapped, planning = null, tierIndex = 0, refId = null) => {
+      // A tier that can execute is not a capability error. DS owns any
+      // partial-result explanation through planning.note; frontend mapping
+      // diagnostics must not replace that copy with a generic warning.
+      setAiCapabilityMessage(null);
       aiCapabilityOnlyRef.current = false;
       const mappedFilters = mapped.filterValues || {};
       const previousAiFilters = aiPromptFilterSnapshotRef.current || {};
@@ -2714,7 +2722,7 @@ const App = () => {
       };
       // Quick-filter highlighting is driven only by the planner's explicit
       // preset marker. Equivalent AI fields must remain ordinary AI filters.
-      setAiQuickFilterId(getPlanningQuickFilterId(planning));
+      setAiQuickFilterId(getPlanningQuickFilterId(planning, topPlanning));
       if (mapped.activePlatforms?.length) {
         aiPlatformSelectionSourceRef.current = 'ai';
         sdui.setActivePlatforms?.(mapped.activePlatforms);
@@ -2765,6 +2773,11 @@ const App = () => {
       });
       const { payloads, ref_id: refId } = plan;
       const topPlanning = plan?.planning || payloads?.find((payload) => payload?.planning)?.planning || null;
+      // Show DS-owned planning copy as soon as the plan arrives, including
+      // blocked/empty-plan responses. It must not depend on a Common Ads Search
+      // result or be replaced with website-authored notices.
+      setAiSearchSummary(getPlanningSummary(topPlanning));
+      setAiSearchNote(getPlanningNote(topPlanning));
       // Suggestions are planner recovery metadata, not Common Search fields.
       // Prefer the response-level planning object, with a tier fallback for
       // older DS responses that attach planning only to payload items.
@@ -2829,7 +2842,11 @@ const App = () => {
         const tier = tierValue || {};
         const tierPlanning = tier.planning || topPlanning;
         const normalizedArgs = normalizeAiSearchArgs(tier);
-        const mapped = mapArgsToFilters(normalizedArgs, sdui.config, tierPlanning);
+        const mappedFromPlan = mapArgsToFilters(normalizedArgs, sdui.config, tierPlanning);
+        const mapped = {
+          ...mappedFromPlan,
+          activePlatforms: getPlanScopedAiNetworks(mappedFromPlan.activePlatforms),
+        };
         const unsupported = getPlanningUnsupported(tierPlanning);
         const hasExplicitSubject = hasExplicitPlanningSubject(tierPlanning, normalizedArgs, mapped);
         return {
@@ -3009,22 +3026,12 @@ const App = () => {
       const selectedSuggestions = getPlanningSuggestions(selectedPlanning);
       if (selectedSuggestions.length) setAiSearchSuggestions(selectedSuggestions);
       setAiSearchSummary(getPlanningSummary(selectedPlanning, matchedIndex, topPlanning));
-      setAiSearchNotices(getPlanningNotices(selectedPlanning, topPlanning));
-      const partialNotice = getPlanningOutcome(selectedPlanning) === 'partial_compatibility'
-        ? formatPlanningCapabilityMessage(selectedPlanning)
-        : null;
-      const selectedUnmapped = matchedMapped.unmappedDetails || [];
-      const selectedUnmappedNotice = selectedUnmapped.length > 0
-        ? `AI could not apply these requested filters: ${[
-            ...new Set(selectedUnmapped.map((item) => item.field).filter(Boolean)),
-          ].join(', ')}.`
-        : null;
+      setAiSearchNote(getPlanningNote(selectedPlanning, topPlanning));
       commit(
         matchedMapped,
         selectedPlanning,
         matchedIndex,
         refId,
-        [partialNotice, selectedUnmappedNotice].filter(Boolean).join(' ') || null,
       );
 
       let currentTierIndex = matchedIndex;
@@ -3040,20 +3047,12 @@ const App = () => {
         clearAiSearchDisplay();
         const nextPlanning = nextTier.planning || topPlanning;
         setAiSearchSummary(getPlanningSummary(nextPlanning, nextTier.index, topPlanning));
-        setAiSearchNotices(getPlanningNotices(nextPlanning, topPlanning));
-        const nextPartialNotice = getPlanningOutcome(nextPlanning) === 'partial_compatibility'
-          ? formatPlanningCapabilityMessage(nextPlanning)
-          : null;
-        const nextUnsupported = getPlanningUnsupported(nextPlanning);
-        const nextUnsupportedNotice = nextUnsupported.length > 0
-          ? formatPlanningUnsupportedMessage(nextUnsupported)
-          : null;
+        setAiSearchNote(getPlanningNote(nextPlanning, topPlanning));
         commit(
           nextTier.mapped,
           nextPlanning,
           nextTier.index,
           refId,
-          [nextPartialNotice, nextUnsupportedNotice].filter(Boolean).join(' ') || null,
         );
         showToast('Broadened your search while keeping your AI prompt.', 'success', 3000, 'bottom', 'ai-search');
       };
@@ -3140,7 +3139,7 @@ const App = () => {
         aiAbortRef.current = null;
       }
     }
-  }, [clearAiSearchDisplay, guestGuard, dispatch, dismissAiToast, resetAiSearchState, sdui, showToast]);
+  }, [clearAiSearchDisplay, guestGuard, dispatch, dismissAiToast, getPlanScopedAiNetworks, resetAiSearchState, sdui, showToast]);
 
   // Explicitly turning the AI toggle OFF abandons the AI search: clear the
   // AI-applied query + filters so nothing lingers on screen or gets restored on
@@ -3835,7 +3834,7 @@ const App = () => {
             onAiQuickFilterApply={handleAiQuickFilterApply}
             aiCapabilityMessage={aiCapabilityMessage}
             aiSearchSummary={aiSearchSummary}
-            aiSearchNotices={aiSearchNotices}
+            aiSearchNote={aiSearchNote}
             onAiSearchPlanContextDismiss={dismissAiSearchPlanContext}
             aiSearchSuggestions={aiSearchSuggestions}
             onAiSuggestionSelect={runAiSearch}

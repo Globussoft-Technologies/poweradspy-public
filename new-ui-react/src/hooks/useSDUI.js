@@ -239,6 +239,55 @@ const findConfigFilterForStateKey = (allFilters, stateKey) => {
     return null;
 };
 
+// A wildcard option inherits the parent filter's scope. Keeping this
+// normalization in one place prevents option-level "all" from becoming a
+// second, global platform selection during request construction.
+const normalizePlatformApplicability = (value) => {
+    if (value == null) return null;
+    const values = Array.isArray(value) ? value : [value];
+    const normalized = values
+        .map(normalizeStoredValue)
+        .filter(Boolean);
+    if (normalized.length === 0 || normalized.includes('all')) return null;
+    return new Set(normalized);
+};
+
+const hasMeaningfulFilterValue = (value) => {
+    if (Array.isArray(value)) return value.some(hasMeaningfulFilterValue);
+    if (value && typeof value === 'object') {
+        return Object.values(value).some(hasMeaningfulFilterValue);
+    }
+    return value !== null && value !== undefined && value !== '' &&
+        value !== false && String(value).trim().toUpperCase() !== 'NA';
+};
+
+const resolveFilterPlatformScope = (filter, value) => {
+    const parentPlatforms = normalizePlatformApplicability(filter?.platform_applicability);
+    const selectedValues = Array.isArray(value) ? value : [value];
+    const selectedOptions = selectedValues
+        .map(selectedValue => filter?.options?.find(option =>
+            normalizeStoredValue(option?.value ?? option?._id) === normalizeStoredValue(selectedValue)
+        ))
+        .filter(Boolean);
+
+    // Unknown or legacy selections still inherit the parent filter scope.
+    if (selectedOptions.length === 0) return parentPlatforms;
+
+    // An option with no restriction, including option-level "all", means the
+    // parent scope applies. This is intentionally not a global wildcard.
+    if (selectedOptions.some(option => !normalizePlatformApplicability(option.platform_applicability))) {
+        return parentPlatforms;
+    }
+
+    const optionPlatforms = new Set(
+        selectedOptions.flatMap(option => [...normalizePlatformApplicability(option.platform_applicability)])
+    );
+    if (!parentPlatforms) return optionPlatforms;
+
+    // A child option may narrow its parent, but can never widen it.
+    return new Set([...optionPlatforms].filter(platform => parentPlatforms.has(platform)));
+};
+
 /**
  * useSDUI — The central SDUI state hook.
  * Replaces the old useFilters with a fully dynamic, config-driven approach.
@@ -848,8 +897,8 @@ export function useSDUI() {
     // ── Effective platforms — restricted by active platform-specific filters ──
     // If a filter that is active has platform_applicability restricted to specific
     // networks (e.g. "native"), only those networks should be queried.
-    const effectivePlatforms = useMemo(() => {
-        if (!config) return activePlatforms;
+    const platformScope = useMemo(() => {
+        if (!config) return { platforms: null, hasRestriction: false };
 
         const allFilters = [
             ...(config.searchbar?.flatMap(d => d.filters) || []),
@@ -857,58 +906,40 @@ export function useSDUI() {
             ...(config.sidebar?.flatMap(d => d.filters) || []),
         ];
 
-        const restrictedPlatforms = new Set();
+        let restrictedPlatforms = null;
+        let hasPlatformScopedFilters = false;
 
         for (const [filterId, value] of Object.entries(filterValues)) {
-            // Skip inactive filter values
-            const isActive = Array.isArray(value) ? value.length > 0
-                : typeof value === 'boolean'
-                    ? value
-                    : value !== null && value !== undefined && value !== '';
-            if (!isActive) continue;
+            if (!hasMeaningfulFilterValue(value)) continue;
 
             const filter = findConfigFilterForStateKey(allFilters, filterId);
             if (!filter) continue;
 
-            // Check option-level platform_applicability first (more specific).
-            // e.g. COMPANION/IN-STREAM options have platform_applicability: ["youtube"]
-            // even though the filter itself allows ["facebook","youtube"].
-            let optionLevelMatched = false;
-            if (filter.options && value) {
-                const selectedVal = Array.isArray(value) ? value : [value];
-                const optionPlatforms = new Set();
-                for (const sel of selectedVal) {
-                    const opt = filter.options.find(o => o.value === sel || o._id === sel);
-                    if (!opt) continue;
-                    const opa = opt.platform_applicability;
-                    if (!opa || opa === 'all') continue;
-                    const olist = Array.isArray(opa) ? opa : [opa];
-                    olist.forEach(p => optionPlatforms.add(p));
-                    optionLevelMatched = true;
-                }
-                if (optionLevelMatched) {
-                    optionPlatforms.forEach(p => restrictedPlatforms.add(p));
-                    continue;
-                }
-            }
-
-            // Fall back to filter-level platform_applicability
-            const pa = filter.platform_applicability;
-            if (pa && pa !== 'all') {
-                const list = Array.isArray(pa) ? pa : [pa];
-                list.forEach(p => restrictedPlatforms.add(p));
-            }
+            const scope = resolveFilterPlatformScope(filter, value);
+            if (!scope) continue;
+            hasPlatformScopedFilters = true;
+            restrictedPlatforms = restrictedPlatforms === null
+                ? new Set(scope)
+                : new Set([...restrictedPlatforms].filter(platform => scope.has(platform)));
         }
 
-        if (restrictedPlatforms.size === 0) return activePlatforms;
+        if (!hasPlatformScopedFilters) return { platforms: null, hasRestriction: false };
+
+        return { platforms: restrictedPlatforms, hasRestriction: true };
+    }, [config, filterValues]);
+
+    const effectivePlatforms = useMemo(() => {
+        if (!config || !platformScope.hasRestriction) return activePlatforms;
 
         // Intersect with activePlatforms so we never query a platform the user hasn't selected.
         // If intersection is empty (e.g. gender filter active but user is on Reddit tab),
         // return activePlatforms so the API is called with the correct network and returns
         // "No ads found" rather than silently querying the filter's home platform.
-        const intersected = activePlatforms.filter(p => restrictedPlatforms.has(p));
+        const intersected = activePlatforms.filter(p =>
+            platformScope.platforms?.has(normalizeStoredValue(p))
+        );
         return intersected.length > 0 ? intersected : activePlatforms;
-    }, [config, filterValues, activePlatforms]);
+    }, [config, activePlatforms, platformScope]);
 
     // Preserve unsupported selections in UI state, but let callers avoid a
     // request that cannot match any selected platform. This prevents platform
@@ -1108,6 +1139,7 @@ export function useSDUI() {
         // Platform state
         activePlatforms,
         effectivePlatforms,
+        hasPlatformScopedFilters: platformScope.hasRestriction,
         hasUnsupportedActiveFiltersFor,
         setActivePlatforms,
         setAnalyticsAllPlatformsSelected,
@@ -1167,6 +1199,8 @@ export function useSDUI() {
             return [];
         })(),
         // Dynamic platform support map built from config platform_applicability.
+        // It is keyed by both filter _id and query_param so state keys and
+        // wire payload fields share the same platform capability declaration.
         // Keyed by filter _id → array of supported platform strings.
         // Used by buildSearchPayload and AdGrid to gate filter fields per platform.
         filterPlatformSupport: useMemo(() => {
@@ -1177,11 +1211,28 @@ export function useSDUI() {
                 ...(config.sidebar?.flatMap(d => d.filters) || []),
             ];
             const map = {};
+            const addSupport = (key, platforms) => {
+                if (!key) return;
+                const normalized = platforms.map(normalizeStoredValue);
+                // Multiple config entries can expose the same wire key. Union
+                // those declarations so a valid variant is not accidentally
+                // removed, while each filter ID remains independently keyed.
+                map[key] = [...new Set([...(map[key] || []), ...normalized])];
+            };
             for (const f of allFilters) {
                 if (!f._id) continue;
                 const pa = f.platform_applicability;
                 if (!pa || pa === 'all') continue;
-                map[f._id] = Array.isArray(pa) ? pa : [pa];
+                const platforms = (Array.isArray(pa) ? pa : [pa])
+                    .map(normalizeStoredValue)
+                    .filter(Boolean);
+                if (platforms.length === 0 || platforms.includes('all')) continue;
+                addSupport(f._id, platforms);
+                // Payload fields use query_param names (for example
+                // `language`), while SDUI state uses filter IDs (for example
+                // `language_filter`). Index both names so scoped "All" options
+                // cannot fall through to a broad hardcoded capability list.
+                addSupport(f.query_param, platforms);
             }
             return map;
         }, [config]),
