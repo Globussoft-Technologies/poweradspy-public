@@ -17,6 +17,25 @@ const ADMOB_PLATFORM_OPTION = {
   icon_type: 'url',
 };
 
+const CHATGPT_PLATFORM_OPTION = {
+  _id: 'chatgptads',
+  filter_id: 'platform_selector',
+  label: 'GPT',
+  value: 'chatgptads',
+  selected_by_default: false,
+};
+
+// ChatGPT's query builder supports these SDUI groups. Keep this list at the
+// response boundary so an old live matrix cannot hide supported controls.
+const CHATGPT_FILTER_GROUP_IDS = [
+  'ad_type',
+  'ad_position',
+  'language',
+  'country',
+  'market_platform',
+  'marketing_platform',
+];
+
 const ADMOB_SIDEBAR_IDS = ['country', 'source', 'admob_network', 'ad_position', 'ad_sub_position', 'image_size', 'source_app', 'admob_source_app', 'ad_type', 'admob_poster_intelligence'];
 const ADMOB_FILTER_ID_ALIASES = {
   source_filter: 'source_filter',
@@ -689,6 +708,50 @@ function includeAdmobPlatform(docs) {
   return docs;
 }
 
+function includeChatgptPlatform(docs) {
+  const platforms = docs.find((doc) => doc?._id === 'platforms');
+  const selector = platforms?.filters?.find((filter) => filter?._id === 'platform_selector');
+  if (!selector) return docs;
+
+  const isChatgptOption = (option) =>
+    String(option?.value ?? '').trim().toLowerCase() === 'chatgptads';
+
+  selector.options ||= [];
+  selector.platform_filter_matrix ||= {};
+
+  if (networks.chatgptads?.enabled === false) {
+    selector.options = selector.options.filter((option) => !isChatgptOption(option));
+    delete selector.platform_filter_matrix.chatgptads;
+    return docs;
+  }
+
+  if (!selector.options.some(isChatgptOption)) {
+    const maxRank = selector.options.reduce(
+      (max, option) => Math.max(max, Number(option?.rank) || 0),
+      0,
+    );
+    selector.options.push({
+      ...CHATGPT_PLATFORM_OPTION,
+      rank: Math.max(13, maxRank + 1),
+    });
+  }
+
+  // Only advertise matrix groups that are present in the live response. This
+  // keeps the compatibility row safe when an SDUI document is not deployed.
+  const availableGroupIds = new Set(
+    docs.map((doc) => doc?._id).filter(Boolean),
+  );
+  const configuredGroups = Array.isArray(selector.platform_filter_matrix.chatgptads)
+    ? selector.platform_filter_matrix.chatgptads
+    : [];
+  selector.platform_filter_matrix.chatgptads = [...new Set([
+    ...configuredGroups,
+    ...CHATGPT_FILTER_GROUP_IDS.filter((groupId) => availableGroupIds.has(groupId)),
+  ])];
+
+  return docs;
+}
+
 /**
  * GET /api/sdui/config
  * Returns all SDUI config documents grouped by config_type.
@@ -705,7 +768,9 @@ async function getSDUIConfig() {
   }
 
   // Use MongoDB as the source of truth. Fall back to seed only if DB is empty.
-  const docs = includeAdmobPlatform(dbDocs.length > 0 ? dbDocs : buildSDUIDocuments());
+  const docs = dbDocs.length > 0 ? dbDocs : buildSDUIDocuments();
+  includeAdmobPlatform(docs);
+  includeChatgptPlatform(docs);
 
   // Pre-seed known types, but also accept any new config_type dynamically
   const result = {

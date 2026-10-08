@@ -73,6 +73,47 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('inherits CTA and AdMob size values when they only exist in full_payload', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: { network: ['facebook', 'youtube'] },
+      full_payload: {
+        network: ['facebook', 'youtube'],
+        call_to_action: ['More on This'],
+        size: '1080*159',
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      call_to_action: ['More on This'],
+      size: '1080*159',
+    });
+
+    const ctaMapped = mapArgsToFilters(normalizeAiSearchArgs({
+      args: { network: ['facebook', 'youtube'] },
+      full_payload: { network: ['facebook', 'youtube'], call_to_action: ['More on This'] },
+    }), {
+      sidebar: [{
+        filters: [{
+          _id: 'cta_filter',
+          type: 'chip_multi_select',
+          options: [{ label: 'More on This', value: 'more on this' }],
+        }],
+      }],
+    });
+
+    expect(ctaMapped.filterValues).toMatchObject({
+      cta_filter: ['more on this'],
+    });
+    expect(ctaMapped.unmappedDetails).toEqual([]);
+
+    const defaultsOnly = mapArgsToFilters(normalizeAiSearchArgs({
+      args: { network: ['facebook'] },
+      full_payload: { network: ['facebook'], call_to_action: 'NA', size: 'NA' },
+    }), {});
+
+    expect(defaultsOnly.unmappedDetails).toEqual([]);
+  });
+
   it('ignores the default full_payload post_date when no sort was requested', () => {
     const normalized = normalizeAiSearchArgs({
       args: {
@@ -96,6 +137,39 @@ describe('aiSearchMapper', () => {
     expect(normalized).not.toHaveProperty('order_column');
     expect(normalized).not.toHaveProperty('order_by');
     expect(mapArgsToFilters(normalized, {}).unmappedDetails).toEqual([]);
+  });
+
+  it('ignores the current full_payload last_seen default for an age-only prompt', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: {
+        lower_age: 45,
+        upper_age: 54,
+        network: ['facebook'],
+      },
+      full_payload: {
+        lower_age: 45,
+        upper_age: 54,
+        network: ['facebook'],
+        order_column: 'last_seen',
+        order_by: 'desc',
+        newest_sort: 'NA',
+        last_seen_sort: 'NA',
+        impression_sort: 'NA',
+        popularity_sort: 'NA',
+        domain_sort: 'NA',
+        running_longest_sort: 'NA',
+      },
+    });
+
+    expect(normalized).not.toHaveProperty('order_column');
+    expect(normalized).not.toHaveProperty('order_by');
+    expect(mapArgsToFilters(normalized, {})).toMatchObject({
+      sortBy: null,
+      sortDirection: null,
+      activePlatforms: ['facebook'],
+      filterValues: { lower_age: 45, upper_age: 54 },
+      unmappedDetails: [],
+    });
   });
 
   it('removes a copied post_date default from args when planning has no sort constraint', () => {
@@ -638,6 +712,31 @@ describe('aiSearchMapper', () => {
     expect(sizeMapped.filterValues).toMatchObject({
       image_size_filter: ['300x250'],
     });
+
+    const admobSize = mapArgsToFilters({
+      network: ['admob'],
+      size: ['1080*159'],
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'platform_selector',
+          type: 'chip_multi_select',
+          options: [{ label: 'AdMob', value: 'admob' }],
+        }],
+      }],
+      sidebar: [{
+        filters: [{
+          _id: 'image_size_filter',
+          type: 'checkbox',
+          options: [{ label: '1080x159', value: '1080x159' }],
+        }],
+      }],
+    });
+
+    expect(admobSize.filterValues).toMatchObject({
+      image_size_filter: ['1080x159'],
+    });
+    expect(admobSize.unmappedDetails).toEqual([]);
 
     const incompatibleSize = mapArgsToFilters({
       network: ['facebook'],

@@ -103,6 +103,15 @@ const MULTI_SELECT_TYPES = new Set([
 // match SDUI labels/values such as "Text Image" or "text-image".
 const norm = (v) => String(v ?? '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
 
+// AdMob stores image dimensions with several separators (`x`, `*`, or the
+// multiplication sign), while the live SDUI option value is canonicalized to
+// `widthxheight`. Normalize only this filter so other categorical values keep
+// their exact matching semantics.
+const normalizeImageSize = (v) => String(v ?? '')
+  .trim()
+  .toLowerCase()
+  .replace(/\s*(?:x|\*|\u00d7)\s*/g, 'x');
+
 // Flatten every filter definition across all config sections.
 function allFilters(config) {
   if (!config || typeof config !== 'object') return [];
@@ -161,22 +170,22 @@ function collectLeafValues(option, result = []) {
 
 // Resolve a raw DS value to the stored key the widget expects (option.value, or
 // option.label for label-keyed filters). Returns undefined when no option matches.
-function resolveOption(filter, rawValue) {
-  const target = norm(rawValue);
+function resolveOption(filter, rawValue, valueNormalizer = norm) {
+  const target = valueNormalizer(rawValue);
   if (!target) return undefined;
   const useLabel = LABEL_KEYED_IDS.has(filter._id);
   const opts = collectOptions(filter);
-  const match = opts.find((o) => norm(o.value) === target || norm(o.label) === target);
+  const match = opts.find((o) => valueNormalizer(o.value) === target || valueNormalizer(o.label) === target);
   if (!match) return undefined;
   return useLabel ? (match.label ?? match.value) : (match.value ?? match.label);
 }
 
 // Store one-or-many resolved values under a filter, respecting its arity.
 // `rawValues` is always an array of raw DS values.
-function applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel, onUnmapped) {
+function applyResolved(filter, rawValues, filterValues, unmapped, fieldLabel, onUnmapped, valueNormalizer = norm) {
   const resolved = [];
   for (const raw of rawValues) {
-    const r = resolveOption(filter, raw);
+    const r = resolveOption(filter, raw, valueNormalizer);
     if (r === undefined) {
       if (onUnmapped) onUnmapped(fieldLabel, raw, 'value is not present in live SDUI options');
       else unmapped.push(`${fieldLabel}: ${raw}`);
@@ -490,7 +499,10 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
     if (!hasOnlyPlatforms(...supportedNetworks)) {
       recordUnmapped(field, rawValues, unsupportedReason);
     } else if (filter) {
-      applyResolved(filter, rawValues, filterValues, unmapped, field, recordUnmapped);
+      // AdMob's live option loader canonicalizes dimensions to `widthxheight`;
+      // accept the `width*height` form emitted by AI Search at this boundary.
+      const valueNormalizer = field === 'size' ? normalizeImageSize : norm;
+      applyResolved(filter, rawValues, filterValues, unmapped, field, recordUnmapped, valueNormalizer);
     } else {
       recordUnmapped(field, rawValues, 'filter is not available in live SDUI');
     }
@@ -578,7 +590,10 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
 
   // ── call_to_action (array, e.g. ["shop now"]) → cta_filter (["shop_now"]) ──
   const ctaFilter = findFilter(config, FILTER_IDS.cta);
-  const ctaValues = asArray(args.call_to_action);
+  // `NA` is the Common Search wire default, not a requested CTA. Use the
+  // same sentinel filtering as the other categorical planner fields so
+  // inheriting full_payload does not create a false capability error.
+  const ctaValues = meaningfulValues(args.call_to_action);
   if (ctaValues.length) {
     if (ctaFilter) applyResolved(ctaFilter, ctaValues, filterValues, unmapped, 'call_to_action', recordUnmapped);
     else recordUnmapped('call_to_action', ctaValues, 'filter is not available in live SDUI');
@@ -897,6 +912,8 @@ export function normalizeAiSearchArgs(payload = {}) {
     'order_by',
     'type',
     'network',
+    'call_to_action',
+    'size',
     'exact_search',
     'has_ai_meta',
     'ai_ad_type',
@@ -937,26 +954,28 @@ export function normalizeAiSearchArgs(payload = {}) {
     return value !== undefined && value !== null &&
       String(value).trim() !== '' && String(value).trim().toUpperCase() !== 'NA';
   });
-  // DS full_payload can carry Common Search's default post_date even when the
-  // prompt did not request sorting. Do not turn that default into an AI sort:
-  // Ad Seen Date is last_seen, while an explicit post_date sort remains valid.
-  const ignoreInheritedDefaultPostDateSort =
-    norm(fullPayload.order_column) === 'post date' &&
+  // DS full_payload can carry Common Search's default sort even when the
+  // prompt did not request sorting. Do not turn that transport default into an
+  // AI sort. Both the older post_date default and the current last_seen
+  // default are ignored unless DS provides explicit sort intent.
+  const inheritedDefaultSortColumn = norm(fullPayload.order_column);
+  const ignoreInheritedDefaultSort =
+    ['post date', 'last seen'].includes(inheritedDefaultSortColumn) &&
     !hasActiveLegacySort &&
     !hasExplicitPlannerSort &&
-    (args.order_column == null || norm(args.order_column) === 'post date');
+    (args.order_column == null || norm(args.order_column) === inheritedDefaultSortColumn);
 
   let changed = false;
   const merged = { ...args };
   for (const key of passthroughKeys) {
     if (
-      ignoreInheritedDefaultPostDateSort &&
+      ignoreInheritedDefaultSort &&
       (key === 'order_column' || key === 'order_by')
     ) {
       // Some planner revisions copy the Common Search default into `args` as
       // well as `full_payload`. Remove that copy unless planning explicitly
-      // contains a sort constraint; otherwise the UI reports a false `sort`
-      // capability error before supported networks are searched.
+      // contains a sort constraint; otherwise the UI treats an inherited
+      // default as an AI-requested sort.
       if (Object.prototype.hasOwnProperty.call(merged, key)) {
         delete merged[key];
         changed = true;

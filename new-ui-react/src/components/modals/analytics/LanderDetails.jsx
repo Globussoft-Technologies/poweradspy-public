@@ -190,9 +190,14 @@ const LanderDetails = ({
   const rotatorCount = hasRotatorCount ? parsedRotatorCount : phoneNumbers.length;
   const showPhoneNumbers = rotatorCount > 0;
   const showWhatsappDetails = hasRotatorCount || phoneNumbers.length > 0;
-  const [hasError, setHasError] = useState(false);
+  // Track load/error per URL instead of booleans reset by an effect: a cached
+  // image can fire onLoad before the reset effect runs, which flipped isLoaded
+  // back to false and left the "Loading lander screenshot…" overlay stuck.
+  const [loadedUrl, setLoadedUrl] = useState(null);
+  const [errorUrl, setErrorUrl] = useState(null);
+  const hasError = !!resolvedScreenshotUrl && errorUrl === resolvedScreenshotUrl;
+  const isLoaded = !!resolvedScreenshotUrl && loadedUrl === resolvedScreenshotUrl;
   const [showPreview, setShowPreview] = useState(false);
-  const [isLoaded, setIsLoaded] = useState(false);
 
   // Close the enlarged preview on Escape.
   useEffect(() => {
@@ -201,15 +206,6 @@ const LanderDetails = ({
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [showPreview]);
-
-  // Reset load state when the screenshot changes. Only a real onError hides the
-  // section: a timeout-based hide unmounted the <img> mid-download for large
-  // full-page screenshots on slow browsers/cold CDN, so the section vanished
-  // until the URL prop happened to change and remounted it.
-  useEffect(() => {
-    setHasError(false);
-    setIsLoaded(false);
-  }, [resolvedScreenshotUrl]);
 
   // processing.gif or null/empty means screenshot not ready
   const isProcessing =
@@ -319,8 +315,12 @@ const LanderDetails = ({
             alt="Lander Screenshot"
             className="w-full"
             style={{ display: "block" }}
-            onError={() => setHasError(true)}
-            onLoad={() => setIsLoaded(true)}
+            ref={(el) => {
+              // Already-complete (cached) images may not fire onLoad after mount.
+              if (el && el.complete && el.naturalWidth > 0) setLoadedUrl(resolvedScreenshotUrl);
+            }}
+            onError={() => setErrorUrl(resolvedScreenshotUrl)}
+            onLoad={() => setLoadedUrl(resolvedScreenshotUrl)}
           />
         </div>
       </div>

@@ -236,6 +236,8 @@ CREATE TABLE IF NOT EXISTS chatgptads_hidden_ads (
     REFERENCES chatgptads_ad(ad_id) ON DELETE CASCADE,
   CONSTRAINT fk_chatgptads_hidden_post_owner FOREIGN KEY (post_owner_id)
     REFERENCES chatgptads_ad_post_owners(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ── Lander + built-with enrichment (added 2026-10-05) ──
 -- Filled by the lander / built-with workers, not by the insertion pipeline. Progress for each
 -- ad is tracked on chatgptads_ad.lander_status / chatgptads_ad.built_with_status. Both tables

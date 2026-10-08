@@ -134,6 +134,42 @@ describe("services/sdui/services/sduiService > getSDUIConfig", () => {
     const out = await svc.getSDUIConfig();
     expect(buildSDUIDocumentsSpy).toHaveBeenCalled();
   });
+
+  it("adds ChatGPT to the live selector and matrix without using the seed", async () => {
+    getDBSpy.mockResolvedValue(mockDB([
+      {
+        _id: "platforms",
+        config_type: "navbar",
+        filters: [{
+          _id: "platform_selector",
+          options: [{ value: "facebook", rank: 1 }],
+          platform_filter_matrix: { chatgptads: ["country"] },
+        }],
+      },
+      { _id: "ad_type", config_type: "navbar", filters: [] },
+      { _id: "ad_position", config_type: "sidebar", filters: [] },
+      { _id: "language", config_type: "sidebar", filters: [] },
+      { _id: "country", config_type: "sidebar", filters: [] },
+      { _id: "market_platform", config_type: "sidebar", filters: [] },
+      { _id: "category", config_type: "sidebar", filters: [] },
+    ]));
+
+    const out = await svc.getSDUIConfig();
+    const selector = out.navbar
+      .find((doc) => doc._id === "platforms")
+      .filters.find((filter) => filter._id === "platform_selector");
+
+    expect(buildSDUIDocumentsSpy).not.toHaveBeenCalled();
+    expect(selector.options.some((option) => option.value === "chatgptads")).toBe(true);
+    expect(selector.platform_filter_matrix.chatgptads).toEqual(expect.arrayContaining([
+      "country",
+      "ad_type",
+      "ad_position",
+      "language",
+      "market_platform",
+    ]));
+    expect(selector.platform_filter_matrix.chatgptads).not.toContain("category");
+  });
 });
 
 describe("services/sdui/services/sduiService > filterConfigByPlatforms", () => {

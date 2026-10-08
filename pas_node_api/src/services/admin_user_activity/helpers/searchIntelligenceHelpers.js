@@ -186,6 +186,7 @@ const ACTIVITY_TYPE_FIELDS = {
     'dashboard.likes_sort', 'dashboard.comments_sort',
     'dashboard.shares_sort', 'dashboard.popularity_sort',
     'dashboard.impressions_sort', 'dashboard.views_sort',
+    'dashboard.hits_sort',
   ],
 };
 
@@ -286,6 +287,7 @@ const RANGE_PAIRS = [
   { label: 'Ad Budget', range: 'dashboard.adBudget', sort: null },
   { label: 'Ad Seen', range: 'dashboard.ad_seen', sort: null },
   { label: 'Post Date', range: 'dashboard.post_date', sort: null },
+  { label: 'First Seen', range: 'dashboard.first_seen', sort: null },
 ];
 
 const SEARCH_BY_LABEL_MAP = {
@@ -316,7 +318,7 @@ const ARRAY_JOIN_KEYS = new Set([
   'Native Network', 'Budget',
 ]);
 
-const DATE_RANGE_KEYS = new Set(['Ad Seen', 'Post Date']);
+const DATE_RANGE_KEYS = new Set(['Ad Seen', 'Post Date', 'First Seen']);
 
 // AI Filters modal selections — stored by frontend_user_activity as
 // `dashboard.ai_*` arrays, or the string 'NA' when the group wasn't used.
@@ -453,6 +455,16 @@ function parseFilterPills(s, other_activity) {
     }
   }
 
+  // ChatGPT stores the dropdown label (e.g. 'Oldest First') in dashboard.sort_by —
+  // show it instead of the generic 'Sort: Newest' / 'Sort: Running Longest' pill,
+  // which can't tell the two directions apart.
+  const sortName = s['dashboard.sort_by'];
+  if (sortName && sortName !== 'NA') {
+    filterPills.push(`Sort: ${sortName}`);
+    usedSortKeys.add('dashboard.newest_sort');
+    usedSortKeys.add('dashboard.running_longest_sort');
+  }
+
   for (const [key, label] of Object.entries(DASHBOARD_SORT_MAP)) {
     if (usedSortKeys.has(key)) continue;
     const val = s[key];
@@ -478,6 +490,8 @@ function parseFilterPills(s, other_activity) {
   }
 
   filterPills.push(...parseAiFilterPills(s));
+
+  if (s['dashboard.ai_analysed_only'] === 'true') filterPills.push('AI Analysed Only');
 
   return filterPills;
 }

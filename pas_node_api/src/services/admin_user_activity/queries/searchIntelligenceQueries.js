@@ -466,6 +466,9 @@ function buildAllSearchesQuery(params) {
       { exists: { field: 'filter.native_network' } },
       { exists: { field: 'filter.ctr' } },
       { exists: { field: 'filter.budget' } },
+      // Any logged GetAds search (covers multi-network / no-keyword searches
+      // that carry none of the fields above)
+      { exists: { field: 'adsCountOnSerach' } },
       ...AI_FILTER_USED_CLAUSES,
     ], minimum_should_match: 1 } },
   ];

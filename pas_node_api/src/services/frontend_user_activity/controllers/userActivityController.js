@@ -102,6 +102,16 @@ function toAiFilterList(val) {
   return arr.length > 0 ? arr : 'NA';
 }
 
+// ChatGPT sort dropdown label (e.g. 'Oldest First') from the *_sort flag plus
+// order_by — the flag alone can't tell Longest Running from Shortest Running.
+function chatgptSortName(data) {
+  const asc = String(data.order_by || '').toLowerCase() === 'asc';
+  if (data.hits_sort === 'hits_sort')                       return asc ? 'Least Seen First' : 'Most Seen First';
+  if (data.running_longest_sort === 'running_longest_sort') return asc ? 'Shortest Running' : 'Longest Running';
+  if (data.newest_sort === 'newest_sort')                   return asc ? 'Oldest First'     : 'Newest First';
+  return 'NA';
+}
+
 function buildGetAdsInsertData(data, network) {
   // Normalize order_column → sort fields for platforms that send order_column instead of *_sort
   const orderCol = data.order_column;
@@ -142,6 +152,7 @@ function buildGetAdsInsertData(data, network) {
     'dashboard.domain_sort':          data.domain_sort,
     'dashboard.ad_seen':              toTimestampPair(data.seen_btn_sort),
     'dashboard.post_date':            toTimestampPair(data.post_date_btn_sort),
+    'dashboard.first_seen':           toTimestampPair(data.first_seen_btn_sort),
     domain_date_btn_sort:             toTimestampPair(data.domain_date_btn_sort),
     'filter.ad_categories':    data.adcategory,
     'filter.ad_subCategories': data.subCategory,
@@ -168,6 +179,10 @@ function buildGetAdsInsertData(data, network) {
   }
   // Quick Filter preset id (e.g. 'tiktok_ugc') the user applied for this search.
   base['dashboard.quick_filter'] = data.quick_filter;
+  // "AI analysed only" toggle.
+  base['dashboard.ai_analysed_only'] = toBoolStr(data.has_ai_meta) === 'true'
+    ? 'true'
+    : (data.has_ai_meta === undefined ? 'NA' : 'false');
 
   if (network === 'facebook') {
     Object.assign(base, {
@@ -355,7 +370,17 @@ function buildGetAdsInsertData(data, network) {
   } else if (network === 'Chatgpt') {
     Object.assign(base, {
       'filter.ad_type': data.type,
+      'dashboard.hits_sort': data.hits_sort,
+      'dashboard.sort_by':   chatgptSortName(data),
     });
+    // Ascending sorts (Oldest First / Shortest Running / Least Seen First) send
+    // the same *_sort flag as their descending pair — record the direction in
+    // the value. The field itself stays so admin `exists` counts still see it.
+    if (String(data.order_by || '').toLowerCase() === 'asc') {
+      if (data.newest_sort === 'newest_sort')                   base['dashboard.newest_sort']          = 'oldest_sort';
+      if (data.running_longest_sort === 'running_longest_sort') base['dashboard.running_longest_sort'] = 'running_shortest_sort';
+      if (data.hits_sort === 'hits_sort')                       base['dashboard.hits_sort']            = 'least_hits_sort';
+    }
   } else if (network === 'All') {
     Object.assign(base, {
       'search_by.text':              data.ocr,

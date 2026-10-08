@@ -2155,6 +2155,8 @@ async function trackUserActivity(payload, meta, info = {}) {
         .map((key) => [key, hasActiveFilterValue(payload[key]) ? payload[key] : 'NA']),
     ),
     quick_filter:         payload.quick_filter         ?? 'NA',
+    // "AI analysed only" toggle — stored as dashboard.ai_analysed_only.
+    has_ai_meta:          payload.has_ai_meta === true ? 'true' : 'false',
     method:               'getAds',
     // adsCountOnSerach is mapped as `long` in Elasticsearch, so it must stay
     // numeric — concatenating payload.error_message onto it (e.g.
@@ -2335,6 +2337,7 @@ async function trackUserActivity(payload, meta, info = {}) {
     extra = {
       network:  'Chatgpt',
       platform: 'NA',
+      hits_sort: payload.hits_sort      ?? 'NA',
       celeb:    payload.image_celebrity ?? 'NA',
       logo:     payload.image_logo      ?? 'NA',
       object:   payload.image_object    ?? 'NA',
@@ -2479,6 +2482,17 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   const shouldTrackActivity = !filters.skip || filters.skip === 0;
   const activityPayload = (errorMessage) => ({
     ...payload,
+    // "AI analysed only" drops networks without AI-Meta (e.g. ChatGPT) from the
+    // search. If that empties the list, log the tab the user actually picked.
+    ...(Array.isArray(payload.network) && payload.network.length === 0
+      ? {
+          network: (Array.isArray(filters.activePlatforms) && filters.activePlatforms.length
+            ? filters.activePlatforms
+            : [filters.activePlatform])
+            .filter(Boolean)
+            .map((p) => String(p).toLowerCase()),
+        }
+      : {}),
     isAllTab:            filters.isAllTab,
     project_name:             filters.project_name        ?? 'NA',
     competitor_name:          filters.competitor_name     ?? 'NA',
