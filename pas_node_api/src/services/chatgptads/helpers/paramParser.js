@@ -24,6 +24,11 @@ function getCountryName(code) {
 // in the ChatGPT index's `lang_detect`.
 const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
 
+// Legacy codes Intl canonicalises to a DIFFERENT language than the Language filter's label
+// ("mo" → Romanian, "sh" → Serbian (Latin), "tl" → Filipino). Search them by their own name
+// so picking Moldavian doesn't return Romanian ads.
+const LANGUAGE_NAME_OVERRIDES = { mo: 'Moldavian', sh: 'Serbo-Croatian', tl: 'Tagalog' };
+
 /**
  * Languages from the shared Language filter. The frontend always sends a default `language`
  * ('en') even when the user never touched the filter, so it only applies when
@@ -31,13 +36,20 @@ const languageNames = new Intl.DisplayNames(['en'], { type: 'language' });
  */
 function parseLanguages(raw) {
   if (!flag(raw.language_explicit)) return [];
+  // Not list(): its sentinel check is case-insensitive, and "na" is a real ISO-639 code
+  // (Nauru). Only the exact transport sentinel "NA" means "not set" here.
+  const langList = (val) => (Array.isArray(val) ? val : (val == null ? [] : String(val).split(',')))
+    .map((v) => String(v ?? '').trim())
+    .filter((v) => v && v !== 'NA');
   const out = new Set();
-  for (const value of [...list(raw.lang), ...list(raw.language)]) {
+  for (const value of [...langList(raw.lang), ...langList(raw.language)]) {
     if (value.toLowerCase() === 'un') continue; // legacy "unknown" companion value
     out.add(value);
     if (/^[a-z]{2,3}(-[a-z]{2})?$/i.test(value)) {
-      let name = null;
-      try { name = languageNames.of(value); } catch { name = null; }
+      let name = LANGUAGE_NAME_OVERRIDES[value.toLowerCase()] || null;
+      if (!name) {
+        try { name = languageNames.of(value); } catch { name = null; }
+      }
       if (name && name.toLowerCase() !== value.toLowerCase()) out.add(name);
     }
   }
