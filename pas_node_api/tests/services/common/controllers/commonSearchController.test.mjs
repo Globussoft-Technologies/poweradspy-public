@@ -68,6 +68,14 @@ require.cache[admobSearchPath] = {
   loaded: true,
   exports: { searchAds: admobSearchAds },
 };
+const chatgptadsSearchAds = vi.fn(async () => ({ code: 200, data: [], total: 0 }));
+const chatgptadsSearchPath = require.resolve("../../../../src/services/chatgptads/controllers/adSearchController");
+require.cache[chatgptadsSearchPath] = {
+  id: chatgptadsSearchPath,
+  filename: chatgptadsSearchPath,
+  loaded: true,
+  exports: { searchAds: chatgptadsSearchAds },
+};
 
 // Load SUT after all mocks are in place
 const sutPath = require.resolve("../../../../src/services/common/controllers/commonSearchController");
@@ -96,6 +104,7 @@ beforeEach(() => {
   getApplicableNetworks.mockReset().mockResolvedValue(null);
   for (const n of NETWORKS) searchAds[n].mockReset().mockResolvedValue({ code: 200, data: [], total: 0 });
   admobSearchAds.mockReset().mockResolvedValue({ code: 200, data: [], total: 0 });
+  chatgptadsSearchAds.mockReset().mockResolvedValue({ code: 200, data: [], total: 0 });
   for (const n of ADV_NETWORKS) advAds[n].mockReset().mockResolvedValue({ code: 200, data: [], total: 0 });
 });
 
@@ -174,6 +183,19 @@ describe("commonSearchController > searchAllNetworks", () => {
     const res = mockRes();
     await searchAllNetworks({ body: { network: ["FACEBOOK"] }, query: {} }, res);
     expect(res.json.mock.calls[0][0].data.length).toBe(1);
+  });
+
+  it("dispatches an explicit ChatGPT Ads request to the ChatGPT controller", async () => {
+    registryReturns({ chatgptads: svc("chatgptads") });
+    chatgptadsSearchAds.mockResolvedValue({ code: 200, data: [{ id: 1 }], total: 287 });
+    const res = mockRes();
+
+    await searchAllNetworks({ body: { network: ["chatgptads"] }, query: {} }, res);
+
+    expect(chatgptadsSearchAds).toHaveBeenCalledOnce();
+    expect(chatgptadsSearchAds.mock.calls[0][0].body.network).toEqual(["chatgptads"]);
+    expect(res.json.mock.calls[0][0].data).toHaveLength(1);
+    expect(res.json.mock.calls[0][0].meta.total.chatgptads).toBe(287);
   });
 
   it("normalizes AI posted-date presets before network fan-out", async () => {

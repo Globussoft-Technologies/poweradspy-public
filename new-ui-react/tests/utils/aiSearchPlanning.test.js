@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatPlanningUnsupportedMessage,
+  formatSearchFailureMessage,
   findNextExecutablePlanningTier,
   getPlanningNote,
   getPlanningQuickFilterId,
@@ -8,6 +9,7 @@ import {
   getPlanningSuggestions,
   getPlanningUnsupported,
   hasExplicitPlanningSubject,
+  hasExplicitNetworkSelection,
   hasExecutableMappedSearch,
 } from "../../src/utils/aiSearchPlanning";
 
@@ -18,6 +20,14 @@ describe("AI search planning helpers", () => {
 
     expect(getPlanningUnsupported(planning)).toBe(unsupported);
     expect(formatPlanningUnsupportedMessage(unsupported)).toBe("Views are unavailable.");
+  });
+
+  it("preserves Common Search network errors instead of masking them", () => {
+    expect(formatSearchFailureMessage({
+      errors: { chatgptads: "ChatGPT Ads could not be fetched." },
+    })).toBe("chatgptads: ChatGPT Ads could not be fetched.");
+    expect(formatSearchFailureMessage(new Error("Ads API error: 500")))
+      .toBe("Ads API error: 500");
   });
 
   it("distinguishes an explicit preset from no preset", () => {
@@ -99,6 +109,21 @@ describe("AI search planning helpers", () => {
     expect(hasExplicitPlanningSubject(planning, {}, { searchQuery: "NA" })).toBe(false);
     expect(hasExplicitPlanningSubject(planning, { network: ["facebook"], type: ["VIDEO"] }, {})).toBe(false);
     expect(hasExplicitPlanningSubject({ search_term_role: "instruction" }, { network: ["facebook"] }, {})).toBe(true);
+  });
+
+  it("recognizes an explicitly requested network-only search", () => {
+    expect(hasExplicitNetworkSelection(
+      { network: ["chatgptads"] },
+      { activePlatforms: ["chatgptads"] },
+    )).toBe(true);
+    expect(hasExplicitNetworkSelection(
+      {},
+      { activePlatforms: ["chatgptads"] },
+    )).toBe(false);
+    expect(hasExplicitNetworkSelection(
+      { network: ["chatgptads"] },
+      { activePlatforms: [] },
+    )).toBe(false);
   });
 
   it("finds the next executable fallback tier and skips unmapped tiers", () => {

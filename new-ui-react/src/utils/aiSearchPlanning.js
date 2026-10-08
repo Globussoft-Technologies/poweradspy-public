@@ -125,6 +125,22 @@ export const hasExplicitPlanningSubject = (planning, args = {}, mapped = {}) => 
 };
 
 /**
+ * A network-only prompt is executable only when DS explicitly supplied its
+ * network in `args`. The unrestricted `full_payload.network` list is a search
+ * default, not proof that the user asked for a broad platform-only search.
+ */
+export const hasExplicitNetworkSelection = (args = {}, mapped = {}) => {
+  const rawNetworks = Array.isArray(args?.network)
+    ? args.network
+    : args?.network == null ? [] : [args.network];
+  const requestedNetwork = rawNetworks.some((network) => {
+    const value = String(network ?? '').trim().toLowerCase();
+    return value !== '' && value !== 'na' && value !== 'all';
+  });
+  return requestedNetwork && Array.isArray(mapped?.activePlatforms) && mapped.activePlatforms.length > 0;
+};
+
+/**
  * Return the next safe fallback tier without re-planning the prompt. A tier
  * with unmapped fields would silently broaden the request, so it is skipped.
  */
@@ -175,4 +191,30 @@ export const formatPlanningUnsupportedMessage = (unsupported) => {
     .filter(Boolean);
   if (reasons.length) return reasons.join(' ');
   return 'This requested operation is not currently supported.';
+};
+
+/**
+ * Preserve a Common Ads Search error when AI orchestration fails. Network
+ * errors are returned as an object keyed by network; HTTP/transport failures
+ * arrive as ordinary Error instances. Avoid replacing either with the old
+ * blanket "heavy traffic" message.
+ */
+export const formatSearchFailureMessage = (failure) => {
+  const errors = failure?.errors && typeof failure.errors === 'object'
+    ? failure.errors
+    : failure && typeof failure === 'object' && !('message' in failure)
+      ? failure
+      : null;
+  if (errors && Object.keys(errors).length > 0) {
+    const details = Object.entries(errors)
+      .map(([network, message]) => `${network}: ${String(message || 'Search failed').trim()}`)
+      .filter(Boolean);
+    if (details.length) return details.join('; ');
+  }
+
+  const message = typeof failure === 'string'
+    ? failure.trim()
+    : String(failure?.message || '').trim();
+  if (message && !/^failed to fetch$/i.test(message)) return message;
+  return 'The Ads Search request could not reach the server.';
 };

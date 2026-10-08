@@ -154,6 +154,13 @@ describe("buildSearchPayload > AI-Meta", () => {
     expect(payload.network).toEqual([]);
     expect(payload.has_ai_meta).toBe(true);
   });
+
+  it("keeps a ChatGPT-only network search ordinary when no AI field is selected", () => {
+    const payload = buildSearchPayload({ activePlatforms: ["chatgptads"] });
+
+    expect(payload.network).toEqual(["chatgptads"]);
+    expect(payload.has_ai_meta).toBe(false);
+  });
 });
 
 describe("buildSearchPayload > network resolution", () => {

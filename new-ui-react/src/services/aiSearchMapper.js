@@ -94,6 +94,20 @@ const PLANNING_DATE_FILTER_KEYS = {
   domain_registration_date: 'domain_date_btn_sort',
 };
 
+// `has_ai_meta` is often copied into Common Search's full_payload as an
+// execution default. It is only a user-requested AI constraint when DS also
+// supplies an AI field or an explicit planning constraint.
+const AI_META_ARGUMENT_KEYS = [
+  'ai_ad_type',
+  'ai_intent',
+  'ai_hook',
+  'ai_offering_type',
+  'ai_offer_type',
+  'ai_colors',
+  'ai_category_id',
+  'ai_subcategory_id',
+];
+
 const MULTI_SELECT_TYPES = new Set([
   'chip_multi_select', 'multi_select', 'combobox', 'nested_select', 'checkbox', 'checkbox_group',
 ]);
@@ -984,6 +998,39 @@ export function normalizeAiSearchArgs(payload = {}) {
     }
     if (merged[key] != null || fullPayload[key] == null) continue;
     merged[key] = fullPayload[key];
+    changed = true;
+  }
+
+  const hasExplicitAiMetaFlag =
+    Object.prototype.hasOwnProperty.call(args, 'has_ai_meta') ||
+    Object.prototype.hasOwnProperty.call(args, 'hasAiMeta');
+  const hasAiMetaField = AI_META_ARGUMENT_KEYS.some((key) => {
+    const value = merged[key];
+    if (Array.isArray(value)) return value.some((item) => {
+      const normalized = String(item ?? '').trim().toLowerCase();
+      return normalized !== '' && normalized !== 'na' && normalized !== 'all';
+    });
+    if (value == null || value === false) return false;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      return normalized !== '' && normalized !== 'na' && normalized !== 'all';
+    }
+    return true;
+  });
+  const plannerExplicitlyRequestsAiMeta = planningConstraints.some((constraint) => {
+    const field = norm(constraint?.field);
+    return field === 'has ai meta' || field === 'ai meta' || field === 'ai analysed only';
+  });
+  if (
+    !hasExplicitAiMetaFlag &&
+    !hasAiMetaField &&
+    !plannerExplicitlyRequestsAiMeta &&
+    (merged.has_ai_meta === true || merged.has_ai_meta === 1 || String(merged.has_ai_meta).toLowerCase() === 'true')
+  ) {
+    // A network-only plan such as "select ChatGPT network" must remain an
+    // ordinary network search. Treating this transport default as active AI
+    // metadata would remove ChatGPT Ads from the resolved network list.
+    delete merged.has_ai_meta;
     changed = true;
   }
 

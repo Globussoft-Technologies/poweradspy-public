@@ -326,6 +326,16 @@ describe('aiSearchMapper', () => {
     });
   });
 
+  it('does not turn a full_payload AI default into an AI filter for a network-only plan', () => {
+    const normalized = normalizeAiSearchArgs({
+      args: { network: ['chatgptads'] },
+      full_payload: { network: ['chatgptads'], has_ai_meta: true },
+    });
+
+    expect(normalized).not.toHaveProperty('has_ai_meta');
+    expect(mapArgsToFilters(normalized, {}).filterValues).toEqual({});
+  });
+
   it('carries AI posted-date presets through the regular date filter state', () => {
     const mapped = mapArgsToFilters({
       network: ['facebook'],

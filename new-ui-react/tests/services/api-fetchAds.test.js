@@ -364,6 +364,24 @@ describe("api > fetchAds error paths", () => {
   });
 });
 
+describe("api > fetchAds network errors", () => {
+  it("preserves per-network Common Search errors in a successful HTTP response", async () => {
+    globalThis.fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [],
+        meta: { total: { chatgptads: 0 } },
+        errors: { chatgptads: "ChatGPT Ads could not be fetched." },
+      }),
+    });
+
+    const out = await api.fetchAds({ activePlatforms: ["chatgptads"] });
+
+    expect(out.errors).toEqual({ chatgptads: "ChatGPT Ads could not be fetched." });
+  });
+});
+
 describe("api > fetchAds trackUserActivity side effect", () => {
   it("fires user_activity POST when authUser present and skip=0", async () => {
     vi.stubEnv("VITE_USER_ACTIVITY_URL", "https://ua.example.com/");

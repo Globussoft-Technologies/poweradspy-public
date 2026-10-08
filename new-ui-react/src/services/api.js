@@ -2729,6 +2729,13 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   return {
     ads: sortedAds,
     meta: sanitizedMeta,
+    // Common Search keeps per-network controller failures in a 200 response
+    // so mixed-network searches can still render successful networks. Preserve
+    // those details for AI Search instead of turning them into a false
+    // planner/traffic error when every requested network fails.
+    ...(json.errors && typeof json.errors === 'object' && Object.keys(json.errors).length > 0
+      ? { errors: json.errors }
+      : {}),
     // AI diagnostics need the original field names to compare DS expectations.
     // Keep this opt-in because retaining the raw page doubles memory for normal
     // searches without changing the rendered result.

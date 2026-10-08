@@ -51,7 +51,9 @@ import {
   getPlanningTier,
   getPlanningUnsupported,
   hasExplicitPlanningSubject,
+  hasExplicitNetworkSelection,
   hasExecutableMappedSearch,
+  formatSearchFailureMessage,
 } from "./utils/aiSearchPlanning";
 import { useAiSearchHealth } from "./hooks/useAiSearchHealth";
 import { ADS_PAGE_SIZE, resolvePaginationState } from "./utils/adsPagination";
@@ -2838,6 +2840,7 @@ const App = () => {
       const unsupportedOnlyItems = [];
       const unmappedItems = [];
       const probeDiagnostics = [];
+      let searchFailureMessage = null;
       const plannedTiers = payloads.map((tierValue) => {
         const tier = tierValue || {};
         const tierPlanning = tier.planning || topPlanning;
@@ -2849,13 +2852,21 @@ const App = () => {
         };
         const unsupported = getPlanningUnsupported(tierPlanning);
         const hasExplicitSubject = hasExplicitPlanningSubject(tierPlanning, normalizedArgs, mapped);
+        const hasExplicitNetwork = hasExplicitNetworkSelection(tier.args, mapped);
         return {
           tier,
           mapped,
           unsupported,
           planning: tierPlanning,
           hasExplicitSubject,
-          hasExecutableSearch: hasExplicitSubject && hasExecutableMappedSearch(mapped),
+          hasExplicitNetwork,
+          // A direct network instruction such as "select ChatGPT network" is
+          // a valid search even without a keyword/filter. Do not broaden an
+          // instruction-only prompt: only DS's explicit args.network unlocks
+          // this platform-only execution path.
+          hasExecutableSearch: (hasExplicitSubject || hasExplicitNetwork) && (
+            hasExecutableMappedSearch(mapped) || hasExplicitNetwork
+          ),
         };
       });
       // If any fallback tier explicitly reports an unsupported operation, do
@@ -2921,6 +2932,8 @@ const App = () => {
         } catch (err) {
           if (controller.signal.aborted || runId !== aiRunIdRef.current) return;
           diagnostic.result = 'probe_failed';
+          searchFailureMessage ||= formatSearchFailureMessage(err);
+          diagnostic.error = searchFailureMessage;
           probeDiagnostics.push(diagnostic);
           continue; // probe failure → treat as no results, fall through to next tier
         }
@@ -2941,7 +2954,11 @@ const App = () => {
             });
           }
         }
-        diagnostic.result = diagnostic.total > 0 ? 'selected' : 'empty';
+        if (data?.errors && typeof data.errors === 'object' && Object.keys(data.errors).length > 0) {
+          searchFailureMessage ||= formatSearchFailureMessage({ errors: data.errors });
+          diagnostic.errors = data.errors;
+        }
+        diagnostic.result = diagnostic.total > 0 ? 'selected' : (diagnostic.errors ? 'search_failed' : 'empty');
         probeDiagnostics.push(diagnostic);
         if (diagnostic.total > 0) {
           matchedIndex = i;
@@ -2952,7 +2969,24 @@ const App = () => {
       }
 
       if (matchedIndex === -1) {
-        if (firstExecutableCandidate) {
+        if (searchFailureMessage) {
+          // Common Search can return HTTP 200 with per-network errors. Keep
+          // that controller message visible when no tier produced ads instead
+          // of misreporting the failure as an unsupported planner request.
+          clearPreviousAiFilters();
+          aiCapabilityOnlyRef.current = true;
+          setAds([]);
+          setAdsMeta({});
+          setAvailableNetworks([]);
+          setHasMore(false);
+          setLoadingMore(false);
+          setNoDataMessage(null);
+          setAiQuickFilterId(null);
+          setAiCapabilityMessage(searchFailureMessage);
+          setError(null);
+          showToast(searchFailureMessage, 'error', 8000, 'bottom', 'ai-search');
+          return;
+        } else if (firstExecutableCandidate) {
           // A valid subject/filter had no results. Commit that supported tier so
           // the existing empty-result behavior remains unchanged.
           matchedIndex = firstExecutableCandidate.index;
@@ -3117,7 +3151,7 @@ const App = () => {
       trackProductEvent('feature_error', { entry_point: 'header', error_type: classifyError(err), feature_name: 'ad_search', ...getNetworkContext(sdui.activePlatforms), request_context: 'search', search_mode: 'ai', search_type: 'keyword' });
       const msg = /unauthor/i.test(err?.message || '')
         ? 'Please login to search'
-        : 'AI server is facing heavy traffic, please try again later.';
+        : formatSearchFailureMessage(err);
       // Do not leave the previous AI result on screen after a planner/API
       // failure. Keep the failed prompt visible for this session; the cleanup
       // marker prevents it from being restored beside the Ads Library later.
