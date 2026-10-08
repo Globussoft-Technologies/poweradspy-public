@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
@@ -19,6 +19,8 @@ require.cache[nasPath] = {
 const repoPath = require.resolve("../../../../src/services/facebook/ocr/repository");
 const repo = {
   leaseImageAds: vi.fn(),
+  getMinAdIdSince: vi.fn(),
+  leaseImageAdsFromId: vi.fn(),
   updateStatusByAdIds: vi.fn(),
   getVariantByAdId: vi.fn(),
   updateVariant: vi.fn(),
@@ -42,7 +44,9 @@ const errPath = require.resolve("../../../../src/middleware/errorHandler");
 require.cache[errPath] = { id: errPath, filename: errPath, loaded: true, exports: { asyncHandler: (fn) => fn, AppError: class {} } };
 
 // ── Modules under test (real code) ───────────────────────────────────────────
-const { leaseImages } = require("../../../../src/services/facebook/ocr/services/getImageUrlService");
+// Real config module; each test sets config.facebookOcr explicitly.
+const config = require("../../../../src/config");
+const { leaseImages, resetMinAdIdCache } = require("../../../../src/services/facebook/ocr/services/getImageUrlService");
 const { updateImageInfo } = require("../../../../src/services/facebook/ocr/services/updateImageOcrService");
 const ctrl = require("../../../../src/services/facebook/controllers/facebookOcrController");
 const createFacebookOcrRoutes = require("../../../../src/services/facebook/routes/facebookOcrRoutes");
@@ -60,9 +64,26 @@ const mkRes = () => {
   return r;
 };
 
+const savedFacebookOcr = config.facebookOcr;
+// Old-flow config: only the time cap, so the 10-day lease runs.
+const tenDayOnly = () => ({ leaseMaxExecutionMs: 10000 });
+const idWindow = (extra = {}) => ({
+  leaseMaxExecutionMs: 10000,
+  leaseWindowDays: 180,
+  leaseBatchSize: 20,
+  leaseMinIdCacheMs: 3600000,
+  ...extra,
+});
+
 beforeEach(() => {
   for (const f of Object.values(repo)) f.mockReset();
   routerInstances.length = 0;
+  log.error.mockClear();
+  resetMinAdIdCache();
+  config.facebookOcr = tenDayOnly();
+});
+afterAll(() => {
+  config.facebookOcr = savedFacebookOcr;
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -71,7 +92,7 @@ describe("facebook/ocr getImageUrlService.leaseImages", () => {
     repo.leaseImageAds.mockResolvedValue([{ ad_id: 1, image_url: "/pas/fb/a.jpg" }]);
     repo.updateStatusByAdIds.mockResolvedValue(1);
     const out = await leaseImages({ sql: {} }, log, "0");
-    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 0, false);
+    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 0, false, 10000);
     expect(out.code).toBe(200);
     expect(out.data[0].image_url).toBe("https://media.test/pas/fb/a.jpg");
     expect(repo.updateStatusByAdIds).toHaveBeenCalledWith({}, [1], 2);
@@ -81,8 +102,133 @@ describe("facebook/ocr getImageUrlService.leaseImages", () => {
     repo.leaseImageAds.mockResolvedValue([{ ad_id: 9, image_url: "https://cdn.x/a.jpg", image_ocr: "x" }]);
     repo.updateStatusByAdIds.mockResolvedValue(1);
     const out = await leaseImages({ sql: {} }, log, "4");
-    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 4, true);
+    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 4, true, 10000);
     expect(out.data[0].image_url).toBe("https://cdn.x/a.jpg"); // already absolute → untouched
+  });
+
+  it("without window/batch config: only the 10-day lease runs (old flow)", async () => {
+    repo.leaseImageAds.mockResolvedValue([{ ad_id: 1, image_url: "/a.jpg" }]);
+    await leaseImages({ sql: {} }, log, "0");
+    expect(repo.getMinAdIdSince).not.toHaveBeenCalled();
+    expect(repo.leaseImageAdsFromId).not.toHaveBeenCalled();
+  });
+
+  it("with window/batch config: id-window lease from the window's min id", async () => {
+    config.facebookOcr = idWindow();
+    repo.getMinAdIdSince.mockResolvedValue(37294160);
+    repo.leaseImageAdsFromId.mockResolvedValue([{ ad_id: 41000000, image_url: "/w.jpg" }]);
+    repo.updateStatusByAdIds.mockResolvedValue(1);
+
+    const out = await leaseImages({ sql: {} }, log, "0");
+
+    expect(repo.getMinAdIdSince).toHaveBeenCalledWith({}, 180);
+    expect(repo.leaseImageAdsFromId).toHaveBeenCalledWith({}, 0, false, {
+      minAdId: 37294160,
+      batchSize: 20,
+      maxExecutionMs: 10000,
+    });
+    expect(repo.leaseImageAds).not.toHaveBeenCalled();
+    expect(out.code).toBe(200);
+    expect(out.data[0].image_url).toBe("https://media.test/w.jpg");
+    expect(repo.updateStatusByAdIds).toHaveBeenCalledWith({}, [41000000], 2);
+  });
+
+  it("OCR queue (status=4) uses the id-window lease with image_ocr", async () => {
+    config.facebookOcr = idWindow();
+    repo.getMinAdIdSince.mockResolvedValue(100);
+    repo.leaseImageAdsFromId.mockResolvedValue([{ ad_id: 101, image_url: "/o.jpg", image_ocr: "x" }]);
+    await leaseImages({ sql: {} }, log, "4");
+    expect(repo.leaseImageAdsFromId).toHaveBeenCalledWith({}, 4, true, expect.objectContaining({ minAdId: 100 }));
+  });
+
+  it("caches the min id for leaseMinIdCacheMs, per window", async () => {
+    config.facebookOcr = idWindow();
+    repo.getMinAdIdSince.mockResolvedValue(100);
+    repo.leaseImageAdsFromId.mockResolvedValue([{ ad_id: 101, image_url: "/a.jpg" }]);
+
+    await leaseImages({ sql: {} }, log, "0");
+    await leaseImages({ sql: {} }, log, "4");
+    expect(repo.getMinAdIdSince).toHaveBeenCalledTimes(1);
+
+    // Window changed by a config reload → looked up again for the new window.
+    config.facebookOcr = idWindow({ leaseWindowDays: 365 });
+    await leaseImages({ sql: {} }, log, "0");
+    expect(repo.getMinAdIdSince).toHaveBeenCalledTimes(2);
+    expect(repo.getMinAdIdSince).toHaveBeenLastCalledWith({}, 365);
+  });
+
+  it("re-looks up the min id every call when leaseMinIdCacheMs is unset", async () => {
+    config.facebookOcr = idWindow({ leaseMinIdCacheMs: undefined });
+    repo.getMinAdIdSince.mockResolvedValue(100);
+    repo.leaseImageAdsFromId.mockResolvedValue([{ ad_id: 101, image_url: "/a.jpg" }]);
+    await leaseImages({ sql: {} }, log, "0");
+    await leaseImages({ sql: {} }, log, "0");
+    expect(repo.getMinAdIdSince).toHaveBeenCalledTimes(2);
+  });
+
+  it("empty id-window → falls back to the 10-day lease (recently seen older ads)", async () => {
+    config.facebookOcr = idWindow();
+    repo.getMinAdIdSince.mockResolvedValue(100);
+    repo.leaseImageAdsFromId.mockResolvedValue([]);
+    repo.leaseImageAds.mockResolvedValue([{ ad_id: 5, image_url: "/old.jpg" }]);
+    repo.updateStatusByAdIds.mockResolvedValue(1);
+
+    const out = await leaseImages({ sql: {} }, log, "0");
+
+    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 0, false, 10000);
+    expect(out.code).toBe(200);
+    expect(out.data.map((r) => r.ad_id)).toEqual([5]);
+  });
+
+  it("id-window query fails (e.g. time cap) → logs and falls back to the 10-day lease", async () => {
+    config.facebookOcr = idWindow();
+    repo.getMinAdIdSince.mockResolvedValue(100);
+    repo.leaseImageAdsFromId.mockRejectedValue(Object.assign(new Error("max time"), { errno: 3024 }));
+    repo.leaseImageAds.mockResolvedValue([{ ad_id: 5, image_url: "/a.jpg" }]);
+    repo.updateStatusByAdIds.mockResolvedValue(1);
+
+    const out = await leaseImages({ sql: {} }, log, "0");
+
+    expect(out.code).toBe(200);
+    expect(repo.leaseImageAds).toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      "facebook.ocr.getImageUrl id-window lease failed; using 10-day lease",
+      expect.objectContaining({ error: "max time", status: 0 })
+    );
+  });
+
+  it("min-id lookup fails → falls back to the 10-day lease", async () => {
+    config.facebookOcr = idWindow();
+    repo.getMinAdIdSince.mockRejectedValue(new Error("db down"));
+    repo.leaseImageAds.mockResolvedValue([]);
+    const out = await leaseImages({ sql: {} }, log, "0");
+    expect(repo.leaseImageAdsFromId).not.toHaveBeenCalled();
+    expect(repo.leaseImageAds).toHaveBeenCalled();
+    expect(out).toMatchObject({ code: 400, message: "No More Image are present" });
+  });
+
+  it("no ad in the window → logs and uses the 10-day lease, nothing cached", async () => {
+    config.facebookOcr = idWindow();
+    repo.getMinAdIdSince.mockResolvedValue(null);
+    repo.leaseImageAds.mockResolvedValue([]);
+    await leaseImages({ sql: {} }, log, "0");
+    await leaseImages({ sql: {} }, log, "0");
+    expect(repo.leaseImageAdsFromId).not.toHaveBeenCalled();
+    expect(repo.getMinAdIdSince).toHaveBeenCalledTimes(2);
+    expect(log.error).toHaveBeenCalledWith(
+      "facebook.ocr.getImageUrl no ad in lease window; using 10-day lease",
+      { leaseWindowDays: 180 }
+    );
+  });
+
+  it("invalid window/batch values → 10-day lease, no id-window queries", async () => {
+    for (const bad of [{ leaseWindowDays: 0 }, { leaseBatchSize: NaN }, { leaseWindowDays: -1 }]) {
+      config.facebookOcr = idWindow(bad);
+      repo.leaseImageAds.mockResolvedValue([]);
+      await leaseImages({ sql: {} }, log, "0");
+    }
+    expect(repo.getMinAdIdSince).not.toHaveBeenCalled();
+    expect(repo.leaseImageAdsFromId).not.toHaveBeenCalled();
   });
 
   it("takes the segment before the first || when resolving", async () => {

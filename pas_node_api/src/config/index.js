@@ -212,12 +212,16 @@ const config = {
     esQueueMaxAttempts: validatedInt(fileConfig.domainDateUpdate?.esQueueMaxAttempts, 10),
   },
 
-  // Load controls for GET /facebook/ocr/getFBImageUrl. config.json → env
-  // FACEBOOK_OCR_LEASE_MAX_EXECUTION_MS → undefined. No code default: read by
-  // src/services/facebook/ocr/repository.js, which runs the lease query uncapped
-  // when this is unset or not a positive number.
+  // Load controls for GET /facebook/ocr/getFBImageUrl. Each key: config.json →
+  // env FACEBOOK_OCR_* → undefined. No code defaults: read by
+  // src/services/facebook/ocr/services/getImageUrlService.js, which runs the lease
+  // query uncapped when leaseMaxExecutionMs is unset, and falls back to the 10-day
+  // last_seen lease when leaseWindowDays or leaseBatchSize is unset/invalid.
   facebookOcr: {
     leaseMaxExecutionMs: getVal(fileConfig.facebookOcr?.leaseMaxExecutionMs, 'FACEBOOK_OCR_LEASE_MAX_EXECUTION_MS', toInt),
+    leaseWindowDays: getVal(fileConfig.facebookOcr?.leaseWindowDays, 'FACEBOOK_OCR_LEASE_WINDOW_DAYS', toInt),
+    leaseBatchSize: getVal(fileConfig.facebookOcr?.leaseBatchSize, 'FACEBOOK_OCR_LEASE_BATCH_SIZE', toInt),
+    leaseMinIdCacheMs: getVal(fileConfig.facebookOcr?.leaseMinIdCacheMs, 'FACEBOOK_OCR_LEASE_MIN_ID_CACHE_MS', toInt),
   },
 
   aiMeta: {
@@ -705,13 +709,13 @@ config.reload = () => {
         }
       }
 
-      // Facebook OCR lease query time cap. Re-resolved with the same config.json →
-      // env precedence as module load, so removing the key falls back to env.
-      config.facebookOcr.leaseMaxExecutionMs = getVal(
-        newFileConfig.facebookOcr?.leaseMaxExecutionMs,
-        'FACEBOOK_OCR_LEASE_MAX_EXECUTION_MS',
-        toInt
-      );
+      // Facebook OCR lease controls. Re-resolved with the same config.json → env
+      // precedence as module load, so removing a key falls back to env.
+      const fbOcr = newFileConfig.facebookOcr;
+      config.facebookOcr.leaseMaxExecutionMs = getVal(fbOcr?.leaseMaxExecutionMs, 'FACEBOOK_OCR_LEASE_MAX_EXECUTION_MS', toInt);
+      config.facebookOcr.leaseWindowDays = getVal(fbOcr?.leaseWindowDays, 'FACEBOOK_OCR_LEASE_WINDOW_DAYS', toInt);
+      config.facebookOcr.leaseBatchSize = getVal(fbOcr?.leaseBatchSize, 'FACEBOOK_OCR_LEASE_BATCH_SIZE', toInt);
+      config.facebookOcr.leaseMinIdCacheMs = getVal(fbOcr?.leaseMinIdCacheMs, 'FACEBOOK_OCR_LEASE_MIN_ID_CACHE_MS', toInt);
 
       // Update server timeouts
       if (newFileConfig.serverTimeouts) {
