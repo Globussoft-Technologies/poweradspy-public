@@ -117,6 +117,29 @@ const MULTI_SELECT_TYPES = new Set([
 // match SDUI labels/values such as "Text Image" or "text-image".
 const norm = (v) => String(v ?? '').toLowerCase().replace(/[_\-\s]+/g, ' ').trim();
 
+// Network selection is the execution scope for an AI search, not a normal
+// SDUI option filter. Keep the backend's stable vocabulary available when a
+// cached/reduced SDUI response omits a platform that the UI can still expose.
+// Unknown values remain unmapped so a typo cannot silently broaden a search.
+const KNOWN_NETWORKS = new Set([
+  'facebook', 'instagram', 'youtube', 'google', 'gdn', 'native',
+  'linkedin', 'reddit', 'quora', 'pinterest', 'tiktok', 'admob', 'chatgptads',
+]);
+
+const NETWORK_ALIASES = new Map([
+  ['google display network', 'gdn'],
+  ['chatgpt ads', 'chatgptads'],
+]);
+
+const canonicalNetworkSlug = (rawValue) => {
+  const normalized = norm(rawValue);
+  if (!normalized) return null;
+  const compact = normalized.replace(/\s+/g, '');
+  return NETWORK_ALIASES.get(normalized)
+    || NETWORK_ALIASES.get(compact)
+    || (KNOWN_NETWORKS.has(compact) ? compact : null);
+};
+
 // AdMob stores image dimensions with several separators (`x`, `*`, or the
 // multiplication sign), while the live SDUI option value is canonicalized to
 // `widthxheight`. Normalize only this filter so other categorical values keep
@@ -361,11 +384,23 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
       if (platformFilter) {
         const r = resolveOption(platformFilter, raw);
         if (r !== undefined) { if (!activePlatforms.includes(r)) activePlatforms.push(r); continue; }
+        const fallback = canonicalNetworkSlug(raw);
+        if (fallback) {
+          // The visible platform bar can contain compatibility options that
+          // are not present in an older or platform-scoped SDUI document.
+          if (!activePlatforms.includes(fallback)) activePlatforms.push(fallback);
+          continue;
+        }
         recordUnmapped('network', raw, 'network is not present in live SDUI platform options');
       } else {
-        // No platform filter in config → trust the DS slug as-is (lowercased).
-        const slug = String(raw).toLowerCase();
-        if (!activePlatforms.includes(slug)) activePlatforms.push(slug);
+        // No platform filter in config: accept only the stable PAS network
+        // vocabulary rather than trusting an arbitrary planner value.
+        const slug = canonicalNetworkSlug(raw);
+        if (slug) {
+          if (!activePlatforms.includes(slug)) activePlatforms.push(slug);
+        } else {
+          recordUnmapped('network', raw, 'network is not present in the PAS network vocabulary');
+        }
       }
     }
   }

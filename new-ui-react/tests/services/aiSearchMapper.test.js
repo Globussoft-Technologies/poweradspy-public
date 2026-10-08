@@ -27,6 +27,52 @@ describe('aiSearchMapper', () => {
     expect(mapped.exactSearch).toBe(true);
   });
 
+  it('keeps valid DS networks when the live SDUI platform options are stale', () => {
+    const mapped = mapArgsToFilters({
+      network: ['facebook', 'gdn', 'native', 'tiktok', 'chatgptads'],
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'platform_selector',
+          type: 'icon_toggle',
+          options: [{ label: 'Facebook', value: 'facebook' }],
+        }],
+      }],
+    });
+
+    expect(mapped.activePlatforms).toEqual([
+      'facebook', 'gdn', 'native', 'tiktok', 'chatgptads',
+    ]);
+    expect(mapped.unmappedDetails).toEqual([]);
+  });
+
+  it('does not trust an unknown network value as a platform', () => {
+    const mapped = mapArgsToFilters({
+      network: ['facebook', 'not-a-pas-network'],
+    }, {
+      navbar: [{
+        filters: [{
+          _id: 'platform_selector',
+          type: 'icon_toggle',
+          options: [{ label: 'Facebook', value: 'facebook' }],
+        }],
+      }],
+    });
+
+    expect(mapped.activePlatforms).toEqual(['facebook']);
+    expect(mapped.unmappedDetails).toContainEqual(expect.objectContaining({
+      field: 'network',
+      value: 'not-a-pas-network',
+    }));
+
+    const withoutPlatformFilter = mapArgsToFilters({ network: ['not-a-pas-network'] }, {});
+    expect(withoutPlatformFilter.activePlatforms).toEqual([]);
+    expect(withoutPlatformFilter.unmappedDetails).toContainEqual(expect.objectContaining({
+      field: 'network',
+      value: 'not-a-pas-network',
+    }));
+  });
+
   it('defaults exact_search to false when DS omits it', () => {
     const mapped = mapArgsToFilters({ domain: 'apple.com' }, {});
 

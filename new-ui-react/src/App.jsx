@@ -2691,7 +2691,7 @@ const App = () => {
     // Commit a mapped payload to app state; the debounced loadAds effect refetches.
     // Replace only the previous AI-owned keys so manual filters survive a new
     // prompt, while stale AI filters cannot leak into the next query.
-    const commit = (mapped, planning = null, tierIndex = 0, refId = null) => {
+    const commit = (mapped, planning = null, tierIndex = 0, refId = null, fallbackPlanning = null) => {
       // A tier that can execute is not a capability error. DS owns any
       // partial-result explanation through planning.note; frontend mapping
       // diagnostics must not replace that copy with a generic warning.
@@ -2724,7 +2724,10 @@ const App = () => {
       };
       // Quick-filter highlighting is driven only by the planner's explicit
       // preset marker. Equivalent AI fields must remain ordinary AI filters.
-      setAiQuickFilterId(getPlanningQuickFilterId(planning, topPlanning));
+      // `topPlanning` is scoped to the plan-resolution block below. Pass its
+      // fallback into commit explicitly so a successful search cannot fail
+      // while applying the selected tier to UI state.
+      setAiQuickFilterId(getPlanningQuickFilterId(planning, fallbackPlanning));
       if (mapped.activePlatforms?.length) {
         aiPlatformSelectionSourceRef.current = 'ai';
         sdui.setActivePlatforms?.(mapped.activePlatforms);
@@ -3066,6 +3069,7 @@ const App = () => {
         selectedPlanning,
         matchedIndex,
         refId,
+        topPlanning,
       );
 
       let currentTierIndex = matchedIndex;
@@ -3087,6 +3091,7 @@ const App = () => {
           nextPlanning,
           nextTier.index,
           refId,
+          topPlanning,
         );
         showToast('Broadened your search while keeping your AI prompt.', 'success', 3000, 'bottom', 'ai-search');
       };
