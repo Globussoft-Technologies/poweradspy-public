@@ -297,6 +297,20 @@ describe("services/youtube/controllers/adSearchController > regular searchAds", 
     ]));
   });
 
+  it("exact advertiser mode skips ES when SQL resolves no owner ids", async () => {
+    const db = {
+      elastic: { indexName: "youtube", search: vi.fn() },
+      sql: { query: vi.fn(async () => []) },
+    };
+    const out = await searchAds(
+      { body: { user_id: "u", advertiser: ["missing-one", "missing-two"], exact_search: 1 }, query: {} },
+      db,
+      fakeLogger
+    );
+    expect(out).toEqual({ code: 200, data: [], total: 0, message: "No ads found" });
+    expect(db.elastic.search).not.toHaveBeenCalled();
+  });
+
   it("exact advertiser mode backfills owner fields from ES and drops mismatched hydrated rows", async () => {
     const esHits = [
       { _source: { ad_id: 1, post_owner: "Make", post_owner_id: 130141, post_owner_image: "/owner.jpg" } },

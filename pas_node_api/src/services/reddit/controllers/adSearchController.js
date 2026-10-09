@@ -11,6 +11,7 @@ const {
   markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
+const { normalizeSearchValues } = require('../../common/helpers/esQueryHelpers');
 
 const AD_DETAIL_SELECT = `
     reddit_ad.id                                    AS id,
@@ -210,12 +211,11 @@ async function searchHiddenAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
-  const exactAdvertiserName = (
+  const exactAdvertiserNames = new Set(
     (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
-    && p.advertiser
-  )
-    ? normalizePostOwnerName(p.advertiser)
-    : '';
+      ? normalizeSearchValues(p.advertiser).map(normalizePostOwnerName).filter(Boolean)
+      : []
+  );
 
   if (!p.user_id) return { code: 400, message: 'Missing params: user_id is required' };
 
@@ -234,7 +234,7 @@ async function searchAds(req, db, logger) {
   builder.setStatus([1]);
 
   // Search text fields
-  builder.setExactSearch(!!exactAdvertiserName);
+  builder.setExactSearch(exactAdvertiserNames.size > 0);
   if (p.keyword)     builder.setKeyword(p.keyword);
   if (p.advertiser)  builder.setPostOwnerName(p.advertiser);
   if (p.domain)      builder.setUrl(p.domain);
@@ -402,9 +402,9 @@ ORDER BY FIELD(reddit_ad.id, ${placeholders})`;
       };
     });
 
-    if (exactAdvertiserName) {
+    if (exactAdvertiserNames.size) {
       const beforeCount = finalAds.length;
-      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      finalAds = finalAds.filter((ad) => exactAdvertiserNames.has(normalizePostOwnerName(ad?.post_owner)));
       if (beforeCount !== finalAds.length) {
         logger.warn('Filtered Reddit exact-search rows that lost advertiser identity after hydration', {
           requestedAdvertiser: p.advertiser,

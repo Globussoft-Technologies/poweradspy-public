@@ -40,6 +40,8 @@ const {
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
+  anySearchValueEnvelope,
+  exactSearchValueClause,
   wrapWithCountryBoost,
   asFilter,
   asMust,
@@ -248,9 +250,9 @@ class SearchMixQueryBuilder {
   }
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
-    return asMust(phraseAcrossFields(this._kwFields(), kw));
+    return anySearchValueEnvelope(this._params.keyword, (kw) =>
+      asMust(phraseAcrossFields(this._kwFields(), kw))
+    );
   }
 
   _isExactSearch() {
@@ -258,45 +260,44 @@ class SearchMixQueryBuilder {
   }
 
   _getPostOwnerNameEnv() {
-    const name = this._params.postOwnerName;
-    if (!name) return null;
-    const clean = String(name).replace(/"/g, '').trim();
-    if (!clean) return null;
     if (this._isExactSearch()) {
       // facebook_ad_post_owners.post_owner_lower is indexed as the normalized
       // advertiser form that insertion deduplicates on, so matching it keeps
       // "Apple" from expanding to "Apple TV", resellers, or Applebee's.
-      return asFilter({
-        term: {
-          'facebook_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
-        },
-      });
+      return asFilter(exactSearchValueClause(
+        'facebook_ad_post_owners.post_owner_lower.keyword',
+        this._params.postOwnerName,
+        (value) => normalizePostOwnerName(value.replace(/"/g, '').trim())
+      ));
     }
-    const fields = [
-      'facebook_ad_post_owners.post_owner_name',
-      'facebook_ad_post_owners.post_owner_name_ru',
-      'facebook_ad_post_owners.post_owner_name_fr',
-      'facebook_ad_post_owners.post_owner_name_sp',
-      'facebook_ad_post_owners.post_owner_name_ge',
-      'facebook_ad_post_owners.post_owner_name_exactly',
-    ];
-    if (name.includes('"')) {
+    return anySearchValueEnvelope(this._params.postOwnerName, (name) => {
+      const clean = name.replace(/"/g, '').trim();
+      const fields = [
+        'facebook_ad_post_owners.post_owner_name',
+        'facebook_ad_post_owners.post_owner_name_ru',
+        'facebook_ad_post_owners.post_owner_name_fr',
+        'facebook_ad_post_owners.post_owner_name_sp',
+        'facebook_ad_post_owners.post_owner_name_ge',
+        'facebook_ad_post_owners.post_owner_name_exactly',
+      ];
+      if (name.includes('"')) {
+        return asMust({
+          multi_match: {
+            query: clean,
+            type: 'phrase',
+            fields: ['facebook_ad_post_owners.post_owner_name_exactly'],
+          },
+        });
+      }
       return asMust({
-        multi_match: {
-          query: clean,
-          type: 'phrase',
-          fields: ['facebook_ad_post_owners.post_owner_name_exactly'],
+        bool: {
+          should: [
+            phraseAcrossFields(fields, clean),
+            { prefix: { 'facebook_ad_post_owners.post_owner_name': clean.toLowerCase() } },
+          ],
+          minimum_should_match: 1,
         },
       });
-    }
-    return asMust({
-      bool: {
-        should: [
-          phraseAcrossFields(fields, clean),
-          { prefix: { 'facebook_ad_post_owners.post_owner_name': clean.toLowerCase() } },
-        ],
-        minimum_should_match: 1,
-      },
     });
   }
 

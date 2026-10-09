@@ -16,6 +16,8 @@ const {
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
+  anySearchValueEnvelope,
+  exactSearchValueClause,
   wrapWithCountryBoost,
   asFilter,
   asMust,
@@ -116,28 +118,20 @@ class PinterestSearchQueryBuilder {
   // ─── must (relevance) ──
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
     const fields = [
       'pinterest_ad_variants.title','pinterest_ad_variants.title_ru','pinterest_ad_variants.title_fr','pinterest_ad_variants.title_sp','pinterest_ad_variants.title_ge',
       'pinterest_ad_variants.text','pinterest_ad_variants.text_ru','pinterest_ad_variants.text_fr','pinterest_ad_variants.text_sp','pinterest_ad_variants.text_ge',
       'pinterest_ad_variants.newsfeed_description','pinterest_ad_variants.newsfeed_description_ru','pinterest_ad_variants.newsfeed_description_fr','pinterest_ad_variants.newsfeed_description_sp','pinterest_ad_variants.newsfeed_description_ge',
     ];
-    if (kw.includes('"')) {
-      return asMust({
-        multi_match: {
-          query: kw.replace(/"/g, ''),
-          type: 'phrase',
-          fields: [
-            ...fields,
-            'pinterest_ad_variants.title_exactly',
-            'pinterest_ad_variants.text_exactly',
-            'pinterest_ad_variants.newsfeed_description_exactly',
-          ],
-        },
-      });
-    }
-    return asMust(phraseAcrossFields(fields, kw));
+    return anySearchValueEnvelope(this._params.keyword, (kw) => {
+      if (kw.includes('"')) return asMust({ multi_match: {
+        query: kw.replace(/"/g, ''), type: 'phrase', fields: [
+          ...fields, 'pinterest_ad_variants.title_exactly', 'pinterest_ad_variants.text_exactly',
+          'pinterest_ad_variants.newsfeed_description_exactly',
+        ],
+      } });
+      return asMust(phraseAcrossFields(fields, kw));
+    });
   }
 
   _isExactSearch() {
@@ -145,42 +139,28 @@ class PinterestSearchQueryBuilder {
   }
 
   _getPostOwnerNameEnv() {
-    const name = this._params.postOwnerName;
-    if (!name) return null;
-    const rawName = String(name);
-    const clean = rawName.replace(/"/g, '').trim();
-    if (!clean) return null;
     if (this._isExactSearch()) {
       // Pinterest stores a normalized owner key at ingestion time; use it when
       // exact_search is requested so strict advertiser matching survives AI mode.
-      return asFilter({
-        term: {
-          'pinterest_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
-        },
-      });
+      return asFilter(exactSearchValueClause(
+        'pinterest_ad_post_owners.post_owner_lower.keyword', this._params.postOwnerName,
+        (value) => normalizePostOwnerName(value.replace(/"/g, '').trim())
+      ));
     }
     const fields = [
       'pinterest_ad_post_owners.post_owner_name','pinterest_ad_post_owners.post_owner_name_ru',
       'pinterest_ad_post_owners.post_owner_name_fr','pinterest_ad_post_owners.post_owner_name_sp',
       'pinterest_ad_post_owners.post_owner_name_ge','pinterest_ad_post_owners.post_owner_name_exactly',
     ];
-    if (rawName.includes('"')) {
-      return asMust({
-        multi_match: {
-          query: clean,
-          type: 'phrase',
-          fields: ['pinterest_ad_post_owners.post_owner_name_exactly'],
-        },
-      });
-    }
-    return asMust({
-      bool: {
-        should: [
-          phraseAcrossFields(fields, clean),
-          { prefix: { 'pinterest_ad_post_owners.post_owner_name': clean.toLowerCase() } },
-        ],
-        minimum_should_match: 1,
-      },
+    return anySearchValueEnvelope(this._params.postOwnerName, (rawName) => {
+      const clean = rawName.replace(/"/g, '').trim();
+      if (rawName.includes('"')) return asMust({ multi_match: {
+        query: clean, type: 'phrase', fields: ['pinterest_ad_post_owners.post_owner_name_exactly'],
+      } });
+      return asMust({ bool: { should: [
+        phraseAcrossFields(fields, clean),
+        { prefix: { 'pinterest_ad_post_owners.post_owner_name': clean.toLowerCase() } },
+      ], minimum_should_match: 1 } });
     });
   }
 

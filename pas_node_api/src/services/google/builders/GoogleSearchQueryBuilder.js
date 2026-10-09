@@ -26,6 +26,8 @@ require("dotenv").config();
 const {
   flatBool,
   termFilter,
+  anySearchValueEnvelope,
+  normalizeSearchValues,
   asFilter,
   asMust,
   bucketize,
@@ -206,28 +208,19 @@ class GoogleSearchQueryBuilder {
    * brand/product searches this box is used for.
    */
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
-    const quoted = String(kw).includes('"');
-    const clean = String(kw).replace(/"/g, "").trim();
-    if (!clean) return null;
-    const exact = this._isExact() || quoted;
-    const contentQuery = exact
-      ? { multi_match: { query: clean, type: "phrase", fields: CONTENT_FIELDS } }
-      : { multi_match: { query: clean, type: "best_fields", operator: "and", fields: CONTENT_FIELDS } };
-
-    // Transparency creatives often have no title/text and expose the searched
-    // brand only through post_owner_name. For platform 18 only, make the keyword
-    // box search ad content OR advertiser with the same advertiser semantics.
-    if (this._params.transparencyKeywordSearch) {
-      return asFilter({
-        bool: {
+    return anySearchValueEnvelope(this._params.keyword, (kw) => {
+      const quoted = kw.includes('"');
+      const clean = kw.replace(/"/g, "").trim();
+      const exact = this._isExact() || quoted;
+      const contentQuery = exact
+        ? { multi_match: { query: clean, type: "phrase", fields: CONTENT_FIELDS } }
+        : { multi_match: { query: clean, type: "best_fields", operator: "and", fields: CONTENT_FIELDS } };
+      if (this._params.transparencyKeywordSearch) return asFilter({ bool: {
           should: [contentQuery, this._buildPostOwnerQuery(clean, exact)],
           minimum_should_match: 1,
-        },
-      });
-    }
-    return asFilter(contentQuery);
+      } });
+      return asFilter(contentQuery);
+    });
   }
 
   _buildPostOwnerQuery(clean, exact) {
@@ -258,12 +251,19 @@ class GoogleSearchQueryBuilder {
    *   - exact   : match_phrase
    */
   _getPostOwnerNameEnv() {
-    const name = this._params.postOwnerName;
-    if (!name) return null;
-    const quoted = String(name).includes('"');
-    const clean = String(name).replace(/"/g, "").trim();
-    if (!clean) return null;
-    return asFilter(this._buildPostOwnerQuery(clean, this._isExact() || quoted));
+    const values = normalizeSearchValues(this._params.postOwnerName);
+    if (this._isExact() && values.length > 1) {
+      return asFilter({
+        terms: {
+          post_owner_lower: values.map((value) => value.replace(/"/g, '').trim().toLowerCase()),
+        },
+      });
+    }
+    return anySearchValueEnvelope(this._params.postOwnerName, (name) => {
+      const quoted = name.includes('"');
+      const clean = name.replace(/"/g, "").trim();
+      return asFilter(this._buildPostOwnerQuery(clean, this._isExact() || quoted));
+    });
   }
 
   _getHtmlContentEnv() {

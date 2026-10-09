@@ -11,6 +11,7 @@ const {
   markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
+const { normalizeSearchValues } = require('../../common/helpers/esQueryHelpers');
 
 // ─── SQL fragments ───────────────────────────────────────────────────────────
 //
@@ -88,25 +89,29 @@ function dedupeRows(rows) {
   });
 }
 
-async function resolveExactPostOwnerIds(advertiser, db, logger) {
-  if (!db.sql || !advertiser) return [];
+async function resolveExactPostOwnerIds(advertisers, db, logger) {
+  const names = normalizeSearchValues(advertisers).map(normalizePostOwnerName).filter(Boolean);
+  // `null` means the lookup could not be performed, so the caller may retain
+  // the existing text-query fallback. An empty array means SQL was reached
+  // successfully and none of the requested exact advertiser names exists.
+  if (!db.sql || !names.length) return null;
 
   try {
     const rows = await db.sql.query(
       `SELECT id
        FROM youtube_ad_post_owners
-       WHERE LOWER(post_owner_name) = ?`,
-      [advertiser]
+       WHERE LOWER(post_owner_name) ${names.length === 1 ? '= ?' : `IN (${names.map(() => '?').join(',')})`}`,
+      names
     );
     return rows
       .map((row) => Number(row.id))
       .filter((id) => Number.isFinite(id));
   } catch (err) {
     logger.warn('Failed to resolve YouTube exact advertiser ids from SQL', {
-      advertiser,
+      advertisers: names,
       error: err.message,
     });
-    return [];
+    return null;
   }
 }
 
@@ -275,12 +280,11 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p   = normalizeParams(raw);
-  const exactAdvertiserName = (
+  const exactAdvertiserNames = new Set(
     (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
-    && p.advertiser
-  )
-    ? normalizePostOwnerName(p.advertiser)
-    : '';
+      ? normalizeSearchValues(p.advertiser).map(normalizePostOwnerName).filter(Boolean)
+      : []
+  );
 
   if (!p.user_id) return { code: 400, message: 'Missing params: user_id is required' };
 
@@ -309,10 +313,13 @@ async function searchAds(req, db, logger) {
   // YouTube's live index stores the stable advertiser id on `post_owner_id`.
   // Use it in exact advertiser mode so strict AI searches are not widened by
   // the analyzed `post_owner` text field.
-  builder.setExactSearch(!!exactAdvertiserName);
-  if (exactAdvertiserName) {
-    const exactPostOwnerIds = await resolveExactPostOwnerIds(exactAdvertiserName, db, logger);
-    if (exactPostOwnerIds.length) {
+  builder.setExactSearch(exactAdvertiserNames.size > 0);
+  if (exactAdvertiserNames.size) {
+    const exactPostOwnerIds = await resolveExactPostOwnerIds([...exactAdvertiserNames], db, logger);
+    if (Array.isArray(exactPostOwnerIds) && exactPostOwnerIds.length === 0) {
+      return { code: 200, data: [], total: 0, message: 'No ads found' };
+    }
+    if (exactPostOwnerIds?.length) {
       builder.setExactPostOwnerIds(exactPostOwnerIds);
     }
   }
@@ -511,9 +518,9 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
       };
     });
 
-    if (exactAdvertiserName) {
+    if (exactAdvertiserNames.size) {
       const beforeCount = finalAds.length;
-      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      finalAds = finalAds.filter((ad) => exactAdvertiserNames.has(normalizePostOwnerName(ad?.post_owner)));
       if (beforeCount !== finalAds.length) {
         logger.warn('Filtered YouTube exact-search rows that lost advertiser identity after hydration', {
           requestedAdvertiser: p.advertiser,

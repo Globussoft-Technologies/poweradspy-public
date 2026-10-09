@@ -16,6 +16,8 @@ const {
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
+  anySearchValueEnvelope,
+  exactSearchValueClause,
   wrapWithCountryBoost,
   asFilter,
   asMust,
@@ -120,27 +122,21 @@ class QuoraSearchQueryBuilder {
   // ─── must (relevance) ──
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
     const fields = [
       'quora_ad_variants.title', 'quora_ad_variants.title_ru', 'quora_ad_variants.title_fr', 'quora_ad_variants.title_sp',
       'quora_ad_variants.text', 'quora_ad_variants.text_ru', 'quora_ad_variants.text_fr', 'quora_ad_variants.text_sp',
       'quora_ad_variants.newsfeed_description', 'quora_ad_variants.newsfeed_description_ru', 'quora_ad_variants.newsfeed_description_fr', 'quora_ad_variants.newsfeed_description_sp',
       'quora_ad_translation.ad_text', 'quora_ad_translation.news_feed_description', 'quora_ad_translation.ad_title',
     ];
-    if (kw.includes('"')) {
-      return asMust({
-        multi_match: {
-          query: kw.replace(/"/g, ''),
-          type: 'phrase',
-          fields: [
-            ...fields,
-            'quora_ad_variants.title_exactly', 'quora_ad_variants.text_exactly', 'quora_ad_variants.newsfeed_description_exactly',
-          ],
-        },
-      });
-    }
-    return asMust(phraseAcrossFields(fields, kw));
+    return anySearchValueEnvelope(this._params.keyword, (kw) => {
+      if (kw.includes('"')) return asMust({ multi_match: {
+        query: kw.replace(/"/g, ''), type: 'phrase', fields: [
+          ...fields, 'quora_ad_variants.title_exactly', 'quora_ad_variants.text_exactly',
+          'quora_ad_variants.newsfeed_description_exactly',
+        ],
+      } });
+      return asMust(phraseAcrossFields(fields, kw));
+    });
   }
 
   _isExactSearch() {
@@ -148,32 +144,25 @@ class QuoraSearchQueryBuilder {
   }
 
   _getPostOwnerNameEnv() {
-    const name = this._params.postOwnerName;
-    if (!name) return null;
-    const clean = String(name).replace(/"/g, '').trim();
-    if (!clean) return null;
     if (this._isExactSearch()) {
       // Quora exact advertiser matching should use the normalized owner field
       // rather than the legacy phrase/prefix fallback logic.
-      return asFilter({
-        term: {
-          'quora_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
-        },
-      });
+      return asFilter(exactSearchValueClause(
+        'quora_ad_post_owners.post_owner_lower.keyword', this._params.postOwnerName,
+        (value) => normalizePostOwnerName(value.replace(/"/g, '').trim())
+      ));
     }
     const fields = [
       'quora_ad_post_owners.post_owner_name', 'quora_ad_post_owners.post_owner_name_ru',
       'quora_ad_post_owners.post_owner_name_fr', 'quora_ad_post_owners.post_owner_name_sp',
       'quora_ad_post_owners.post_owner_name_ge', 'quora_ad_post_owners.post_owner_name_exactly',
     ];
-    return asMust({
-      bool: {
-        should: [
-          phraseAcrossFields(fields, clean),
-          { prefix: { 'quora_ad_post_owners.post_owner_name': clean.toLowerCase() } },
-        ],
-        minimum_should_match: 1,
-      },
+    return anySearchValueEnvelope(this._params.postOwnerName, (name) => {
+      const clean = name.replace(/"/g, '').trim();
+      return asMust({ bool: { should: [
+        phraseAcrossFields(fields, clean),
+        { prefix: { 'quora_ad_post_owners.post_owner_name': clean.toLowerCase() } },
+      ], minimum_should_match: 1 } });
     });
   }
 

@@ -11,6 +11,7 @@ const {
   markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
+const { normalizeSearchValues } = require('../../common/helpers/esQueryHelpers');
 
 // Shared SQL fragment for fetching full native ad details by IDs
 const AD_DETAIL_SELECT = `
@@ -252,12 +253,11 @@ async function searchHiddenAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
-  const exactAdvertiserName = (
+  const exactAdvertiserNames = new Set(
     (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
-    && p.advertiser
-  )
-    ? normalizePostOwnerName(p.advertiser)
-    : '';
+      ? normalizeSearchValues(p.advertiser).map(normalizePostOwnerName).filter(Boolean)
+      : []
+  );
 
   if (!p.user_id) {
     return { code: 400, message: 'Missing params: user_id is required' };
@@ -289,7 +289,7 @@ async function searchAds(req, db, logger) {
 
   // ─── Search text fields ───────────────────────────────
   // Carry the AI planner's exact advertiser intent through to the native ES query.
-  builder.setExactSearch(!!exactAdvertiserName);
+  builder.setExactSearch(exactAdvertiserNames.size > 0);
   if (p.keyword)     builder.setKeyword(p.keyword);
   if (p.advertiser)  builder.setPostOwnerName(p.advertiser);
   if (p.domain)      builder.setUrl(p.domain);
@@ -503,9 +503,9 @@ ORDER BY FIELD(native_ad.id, ${placeholders})
       };
     });
 
-    if (exactAdvertiserName) {
+    if (exactAdvertiserNames.size) {
       const beforeCount = finalAds.length;
-      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      finalAds = finalAds.filter((ad) => exactAdvertiserNames.has(normalizePostOwnerName(ad?.post_owner)));
       if (beforeCount !== finalAds.length) {
         logger.warn('Filtered Native exact-search rows that lost advertiser identity after hydration', {
           requestedAdvertiser: p.advertiser,

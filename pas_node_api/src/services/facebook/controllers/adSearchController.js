@@ -6,6 +6,7 @@ const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../u
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 const { applyAiMetaFilters, markAiMetaResult } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
+const { normalizeSearchValues } = require('../../common/helpers/esQueryHelpers');
 
 // Shared SQL fragment for fetching full ad details by IDs
 // (used by main search, favorite, hidden, bug flows)
@@ -328,12 +329,11 @@ async function searchBugAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
-  const exactAdvertiserName = (
+  const exactAdvertiserNames = new Set(
     (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
-    && p.advertiser
-  )
-    ? normalizePostOwnerName(p.advertiser)
-    : '';
+      ? normalizeSearchValues(p.advertiser).map(normalizePostOwnerName).filter(Boolean)
+      : []
+  );
 
   // Validate required params
   if (!p.user_id) {
@@ -643,11 +643,11 @@ ORDER BY FIELD(facebook_ad.id, ${placeholders})
       };
     });
 
-    if (exactAdvertiserName) {
+    if (exactAdvertiserNames.size) {
       const beforeCount = finalAds.length;
       finalAds = finalAds.filter((ad) => {
         const visibleOwner = normalizePostOwnerName(ad?.post_owner);
-        return visibleOwner && visibleOwner === exactAdvertiserName;
+        return visibleOwner && exactAdvertiserNames.has(visibleOwner);
       });
       if (beforeCount !== finalAds.length) {
         logger.warn('Filtered Facebook exact-search rows that lost advertiser identity after hydration', {

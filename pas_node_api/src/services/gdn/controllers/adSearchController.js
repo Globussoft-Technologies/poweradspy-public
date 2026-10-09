@@ -11,6 +11,7 @@ const {
   markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
+const { normalizeSearchValues } = require('../../common/helpers/esQueryHelpers');
 const {
   isDisplayMergeApplicable,
   getYoutubeDisplayHits,
@@ -465,12 +466,11 @@ async function searchWithDisplayMerge({ db, logger, esParams, p, from, size, sor
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p   = normalizeParams(raw);
-  const exactAdvertiserName = (
+  const exactAdvertiserNames = new Set(
     (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
-    && p.advertiser
-  )
-    ? normalizePostOwnerName(p.advertiser)
-    : '';
+      ? normalizeSearchValues(p.advertiser).map(normalizePostOwnerName).filter(Boolean)
+      : []
+  );
 
   if (!p.user_id) return { code: 400, message: 'Missing params: user_id is required' };
 
@@ -502,7 +502,7 @@ async function searchAds(req, db, logger) {
     .setSortMethod(sort.order);
 
   if (p.status && Array.isArray(p.status) && p.status.length > 0) builder.setStatus(p.status);
-  builder.setExactSearch(!!exactAdvertiserName);
+  builder.setExactSearch(exactAdvertiserNames.size > 0);
   if (p.keyword)         builder.setKeyword(p.keyword);
   if (p.advertiser)      builder.setPostOwnerName(p.advertiser);
   if (p.domain)          builder.setUrl(p.domain);
@@ -562,7 +562,7 @@ async function searchAds(req, db, logger) {
   // YouTube unavailable) — see helpers/youtubeDisplayMerge.js.
   // Exact advertiser queries should not be widened by the cross-store YouTube
   // DISPLAY merge until that path supports the same strict advertiser contract.
-  if (!exactAdvertiserName && isDisplayMergeApplicable(p, sort, from, size)) {
+  if (!exactAdvertiserNames.size && isDisplayMergeApplicable(p, sort, from, size)) {
     try {
       return await searchWithDisplayMerge({ db, logger, esParams, p, from, size, sort });
     } catch (mergeErr) {
@@ -607,9 +607,9 @@ async function searchAds(req, db, logger) {
 
     // ─── Phase 2: enrich from SQL (shared with the DISPLAY merge path) ────
     let finalAds = await enrichGdnHits(esHits, db, logger);
-    if (exactAdvertiserName) {
+    if (exactAdvertiserNames.size) {
       const beforeCount = finalAds.length;
-      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      finalAds = finalAds.filter((ad) => exactAdvertiserNames.has(normalizePostOwnerName(ad?.post_owner)));
       if (beforeCount !== finalAds.length) {
         logger.warn('Filtered GDN exact-search rows that lost advertiser identity after hydration', {
           requestedAdvertiser: p.advertiser,

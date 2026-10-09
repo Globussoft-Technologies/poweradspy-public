@@ -251,6 +251,9 @@ async function searchAds(req, db, logger) {
   const builder = new TiktokSearchQueryBuilder(db.elastic?.indexName);
   
   builder.setFrom(from).setSize(size).setSortField(sort.field).setSortMethod(sort.order);
+  if (typeof builder.setExactSearch === 'function') {
+    builder.setExactSearch(p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true);
+  }
 
 
   // Search text fields

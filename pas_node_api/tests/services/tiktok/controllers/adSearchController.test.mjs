@@ -11,7 +11,7 @@ function FakeBuilder(indexName) {
   const last = builderCalls[builderCalls.length - 1];
   const fluent = (name) => function (...args) { last.calls.push([name, args]); return self; };
   for (const k of [
-    "setFrom","setSize","setSortField","setSortMethod",
+    "setFrom","setSize","setSortField","setSortMethod","setExactSearch",
     "setKeyword","setAdvertiser","setDomain","setIndustry","setGender","setAge","setBudget",
     "setLanguage","setCountry",
     "setLikes","setComments","setShares","setPopularity","setImpression","setCtr",
@@ -260,6 +260,7 @@ describe("services/tiktok/controllers/adSearchController > regular searchAds", (
     }, db, fakeLogger);
     const setters = builderCalls[0].calls.map(c => c[0]);
     expect(setters).toEqual(expect.arrayContaining([
+      "setExactSearch",
       "setKeyword","setAdvertiser","setDomain","setIndustry","setGender","setAge","setBudget",
       "setLanguage","setCountry","setLikes","setComments","setShares","setPopularity",
       "setImpression","setCtr","setAdSeen","setPostDate",
@@ -272,6 +273,12 @@ describe("services/tiktok/controllers/adSearchController > regular searchAds", (
     const db = { elastic: { search: vi.fn(async () => esHits([])) } };
     const out = await searchAds({ body: { user_id: "u", whatever: "x" }, query: {} }, db, fakeLogger);
     expect(out.message).toBe("No ads found");
+  });
+
+  it("passes exact_search to the query builder", async () => {
+    const db = { elastic: { search: vi.fn(async () => esHits([])) } };
+    await searchAds({ body: { user_id: "u", exact_search: 1 }, query: {} }, db, fakeLogger);
+    expect(builderCalls[0].calls.find(c => c[0] === "setExactSearch")?.[1]).toEqual([true]);
   });
 
   it("adcategory fallback used when industry absent", async () => {

@@ -78,6 +78,64 @@ function flatBool({ must = [], filter = [], must_not = [], should = [], minimum_
   return { bool: b };
 }
 
+const MAX_SEARCH_VALUES = 5;
+
+/**
+ * Normalize the keyword/advertiser search-box contract.
+ *
+ * Scalars keep their existing behaviour. Arrays are cleaned, de-duplicated
+ * case-insensitively and capped at five values so a client cannot create an
+ * unbounded bool query. The original spelling is retained for analyzed fields.
+ */
+function normalizeSearchValues(input, max = MAX_SEARCH_VALUES) {
+  const raw = Array.isArray(input) ? input : [input];
+  const values = [];
+  const seen = new Set();
+  for (const value of raw) {
+    if (value === null || value === undefined) continue;
+    const clean = String(value).trim();
+    if (!clean || clean.toUpperCase() === 'NA') continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    values.push(clean);
+    if (values.length >= max) break;
+  }
+  return values;
+}
+
+/**
+ * Build the unchanged scalar clause for one value, or a bounded OR for 2-5.
+ * `buildScalar` returns the normal { ctx, clause } envelope used by builders.
+ */
+function anySearchValueEnvelope(input, buildScalar) {
+  const values = normalizeSearchValues(input);
+  if (!values.length) return null;
+  const envelopes = values.map(buildScalar).filter(Boolean);
+  if (!envelopes.length) return null;
+  if (envelopes.length === 1) return envelopes[0];
+  return {
+    ctx: envelopes[0].ctx,
+    clause: {
+      bool: {
+        should: envelopes.map((entry) => entry.clause),
+        minimum_should_match: 1,
+      },
+    },
+  };
+}
+
+/** Fast exact lookup: scalar remains `term`; 2-5 values become one `terms`. */
+function exactSearchValueClause(field, input, normalize = (value) => value) {
+  const values = [...new Set(normalizeSearchValues(input)
+    .map((value) => normalize(value))
+    .filter((value) => value !== null && value !== undefined && value !== ''))];
+  if (!values.length) return null;
+  return values.length === 1
+    ? { term: { [field]: values[0] } }
+    : { terms: { [field]: values } };
+}
+
 /**
  * For exact-match keyword fields.
  *   - 1 value  → `term`
@@ -367,6 +425,10 @@ module.exports = {
   wrapIfNeed,
   // builders
   flatBool,
+  MAX_SEARCH_VALUES,
+  normalizeSearchValues,
+  anySearchValueEnvelope,
+  exactSearchValueClause,
   termFilter,
   termFilterOrMissing,
   termFilterCI,

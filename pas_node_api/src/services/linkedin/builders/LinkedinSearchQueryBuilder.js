@@ -26,6 +26,7 @@ const {
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
+  anySearchValueEnvelope,
   termFilter,
   termFilterOrMissing,
   termFilterCI,
@@ -184,43 +185,24 @@ class LinkedinSearchQueryBuilder {
   // ─── must (relevance) ──
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
     const fields = ['ad_title', 'ad_text', 'newsfeed_description'];
-    if (kw.includes('"')) {
-      return asMust({ multi_match: { query: kw.replace(/"/g, ''), type: 'phrase', fields } });
-    }
-    return asMust(phraseAcrossFields(fields, kw));
+    return anySearchValueEnvelope(this._params.keyword, (kw) => {
+      if (kw.includes('"')) return asMust({ multi_match: { query: kw.replace(/"/g, ''), type: 'phrase', fields } });
+      return asMust(phraseAcrossFields(fields, kw));
+    });
   }
 
   _getPostOwnerNameEnv() {
-    const name = this._params.postOwnerName;
-    if (!name) return null;
-    const cleanName = name.replace(/"/g, '');
-    if (this._params.exactSearch) {
-      // LinkedIn's live index only exposes `post_owner` as a plain text field,
-      // so exact advertiser mode avoids the legacy prefix widener and lets the
-      // controller's exact post_owner_id filter plus final hydration guard do
-      // the strict matching.
-      return asMust({ match_phrase: { post_owner: cleanName } });
-    }
-    if (name.includes('"')) {
-      return asMust({
-        multi_match: {
-          query: cleanName,
-          type: 'phrase',
-          fields: ['post_owner'],
-        },
-      });
-    }
-    return asMust({
-      bool: {
-        should: [
-          phraseAcrossFields(['post_owner'], name),
-          { prefix: { post_owner: name.toLowerCase() } },
-        ],
-        minimum_should_match: 1,
-      },
+    return anySearchValueEnvelope(this._params.postOwnerName, (name) => {
+      const cleanName = name.replace(/"/g, '');
+      if (this._params.exactSearch) return asMust({ match_phrase: { post_owner: cleanName } });
+      if (name.includes('"')) return asMust({ multi_match: {
+        query: cleanName, type: 'phrase', fields: ['post_owner'],
+      } });
+      return asMust({ bool: { should: [
+        phraseAcrossFields(['post_owner'], name),
+        { prefix: { post_owner: name.toLowerCase() } },
+      ], minimum_should_match: 1 } });
     });
   }
 

@@ -27,6 +27,8 @@ const {
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
+  anySearchValueEnvelope,
+  exactSearchValueClause,
   wrapWithCountryBoost,
   asFilter,
   asMust,
@@ -213,9 +215,9 @@ class SearchMixQueryBuilder {
   }
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
-    return asMust(phraseAcrossFields(this._kwFields(), kw));
+    return anySearchValueEnvelope(this._params.keyword, (kw) =>
+      asMust(phraseAcrossFields(this._kwFields(), kw))
+    );
   }
 
   _isExactSearch() {
@@ -223,45 +225,43 @@ class SearchMixQueryBuilder {
   }
 
   _getPostOwnerNameEnv() {
-    const name = this._params.postOwnerName;
-    if (!name) return null;
-    const rawName = String(name);
-    const clean = rawName.replace(/"/g, '').trim();
-    if (!clean) return null;
     if (this._isExactSearch()) {
       // Match the normalized advertiser identity the ingestion pipeline writes,
       // so "Apple" does not expand to partial-name or reseller matches.
-      return asFilter({
-        term: {
-          'instagram_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
-        },
-      });
+      return asFilter(exactSearchValueClause(
+        'instagram_ad_post_owners.post_owner_lower.keyword',
+        this._params.postOwnerName,
+        (value) => normalizePostOwnerName(value.replace(/"/g, '').trim())
+      ));
     }
-    const fields = [
-      'instagram_ad_post_owners.post_owner_name',
-      'instagram_ad_post_owners.post_owner_name_ru',
-      'instagram_ad_post_owners.post_owner_name_fr',
-      'instagram_ad_post_owners.post_owner_name_sp',
-      'instagram_ad_post_owners.post_owner_name_ge',
-      'instagram_ad_post_owners.post_owner_name_exactly',
-    ];
-    if (rawName.includes('"')) {
+    return anySearchValueEnvelope(this._params.postOwnerName, (rawName) => {
+      const clean = rawName.replace(/"/g, '').trim();
+      const fields = [
+        'instagram_ad_post_owners.post_owner_name',
+        'instagram_ad_post_owners.post_owner_name_ru',
+        'instagram_ad_post_owners.post_owner_name_fr',
+        'instagram_ad_post_owners.post_owner_name_sp',
+        'instagram_ad_post_owners.post_owner_name_ge',
+        'instagram_ad_post_owners.post_owner_name_exactly',
+      ];
+      if (rawName.includes('"')) {
+        return asMust({
+          multi_match: {
+            query: clean,
+            type: 'phrase',
+            fields: ['instagram_ad_post_owners.post_owner_name_exactly'],
+          },
+        });
+      }
       return asMust({
-        multi_match: {
-          query: clean,
-          type: 'phrase',
-          fields: ['instagram_ad_post_owners.post_owner_name_exactly'],
+        bool: {
+          should: [
+            phraseAcrossFields(fields, clean),
+            { prefix: { 'instagram_ad_post_owners.post_owner_name': clean.toLowerCase() } },
+          ],
+          minimum_should_match: 1,
         },
       });
-    }
-    return asMust({
-      bool: {
-        should: [
-          phraseAcrossFields(fields, clean),
-          { prefix: { 'instagram_ad_post_owners.post_owner_name': clean.toLowerCase() } },
-        ],
-        minimum_should_match: 1,
-      },
     });
   }
 

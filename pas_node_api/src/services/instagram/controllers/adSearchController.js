@@ -11,6 +11,7 @@ const {
   markAiMetaResult,
 } = require('../../common/helpers/aiMetaSearchFilter');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
+const { normalizeSearchValues } = require('../../common/helpers/esQueryHelpers');
 
 // Shared SQL fragment for fetching full ad details by IDs
 // (used by main search, favorite, hidden, bug flows)
@@ -470,12 +471,11 @@ async function searchBugAds(p, db, logger) {
 async function searchAds(req, db, logger) {
   const raw = { ...req.body, ...req.query };
   const p = normalizeParams(raw);
-  const exactAdvertiserName = (
+  const exactAdvertiserNames = new Set(
     (p.exact_search === 1 || p.exact_search === '1' || p.exact_search === true)
-    && p.advertiser
-  )
-    ? normalizePostOwnerName(p.advertiser)
-    : '';
+      ? normalizeSearchValues(p.advertiser).map(normalizePostOwnerName).filter(Boolean)
+      : []
+  );
 
   // Validate required params
   if (!p.user_id) {
@@ -522,7 +522,7 @@ async function searchAds(req, db, logger) {
   // ─── Search text fields ───────────────────────────────
   // Preserve AI-mode exact advertiser intent instead of silently widening it
   // back to the legacy fuzzy advertiser search.
-  builder.setExactSearch(!!exactAdvertiserName);
+  builder.setExactSearch(exactAdvertiserNames.size > 0);
   if (p.keyword)     builder.setKeyword(p.keyword);
   if (p.advertiser)  builder.setPostOwnerName(p.advertiser);
   if (p.domain)      builder.setUrl(p.domain);
@@ -829,9 +829,9 @@ ORDER BY FIELD(instagram_ad.id, ${placeholders})
       };
     });
 
-    if (exactAdvertiserName) {
+    if (exactAdvertiserNames.size) {
       const beforeCount = finalAds.length;
-      finalAds = finalAds.filter((ad) => normalizePostOwnerName(ad?.post_owner) === exactAdvertiserName);
+      finalAds = finalAds.filter((ad) => exactAdvertiserNames.has(normalizePostOwnerName(ad?.post_owner)));
       if (beforeCount !== finalAds.length) {
         logger.warn('Filtered Instagram exact-search rows that lost advertiser identity after hydration', {
           requestedAdvertiser: p.advertiser,

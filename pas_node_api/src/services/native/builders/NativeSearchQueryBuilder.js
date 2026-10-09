@@ -16,6 +16,8 @@ const {
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
+  anySearchValueEnvelope,
+  exactSearchValueClause,
   wrapWithCountryBoost,
   asFilter,
   asMust,
@@ -141,24 +143,16 @@ class NativeSearchQueryBuilder {
   }
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
     const fields = this._kwFields();
-    if (kw.includes('"')) {
-      return asMust({
-        multi_match: {
-          query: kw.replace(/"/g, ''),
-          type: 'phrase',
-          fields: [
-            ...fields,
-            'native_ad_variants.title_exactly',
-            'native_ad_variants.text_exactly',
-            'native_ad_variants.newsfeed_description_exactly',
-          ],
-        },
-      });
-    }
-    return asMust(phraseAcrossFields(fields, kw));
+    return anySearchValueEnvelope(this._params.keyword, (kw) => {
+      if (kw.includes('"')) return asMust({ multi_match: {
+        query: kw.replace(/"/g, ''), type: 'phrase', fields: [
+          ...fields, 'native_ad_variants.title_exactly', 'native_ad_variants.text_exactly',
+          'native_ad_variants.newsfeed_description_exactly',
+        ],
+      } });
+      return asMust(phraseAcrossFields(fields, kw));
+    });
   }
 
   _isExactSearch() {
@@ -166,42 +160,29 @@ class NativeSearchQueryBuilder {
   }
 
   _getPostOwnerNameEnv() {
-    const name = this._params.postOwnerName;
-    if (!name) return null;
-    const rawName = String(name);
-    const clean = rawName.replace(/"/g, '').trim();
-    if (!clean) return null;
     if (this._isExactSearch()) {
       // Native advertiser rows are deduplicated on the normalized owner name,
       // so exact_search can safely pin to that canonical key.
-      return asFilter({
-        term: {
-          'native_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
-        },
-      });
+      return asFilter(exactSearchValueClause(
+        'native_ad_post_owners.post_owner_lower.keyword', this._params.postOwnerName,
+        (value) => normalizePostOwnerName(value.replace(/"/g, '').trim())
+      ));
     }
     const fields = [
       'native_ad_post_owners.post_owner_name', 'native_ad_post_owners.post_owner_name_ru',
       'native_ad_post_owners.post_owner_name_fr', 'native_ad_post_owners.post_owner_name_sp',
       'native_ad_post_owners.post_owner_name_ge', 'native_ad_post_owners.post_owner_name_exactly',
     ];
-    if (rawName.includes('"')) {
-      return asMust({
-        multi_match: {
-          query: clean,
-          type: 'phrase',
-          fields: ['native_ad_post_owners.post_owner_name_exactly', 'native_ad_post_owners.post_owner_name'],
-        },
-      });
-    }
-    return asMust({
-      bool: {
-        should: [
-          phraseAcrossFields(fields, clean),
-          { prefix: { 'native_ad_post_owners.post_owner_name': clean.toLowerCase() } },
-        ],
-        minimum_should_match: 1,
-      },
+    return anySearchValueEnvelope(this._params.postOwnerName, (rawName) => {
+      const clean = rawName.replace(/"/g, '').trim();
+      if (rawName.includes('"')) return asMust({ multi_match: {
+        query: clean, type: 'phrase',
+        fields: ['native_ad_post_owners.post_owner_name_exactly', 'native_ad_post_owners.post_owner_name'],
+      } });
+      return asMust({ bool: { should: [
+        phraseAcrossFields(fields, clean),
+        { prefix: { 'native_ad_post_owners.post_owner_name': clean.toLowerCase() } },
+      ], minimum_should_match: 1 } });
     });
   }
 

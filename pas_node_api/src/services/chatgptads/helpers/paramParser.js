@@ -85,6 +85,12 @@ function text(val) {
   return isSet(val) && typeof val !== 'object' ? String(val).trim() : '';
 }
 
+function searchText(val) {
+  if (!Array.isArray(val)) return text(val);
+  const values = list(val).slice(0, 5);
+  return values.length <= 1 ? (values[0] || '') : values;
+}
+
 /** Scalar / array / comma-separated string → clean string array. */
 function list(val) {
   if (!isSet(val)) return [];
@@ -135,8 +141,8 @@ function parseSort(p) {
 /** Normalised ChatGPT search spec from a raw request body/query. */
 function parseSearchParams(raw = {}) {
   return {
-    keyword: text(raw.keyword),
-    advertiser: text(raw.advertiser),
+    keyword: searchText(raw.keyword),
+    advertiser: searchText(raw.advertiser),
     domain: text(raw.domain),
     exactSearch: flag(raw.exact_search),
     advertisers: list(raw.chatgpt_advertiser),

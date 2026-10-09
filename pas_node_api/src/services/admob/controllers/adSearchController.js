@@ -7,6 +7,21 @@ function active(value) {
   return value !== undefined && value !== null && value !== '' && value !== 'NA';
 }
 
+function searchValues(value) {
+  const raw = Array.isArray(value) ? value : active(value) ? [value] : [];
+  const out = [];
+  const seen = new Set();
+  for (const item of raw) {
+    const clean = String(item ?? '').trim();
+    const key = clean.toLowerCase();
+    if (!clean || clean.toUpperCase() === 'NA' || seen.has(key)) continue;
+    seen.add(key);
+    out.push(clean);
+    if (out.length === 5) break;
+  }
+  return out;
+}
+
 function values(value) {
   const list = Array.isArray(value) ? value : active(value) ? [value] : [];
   return list
@@ -98,6 +113,7 @@ function rangeFilter(field, value) {
 function buildCommonClauses(input) {
   const must = [];
   const filter = [{ term: { status: 1 } }];
+  const exactSearch = input.exact_search === 1 || input.exact_search === '1' || input.exact_search === true;
 
   const internalId = normalizeNumericId(input.id ?? input.internal_id);
   const publicAdId = normalizeAdId(
@@ -112,23 +128,34 @@ function buildCommonClauses(input) {
   // Each search mode is restricted to its own field(s) — "Advertiser"/"Domain"
   // must not fall back to matching keyword-style fields like ad_text/newsfeed_description,
   // or a query like an advertiser name would surface ads with no real advertiser/domain match.
-  if (active(input.keyword) && String(input.keyword).trim()) {
-    must.push({
-      simple_query_string: {
-        query: String(input.keyword).trim(),
+  const keywords = searchValues(input.keyword);
+  if (keywords.length) {
+    const should = keywords.map((query) => exactSearch
+      ? { multi_match: { query, type: 'phrase', fields: ['ad_title^3', 'ad_text^2', 'newsfeed_description', 'post_owner^2'] } }
+      : { simple_query_string: {
+        query,
         fields: ['ad_title^3', 'ad_text^2', 'newsfeed_description', 'post_owner^2', 'ad_id', 'destination_host'],
         default_operator: 'and',
-      },
-    });
-  } else if (active(input.advertiser) && String(input.advertiser).trim()) {
-    must.push({
-      simple_query_string: {
-        query: String(input.advertiser).trim(),
-        fields: ['post_owner'],
-        default_operator: 'and',
-      },
-    });
-  } else if (active(input.domain) && String(input.domain).trim()) {
+      } });
+    must.push(should.length === 1 ? should[0] : { bool: { should, minimum_should_match: 1 } });
+  }
+
+  const advertisers = searchValues(input.advertiser);
+  if (advertisers.length) {
+    if (exactSearch) {
+      const exactAdvertisers = advertisers.map((value) => value.toLowerCase());
+      filter.push(exactAdvertisers.length === 1
+        ? { term: { 'post_owner.keyword': exactAdvertisers[0] } }
+        : { terms: { 'post_owner.keyword': exactAdvertisers } });
+    } else {
+      const should = advertisers.map((query) => ({ simple_query_string: {
+        query, fields: ['post_owner'], default_operator: 'and',
+      } }));
+      must.push(should.length === 1 ? should[0] : { bool: { should, minimum_should_match: 1 } });
+    }
+  }
+
+  if (!keywords.length && !advertisers.length && active(input.domain) && String(input.domain).trim()) {
     must.push({
       simple_query_string: {
         query: String(input.domain).trim(),

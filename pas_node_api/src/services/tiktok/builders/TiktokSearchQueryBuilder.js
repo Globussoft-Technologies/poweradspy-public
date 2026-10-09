@@ -22,6 +22,9 @@ require('dotenv').config();
 
 const {
   flatBool,
+  anySearchValueEnvelope,
+  exactSearchValueClause,
+  normalizeSearchValues,
   asFilter,
   asMust,
   bucketize,
@@ -50,6 +53,7 @@ class TiktokSearchQueryBuilder {
 
   setKeyword(v) { this._params.keyword = v; return this; }
   setAdvertiser(v) { this._params.advertiser = v; return this; }
+  setExactSearch(v) { this._params.exactSearch = !!v; return this; }
   setDomain(v) { this._params.domain = v; return this; }
   setIndustry(v) { this._params.industry = Array.isArray(v) ? v : [v]; return this; }
   setCountry(v) { this._params.country = Array.isArray(v) ? v : [v]; return this; }
@@ -71,8 +75,8 @@ class TiktokSearchQueryBuilder {
   // ─── Clause generators ──
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
+    const values = normalizeSearchValues(this._params.keyword);
+    if (!values.length) return null;
     // Match the keyword as a WHOLE WORD, not an arbitrary substring. The old
     // `*kw*` wildcard matched mid-word, so "bus" hit "business", "buscaba",
     // "TikTok for Business", etc. All four fields below are `keyword`-type
@@ -82,7 +86,14 @@ class TiktokSearchQueryBuilder {
     // whole term with explicit word boundaries: the keyword must be preceded
     // and followed by a non-alphanumeric char or a string edge. This matches
     // "bus", "the bus.", "#bus" but not "business"/"buscaba".
-    const escaped = kw.toLowerCase().replace(/[.?+*|{}[\]()"\\#@&<>~/]/g, '\\$&');
+    const escapedValues = values.map((kw) =>
+      kw.toLowerCase().replace(/[.?+*|{}[\]()"\\#@&<>~/]/g, '\\$&')
+    );
+    // Multiple values share one alternation per field (four regexps total),
+    // instead of multiplying to 4 * N expensive regexp clauses.
+    const escaped = escapedValues.length === 1
+      ? escapedValues[0]
+      : `(${escapedValues.join('|')})`;
     const value = `(.*[^a-z0-9])?${escaped}([^a-z0-9].*)?`;
     // Keyword stays in must so its should-of-regexps contributes to _score.
     return asMust({
@@ -99,9 +110,14 @@ class TiktokSearchQueryBuilder {
   }
 
   _getAdvertiserEnv() {
-    const a = this._params.advertiser;
-    if (!a) return null;
-    return asFilter({ prefix: { post_owner: a.toLowerCase() } });
+    if (this._params.exactSearch) {
+      return asFilter(exactSearchValueClause(
+        'post_owner', this._params.advertiser, (value) => value.toLowerCase()
+      ));
+    }
+    return anySearchValueEnvelope(this._params.advertiser, (advertiser) =>
+      asFilter({ prefix: { post_owner: advertiser.toLowerCase() } })
+    );
   }
 
   _getDomainEnv() {

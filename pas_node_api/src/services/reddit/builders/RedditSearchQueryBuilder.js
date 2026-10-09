@@ -16,6 +16,8 @@ const {
   matchFilter,
   multiFieldMatchFilter,
   phraseAcrossFields,
+  anySearchValueEnvelope,
+  exactSearchValueClause,
   wrapWithCountryBoost,
   asFilter,
   asMust,
@@ -135,8 +137,6 @@ class RedditSearchQueryBuilder {
   // ─── must (relevance) ──
 
   _getKeywordEnv() {
-    const kw = this._params.keyword;
-    if (!kw) return null;
     const fields = [
       'reddit_ad_variants.title', 'reddit_ad_variants.title_ru', 'reddit_ad_variants.title_fr',
       'reddit_ad_variants.title_sp', 'reddit_ad_variants.title_ge',
@@ -148,19 +148,15 @@ class RedditSearchQueryBuilder {
       'reddit_ad_translation.ad_text', 'reddit_ad_translation.news_feed_description',
       'reddit_ad_translation.ad_title',
     ];
-    if (kw.includes('"')) {
-      return asMust({
-        multi_match: {
-          query: kw.replace(/"/g, ''),
-          type: 'phrase',
-          fields: [
-            ...fields,
-            'reddit_ad_variants.title_exactly', 'reddit_ad_variants.text_exactly', 'reddit_ad_variants.newsfeed_description_exactly',
-          ],
-        },
-      });
-    }
-    return asMust(phraseAcrossFields(fields, kw));
+    return anySearchValueEnvelope(this._params.keyword, (kw) => {
+      if (kw.includes('"')) return asMust({ multi_match: {
+        query: kw.replace(/"/g, ''), type: 'phrase', fields: [
+          ...fields, 'reddit_ad_variants.title_exactly', 'reddit_ad_variants.text_exactly',
+          'reddit_ad_variants.newsfeed_description_exactly',
+        ],
+      } });
+      return asMust(phraseAcrossFields(fields, kw));
+    });
   }
 
   _isExactSearch() {
@@ -168,42 +164,29 @@ class RedditSearchQueryBuilder {
   }
 
   _getPostOwnerNameEnv() {
-    const name = this._params.postOwnerName;
-    if (!name) return null;
-    const rawName = String(name);
-    const clean = rawName.replace(/"/g, '').trim();
-    if (!clean) return null;
     if (this._isExactSearch()) {
       // Use the normalized Reddit advertiser key for strict advertiser
       // equality instead of the legacy fuzzy phrase/prefix lookup.
-      return asFilter({
-        term: {
-          'reddit_ad_post_owners.post_owner_lower.keyword': normalizePostOwnerName(clean),
-        },
-      });
+      return asFilter(exactSearchValueClause(
+        'reddit_ad_post_owners.post_owner_lower.keyword', this._params.postOwnerName,
+        (value) => normalizePostOwnerName(value.replace(/"/g, '').trim())
+      ));
     }
     const fields = [
       'reddit_ad_post_owners.post_owner_name', 'reddit_ad_post_owners.post_owner_name_ru',
       'reddit_ad_post_owners.post_owner_name_fr', 'reddit_ad_post_owners.post_owner_name_sp',
       'reddit_ad_post_owners.post_owner_name_ge', 'reddit_ad_post_owners.post_owner_name_exactly',
     ];
-    if (rawName.includes('"')) {
-      return asMust({
-        multi_match: {
-          query: clean,
-          type: 'phrase',
-          fields: ['reddit_ad_post_owners.post_owner_name_exactly', 'reddit_ad_post_owners.post_owner_name'],
-        },
-      });
-    }
-    return asMust({
-      bool: {
-        should: [
-          phraseAcrossFields(fields, clean),
-          { prefix: { 'reddit_ad_post_owners.post_owner_name': clean.toLowerCase() } },
-        ],
-        minimum_should_match: 1,
-      },
+    return anySearchValueEnvelope(this._params.postOwnerName, (rawName) => {
+      const clean = rawName.replace(/"/g, '').trim();
+      if (rawName.includes('"')) return asMust({ multi_match: {
+        query: clean, type: 'phrase',
+        fields: ['reddit_ad_post_owners.post_owner_name_exactly', 'reddit_ad_post_owners.post_owner_name'],
+      } });
+      return asMust({ bool: { should: [
+        phraseAcrossFields(fields, clean),
+        { prefix: { 'reddit_ad_post_owners.post_owner_name': clean.toLowerCase() } },
+      ], minimum_should_match: 1 } });
     });
   }
 

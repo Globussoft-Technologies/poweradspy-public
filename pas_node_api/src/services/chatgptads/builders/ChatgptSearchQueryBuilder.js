@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  anySearchValueEnvelope,
+  exactSearchValueClause,
+} = require('../../common/helpers/esQueryHelpers');
+
 /**
  * ChatgptSearchQueryBuilder — builds Elasticsearch queries against `chatgpt_search_mix`.
  *
@@ -80,15 +85,16 @@ class ChatgptSearchQueryBuilder {
 
   /** Keyword search box — ad title/text/description + advertiser, or an exact domain/ad id. */
   setKeyword(text) {
-    const q = String(text || '').trim();
-    if (!q) return this;
-    const should = [{
-      multi_match: { query: q, fields: KEYWORD_FIELDS, type: 'cross_fields', operator: 'and' },
-    }];
-    const domain = normalizeDomain(q);
-    if (domain && !/\s/.test(domain)) should.push({ term: { domain } });
-    if (/^\d+$/.test(q)) should.push({ term: { ad_id: q } });
-    this.must.push({ bool: { should, minimum_should_match: 1 } });
+    const env = anySearchValueEnvelope(text, (q) => {
+      const should = [{
+        multi_match: { query: q, fields: KEYWORD_FIELDS, type: 'cross_fields', operator: 'and' },
+      }];
+      const domain = normalizeDomain(q);
+      if (domain && !/\s/.test(domain)) should.push({ term: { domain } });
+      if (/^\d+$/.test(q)) should.push({ term: { ad_id: q } });
+      return { ctx: 'must', clause: { bool: { should, minimum_should_match: 1 } } };
+    });
+    if (env) this.must.push(env.clause);
     return this;
   }
 
@@ -97,10 +103,15 @@ class ChatgptSearchQueryBuilder {
    * whole name via the lowercase-normalized `.kw` sub-field.
    */
   setPostOwnerName(text, exact = false) {
-    const q = String(text || '').trim();
-    if (!q) return this;
-    if (exact) this.filter.push({ term: { 'post_owner_name.kw': q } });
-    else this.must.push({ match: { post_owner_name: { query: q, operator: 'and' } } });
+    if (exact) {
+      const clause = exactSearchValueClause('post_owner_name.kw', text);
+      if (clause) this.filter.push(clause);
+      return this;
+    }
+    const env = anySearchValueEnvelope(text, (q) => ({
+      ctx: 'must', clause: { match: { post_owner_name: { query: q, operator: 'and' } } },
+    }));
+    if (env) this.must.push(env.clause);
     return this;
   }
 
