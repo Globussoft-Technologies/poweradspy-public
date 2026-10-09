@@ -39,6 +39,17 @@ const { describeError } = require('../../common/helpers/errorResponse');
 
 const ES_DOC_TYPE = 'doc';
 
+// Column widths on youtube_ad_meta_data (varchar; blackhat_path is TEXT). The lists below
+// are append-only, so they are trimmed to the newest entries that still fit.
+const META_LIST_MAX = { white_ad_screenshot: 256, white_ad_lander: 256, png_file: 256 };
+
+/** JSON-encode a list, dropping the oldest entries until it fits in maxLen chars. */
+function fitDbList(list, maxLen) {
+  const kept = [...list];
+  while (kept.length > 1 && JSON.stringify(kept).length > maxLen) kept.shift();
+  return JSON.stringify(kept);
+}
+
 /**
  * Normalise the incoming request body into a single flat lander object.
  * Accepts every shape the scrapers send (same contract as the facebook/instagram/gdn
@@ -301,6 +312,17 @@ async function insertHtmlContent(req, db, log) {
       update_meta_table.screenshot_url = value.screen_shot;
       update_meta_table.white_ad_screenshot = JSON.stringify(whitehat_screenshot);
       if (whitehat_zip.length > 0) update_meta_table.white_ad_lander = JSON.stringify(whitehat_zip);
+    }
+
+    // 13b. Trim the append-only lists to their column width (keeps the newest entries).
+    if (update_meta_table.white_ad_screenshot !== undefined) {
+      update_meta_table.white_ad_screenshot = fitDbList(whitehat_screenshot, META_LIST_MAX.white_ad_screenshot);
+    }
+    if (update_meta_table.white_ad_lander !== undefined) {
+      update_meta_table.white_ad_lander = fitDbList(whitehat_zip, META_LIST_MAX.white_ad_lander);
+    }
+    if (update_meta_table.png_file !== undefined) {
+      update_meta_table.png_file = fitDbList(blackhat_screenshot, META_LIST_MAX.png_file);
     }
 
     // 14. Meta update → ES doc update (youtube-specific flat fields).

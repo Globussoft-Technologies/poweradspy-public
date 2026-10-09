@@ -98,6 +98,19 @@ class InstagramRepository {
     return result.affectedRows;
   }
 
+  // Bulk updateRedirectStatus: one UPDATE ... WHERE instagram_ad_id IN (...).
+  static async updateRedirectStatusMultiple(adIds, status) {
+    if (!adIds.length) return 0;
+    const placeholders = adIds.map(() => '?').join(',');
+    const sql = `
+      UPDATE instagram_ad_meta_data
+      SET redirect_status = ?
+      WHERE instagram_ad_id IN (${placeholders})
+    `;
+    const result = await executeQuery(sql, [status, ...adIds]);
+    return result.affectedRows;
+  }
+
   // Domain: check if exists
   static async getDomain(domain) {
     const sql = `SELECT id FROM instagram_ad_domain WHERE domain = ?`;

@@ -2,9 +2,11 @@ const InstagramRepository = require('./repository');
 
 // redirect_status values (instagram_ad_meta_data):
 //   0 = PENDING       — not claimed yet
-//   2 = IN_PROCESSING — claimed, handed off to a worker
+//   2 = IN_PROCESSING — claimed (present in ES), handed off to a worker
+//   5 = NOT_FOUND     — absent from ES (instagram_search_mix), dead-ended
 const PENDING = 0;
 const IN_PROCESSING = 2;
+const NOT_FOUND = 5;
 
 // A destination_url is usable only if it is a non-empty string that is not the
 // literal token "null"/"undefined" (some upstream writes store those as text
@@ -30,6 +32,19 @@ class GetAdsService {
       let ads = await repository.getDataForLander(PENDING);
       if (!ads.length) {
         ads = await repository.getDataForLander(IN_PROCESSING, { excludeServedToday: true });
+      }
+
+      // ES existence check — one lookup per unique ad, in parallel (rows repeat per country).
+      // Absent ads are flagged NOT_FOUND and never served (the insert API would reject them anyway).
+      const fetchedAdIds = [...new Set(ads.map((ad) => ad.id))];
+      const esPresence = await Promise.all(
+        fetchedAdIds.map((id) => repository.checkAdInEs(id, elastic))
+      );
+      const missingAdIds = fetchedAdIds.filter((_, i) => !esPresence[i]);
+      if (missingAdIds.length) {
+        const missing = new Set(missingAdIds.map(String));
+        ads = ads.filter((ad) => !missing.has(String(ad.id)));
+        await repository.updateRedirectStatusMultiple(missingAdIds, NOT_FOUND);
       }
 
       const results = [];
