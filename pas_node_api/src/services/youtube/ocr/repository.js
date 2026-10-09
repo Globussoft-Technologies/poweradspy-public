@@ -18,15 +18,26 @@
  *   youtube_ad_ocb       (OCB result store; upserted, keyed by youtube_ad_id)
  */
 
+const { fitOcrColumns } = require('../../common/helpers/ocrColumnFit');
+const { timeCapHint } = require('../../common/helpers/sqlTimeCap');
+
+// youtube_ad_ocb result columns (prod): utf8mb4 varchar(255) — trim only, no char
+// stripping. An over-long value fails the INSERT/UPDATE under STRICT_TRANS_TABLES → 500.
+const OCB_COL_LIMITS = { ocr: 255, object: 255, celebrity: 255, brand_logo: 255 };
+const fitOcbColumns = (data) => fitOcrColumns(data, OCB_COL_LIMITS, { stripNonLatin1: false });
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 
 // ── Lease (youtube_ad_variants) ──────────────────────────────────────────────
 
-/** type=1 image lease: IMAGE/DISPLAY ads with a video_url at the given ocb_url_status. */
-async function leaseImageAds(exec, status) {
+/**
+ * type=1 image lease: IMAGE/DISPLAY ads with a video_url at the given ocb_url_status.
+ * `maxExecutionMs` caps the SELECT (not a positive integer → no cap).
+ */
+async function leaseImageAds(exec, status, maxExecutionMs) {
   const sql = `
-    SELECT youtube_ad_variants.youtube_ad_id AS ad_id,
+    SELECT${timeCapHint(maxExecutionMs)} youtube_ad_variants.youtube_ad_id AS ad_id,
            youtube_ad_variants.video_url AS image_url
       FROM youtube_ad_variants
       LEFT JOIN youtube_ad ON youtube_ad.id = youtube_ad_variants.youtube_ad_id
@@ -56,6 +67,7 @@ async function ocbRowExists(exec, adId) {
 }
 
 async function insertOcb(exec, adId, data) {
+  fitOcbColumns(data);
   const cols = ['youtube_ad_id', ...Object.keys(data)];
   const vals = [adId, ...Object.values(data)];
   const sql = `INSERT INTO youtube_ad_ocb (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
@@ -65,6 +77,7 @@ async function insertOcb(exec, adId, data) {
 
 /** Returns affectedRows (0 means "nothing changed" → PHP "Image Data is already updated"). */
 async function updateOcb(exec, adId, data) {
+  fitOcbColumns(data);
   const cols = Object.keys(data);
   if (!cols.length) return 0;
   const sql = `UPDATE youtube_ad_ocb SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE youtube_ad_id = ?`;

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
+// Lease time cap the services read from config (ocrLease.maxExecutionMs).
+const OCR_CAP = require("../../../../src/config").ocrLease?.maxExecutionMs;
 
 // ── Leaf mocks (set BEFORE requiring the module under test) ───────────────────
 
@@ -71,7 +73,7 @@ describe("gdn/ocr getImageUrlService.leaseImages", () => {
     repo.leaseImageAds.mockResolvedValue([{ ad_id: 1, image_url: "/pas/gdn/a.jpg" }]);
     repo.updateStatusByAdIds.mockResolvedValue(1);
     const out = await leaseImages({ sql: {} }, log, "0");
-    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 0, false); // withOcr=false
+    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 0, false, OCR_CAP); // withOcr=false
     expect(out.code).toBe(200);
     expect(out.data[0].image_url).toBe("https://media.test/pas/gdn/a.jpg");
     expect(repo.updateStatusByAdIds).toHaveBeenCalledWith({}, [1], 2);
@@ -81,7 +83,7 @@ describe("gdn/ocr getImageUrlService.leaseImages", () => {
     repo.leaseImageAds.mockResolvedValue([{ ad_id: 9, image_url: "https://cdn.x/a.jpg", image_ocr: "x" }]);
     repo.updateStatusByAdIds.mockResolvedValue(1);
     const out = await leaseImages({ sql: {} }, log, "4");
-    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 4, true);
+    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 4, true, OCR_CAP);
     expect(out.data[0].image_url).toBe("https://cdn.x/a.jpg"); // already absolute → untouched
   });
 

@@ -21,17 +21,24 @@
  * filters only type='IMAGE' + image_url_status).
  */
 
+const { fitOcrColumns } = require('../../common/helpers/ocrColumnFit');
+const { timeCapHint } = require('../../common/helpers/sqlTimeCap');
+
+// gdn_ad_variants OCR/OCB columns are latin1: image_object varchar(256), the rest text.
+const OCR_COL_LIMITS = { image_object: 256 };
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 
 /**
  * PHP GdnAdVariants::getImagesUrl(): up to 20 IMAGE ads at the given image_url_status,
  * newest first. For the OCR queue (status 4) the stored image_ocr is also selected.
+ * `maxExecutionMs` caps the SELECT (not a positive integer → no cap).
  */
-async function leaseImageAds(exec, status, withOcr) {
+async function leaseImageAds(exec, status, withOcr, maxExecutionMs) {
   const ocrCol = withOcr ? ', gdn_ad_variants.image_ocr' : '';
   const sql = `
-    SELECT gdn_ad_variants.gdn_ad_id AS ad_id,
+    SELECT${timeCapHint(maxExecutionMs)} gdn_ad_variants.gdn_ad_id AS ad_id,
            gdn_ad_variants.image_url${ocrCol}
       FROM gdn_ad_variants
       LEFT JOIN gdn_ad ON gdn_ad.id = gdn_ad_variants.gdn_ad_id
@@ -65,6 +72,9 @@ async function getVariantByAdId(exec, adId) {
 
 /** PHP $updatedata->save(): UPDATE gdn_ad_variants SET ... WHERE gdn_ad_id = ?. */
 async function updateVariant(exec, adId, data) {
+  // A non-latin1 char or an over-long value in an OCR/OCB column fails the UPDATE after
+  // ES was already updated, leaving the ad at status 2. ES keeps the full text.
+  fitOcrColumns(data, OCR_COL_LIMITS);
   const cols = Object.keys(data);
   if (!cols.length) return 0;
   const sql = `UPDATE gdn_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE gdn_ad_id = ?`;

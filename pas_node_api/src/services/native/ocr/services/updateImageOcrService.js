@@ -101,7 +101,11 @@ async function updateImageOcrDetails(postData, db, log) {
   });
   const hits = search?.hits?.hits || search?.body?.hits?.hits || [];
   if (hits.length === 0) {
-    return { code: 400, message: 'ad not found' };
+    // The result is already saved in MySQL (step 2); the ad just has no search doc.
+    // Reporting 400 made the worker retry the same payload forever. Report success;
+    // the missing search doc is logged.
+    log?.error?.('native.ocr.updateImageOcrDetails ES doc missing; saved to MySQL only', { adId });
+    return { code: 200, message: 'Image Data Updated Successfully (ad not in search index)' };
   }
 
   let docValue = {

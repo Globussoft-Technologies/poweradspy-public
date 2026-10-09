@@ -12,6 +12,7 @@
  * delegates all SQL to ./repository.
  */
 
+const config = require('../../../../config');
 const repo = require('../repository');
 const { resolveMediaUrl } = require('../../../../insertion/helpers/nasClient');
 
@@ -50,7 +51,8 @@ async function getImageUrl(db, status, log) {
   // image_url_status filter follows PHP: status 0 → 0, status 4 → 4.
   const imageUrlStatus = status === 4 ? 4 : 0;
 
-  const result = await repo.getImagesUrl(sql, imageUrlStatus, withOcr);
+  // Time cap: config.json ocrLease.maxExecutionMs (src/config/index.js); read per call.
+  const result = await repo.getImagesUrl(sql, imageUrlStatus, withOcr, config.ocrLease?.maxExecutionMs);
   if (!result.length) {
     return { code: 400, message: 'No More Image are present', data: [] };
   }

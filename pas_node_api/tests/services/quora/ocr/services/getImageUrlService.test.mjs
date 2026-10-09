@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
+// Lease time cap the services read from config (ocrLease.maxExecutionMs).
+const OCR_CAP = require("../../../../../src/config").ocrLease?.maxExecutionMs;
 
 // ── Mock the repository ──────────────────────────────────────────────
 const repoPath = require.resolve("../../../../../src/services/quora/ocr/repository");
@@ -67,7 +69,7 @@ describe("services/quora/ocr/getImageUrlService > getImageUrl", () => {
     repo.updateStatusMultiple.mockResolvedValue(1);
     const out = await svc.getImageUrl({ sql: {} }, 4, fakeLog);
 
-    expect(repo.getImagesUrl).toHaveBeenCalledWith({}, 4, true);
+    expect(repo.getImagesUrl).toHaveBeenCalledWith({}, 4, true, OCR_CAP);
     expect(repo.updateStatusMultiple).toHaveBeenCalledWith({}, [10], 2);
     expect(out.code).toBe(200);
     expect(out.message).toBe("Image Url fetched successfully");
@@ -78,7 +80,7 @@ describe("services/quora/ocr/getImageUrlService > getImageUrl", () => {
     repo.getImagesUrl.mockResolvedValue([{ ad_id: 5, image_url: "/q/5.jpg" }]);
     repo.updateStatusMultiple.mockResolvedValue(1);
     await svc.getImageUrl({ sql: {} }, 0, fakeLog);
-    expect(repo.getImagesUrl).toHaveBeenCalledWith({}, 0, false);
+    expect(repo.getImagesUrl).toHaveBeenCalledWith({}, 0, false, OCR_CAP);
     expect(repo.updateStatusMultiple).toHaveBeenCalledWith({}, [5], 2);
   });
 
@@ -86,6 +88,6 @@ describe("services/quora/ocr/getImageUrlService > getImageUrl", () => {
     repo.getImagesUrl.mockResolvedValue([{ ad_id: 1, image_url: "/q/1.jpg" }]);
     repo.updateStatusMultiple.mockResolvedValue(1);
     await svc.getImageUrl({ sql: {} }, 9, fakeLog);
-    expect(repo.getImagesUrl).toHaveBeenCalledWith({}, 0, false);
+    expect(repo.getImagesUrl).toHaveBeenCalledWith({}, 0, false, OCR_CAP);
   });
 });

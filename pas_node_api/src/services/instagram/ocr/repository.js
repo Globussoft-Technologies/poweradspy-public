@@ -16,6 +16,11 @@
  */
 
 const { latin1SafeCols } = require('../../../insertion/helpers/util');
+const { fitOcrColumns } = require('../../common/helpers/ocrColumnFit');
+const { timeCapHint } = require('../../common/helpers/sqlTimeCap');
+
+// instagram_ad_variants OCR/OCB columns: latin1 varchar(256).
+const OCR_COL_LIMITS = { image_ocr: 256, image_object: 256, image_celebrity: 256, image_brand_logo: 256 };
 
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
@@ -36,8 +41,9 @@ function mysqlDate(d) {
  * predicates on the same `type` column OR'd against the status filter). This is
  * a faithful port of the *intent* — status filter AND type IN ('IMAGE','STORIES')
  * AND last_seen within the trailing 10 days — expressed as a well-formed query.
+ * `maxExecutionMs` caps the SELECT (not a positive integer → no cap).
  */
-async function getImagesUrl(exec, imageUrlStatus, withOcr) {
+async function getImagesUrl(exec, imageUrlStatus, withOcr, maxExecutionMs) {
   const select = [
     'instagram_ad_variants.instagram_ad_id AS ad_id',
     'instagram_ad_variants.image_url',
@@ -48,7 +54,7 @@ async function getImagesUrl(exec, imageUrlStatus, withOcr) {
   const tenDaysAgo = new Date(now.getTime() - 10 * 24 * 60 * 60 * 1000);
 
   const sql = `
-    SELECT ${select.join(', ')}
+    SELECT${timeCapHint(maxExecutionMs)} ${select.join(', ')}
       FROM instagram_ad_variants
       JOIN instagram_ad ON instagram_ad.id = instagram_ad_variants.instagram_ad_id
      WHERE instagram_ad_variants.image_url_status = ?
@@ -82,6 +88,9 @@ async function updateVariant(exec, adId, data) {
   // and rolls the whole UPDATE back, dropping the OCR result. Strip >U+00FF from
   // those latin1 columns first (same helper the insertion repos use).
   latin1SafeCols(data);
+  // image_ocr is latin1 too, and every OCR/OCB column is varchar(256) under
+  // STRICT_TRANS_TABLES — an over-long value fails the same way. Fit all four.
+  fitOcrColumns(data, OCR_COL_LIMITS);
   const cols = Object.keys(data).filter((k) => data[k] !== undefined);
   if (!cols.length) return 0;
   const sql = `UPDATE instagram_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE instagram_ad_id = ?`;

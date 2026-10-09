@@ -16,6 +16,7 @@
  * { code, data } — the controller maps it to the PHP buildResponse body shape.
  */
 
+const config = require('../../../../config');
 const { resolveMediaUrl } = require('../../../../insertion/helpers/nasClient');
 const repo = require('../repository');
 
@@ -31,7 +32,8 @@ async function leaseOcb(db, log, type) {
       return { code: 404 }; // only type=1 (image OCB) is supported → Missing Parameter
     }
 
-    const result = await repo.leaseImageAds(sql, PENDING);
+    // Time cap: config.json ocrLease.maxExecutionMs (src/config/index.js); read per call.
+    const result = await repo.leaseImageAds(sql, PENDING, config.ocrLease?.maxExecutionMs);
     // PHP resolves image_url to absolute (no `||` split for YouTube).
     for (const row of result) row.image_url = resolveMediaUrl(row.image_url);
 

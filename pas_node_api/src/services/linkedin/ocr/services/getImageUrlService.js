@@ -23,6 +23,7 @@
  * YouTube OCR migrations; absolute (http/https) values are returned unchanged.
  */
 
+const config = require('../../../../config');
 const { resolveMediaUrl } = require('../../../../insertion/helpers/nasClient');
 const repo = require('../repository');
 
@@ -52,7 +53,8 @@ async function leaseImages(db, log, status) {
     const statusNum = Number(status);
     const withOcr = statusNum === 4;
 
-    const result = await repo.leaseImageAds(sql, statusNum, withOcr);
+    // Time cap: config.json ocrLease.maxExecutionMs (src/config/index.js); read per call.
+    const result = await repo.leaseImageAds(sql, statusNum, withOcr, config.ocrLease?.maxExecutionMs);
 
     if (!result.length) {
       return { code: 400, message: 'No More Image are present', data: [], exe_time: exeTime() };

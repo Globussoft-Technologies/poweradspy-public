@@ -15,6 +15,12 @@
  *   reddit_ad           (join only, for type = 'IMAGE')
  */
 
+const { fitOcrColumns } = require('../../common/helpers/ocrColumnFit');
+const { timeCapHint } = require('../../common/helpers/sqlTimeCap');
+
+// reddit_ad_variants OCR/OCB columns: latin1 varchar(256).
+const OCR_COL_LIMITS = { image_ocr: 256, image_object: 256, image_celebrity: 256, image_brand_logo: 256 };
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 
@@ -23,8 +29,9 @@ const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRow
 /**
  * PHP getImagesUrl(): up to 20 IMAGE-type ads at the given image_url_status,
  * newest first. `withOcr` adds the image_ocr column (status 4 / OCR queue).
+ * `maxExecutionMs` caps the SELECT (not a positive integer → no cap).
  */
-async function getImagesUrl(exec, imageUrlStatus, withOcr) {
+async function getImagesUrl(exec, imageUrlStatus, withOcr, maxExecutionMs) {
   const select = [
     'reddit_ad_variants.reddit_ad_id AS ad_id',
     'reddit_ad_variants.image_url',
@@ -32,7 +39,7 @@ async function getImagesUrl(exec, imageUrlStatus, withOcr) {
   if (withOcr) select.push('reddit_ad_variants.image_ocr');
 
   const sql = `
-    SELECT ${select.join(', ')}
+    SELECT${timeCapHint(maxExecutionMs)} ${select.join(', ')}
       FROM reddit_ad_variants
       LEFT JOIN reddit_ad ON reddit_ad.id = reddit_ad_variants.reddit_ad_id
      WHERE reddit_ad.type = 'IMAGE'
@@ -59,6 +66,9 @@ async function getVariantByAdId(exec, adId) {
 
 /** PHP updateData(): UPDATE reddit_ad_variants ... WHERE reddit_ad_id = ?. Skips undefined keys. */
 async function updateVariant(exec, adId, data) {
+  // A non-latin1 char or an over-long value in an OCR/OCB column fails the whole UPDATE
+  // (STRICT_TRANS_TABLES) → 401 "Image Object not updated". ES still gets the full text.
+  fitOcrColumns(data, OCR_COL_LIMITS);
   const cols = Object.keys(data).filter((k) => data[k] !== undefined);
   if (!cols.length) return 0;
   const sql = `UPDATE reddit_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE reddit_ad_id = ?`;

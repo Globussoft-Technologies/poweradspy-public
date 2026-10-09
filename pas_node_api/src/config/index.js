@@ -212,6 +212,13 @@ const config = {
     esQueueMaxAttempts: validatedInt(fileConfig.domainDateUpdate?.esQueueMaxAttempts, 10),
   },
 
+  // Time cap for the OCR/OCB lease (GET) of every network except Facebook. config.json →
+  // env OCR_LEASE_MAX_EXECUTION_MS → undefined (no cap). No code default: read by each
+  // src/services/<network>/ocr lease service and passed to its repository.
+  ocrLease: {
+    maxExecutionMs: getVal(fileConfig.ocrLease?.maxExecutionMs, 'OCR_LEASE_MAX_EXECUTION_MS', toInt),
+  },
+
   // Load controls for GET /facebook/ocr/getFBImageUrl. Each key: config.json →
   // env FACEBOOK_OCR_* → undefined. No code defaults: read by
   // src/services/facebook/ocr/services/getImageUrlService.js, which runs the lease
@@ -708,6 +715,13 @@ config.reload = () => {
           config.aiMeta.forceRefreshNetworks = toStringArray(newFileConfig.aiMeta.forceRefreshNetworks);
         }
       }
+
+      // OCR/OCB lease time cap (non-Facebook networks), same config.json → env precedence.
+      config.ocrLease.maxExecutionMs = getVal(
+        newFileConfig.ocrLease?.maxExecutionMs,
+        'OCR_LEASE_MAX_EXECUTION_MS',
+        toInt
+      );
 
       // Facebook OCR lease controls. Re-resolved with the same config.json → env
       // precedence as module load, so removing a key falls back to env.

@@ -22,6 +22,13 @@
  * filters only type='IMAGE' + image_url_status).
  */
 
+const { fitOcrColumns } = require('../../common/helpers/ocrColumnFit');
+const { timeCapHint } = require('../../common/helpers/sqlTimeCap');
+
+// linkedin_ad_ocr_ocb_details OCR/OCB columns (prod): utf8mb4 varchar(255) — trim only,
+// no char stripping.
+const OCR_COL_LIMITS = { image_ocr: 255, image_object: 255, image_celebrity: 255, image_brand_logo: 255 };
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 
@@ -29,11 +36,12 @@ const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRow
  * PHP LinkedinAdVariants::getImagesUrl(): up to 20 IMAGE ads at the given
  * image_url_status, newest first. For the OCR queue (status 4) the stored image_ocr is
  * also selected — it lives in linkedin_ad_ocr_ocb_details, so that table is joined.
+ * `maxExecutionMs` caps the SELECT (not a positive integer → no cap).
  */
-async function leaseImageAds(exec, status, withOcr) {
+async function leaseImageAds(exec, status, withOcr, maxExecutionMs) {
   const ocrCol = withOcr ? ', linkedin_ad_ocr_ocb_details.image_ocr' : '';
   const sql = `
-    SELECT linkedin_ad_variants.linkedin_ad_id AS ad_id,
+    SELECT${timeCapHint(maxExecutionMs)} linkedin_ad_variants.linkedin_ad_id AS ad_id,
            linkedin_ad_variants.image_url${ocrCol}
       FROM linkedin_ad_variants
       LEFT JOIN linkedin_ad ON linkedin_ad.id = linkedin_ad_variants.linkedin_ad_id
@@ -86,6 +94,9 @@ async function updateVariant(exec, adId, data) {
 
 /** PHP LinkedinAdOcrOcbDetails::updateData(): UPDATE linkedin_ad_ocr_ocb_details SET ... WHERE linkedin_ad_id = ?. */
 async function updateOcrDetail(exec, adId, data) {
+  // An over-long value fails the whole UPDATE (STRICT_TRANS_TABLES) → 401 "Image Object
+  // not updated". ES still gets the full text.
+  fitOcrColumns(data, OCR_COL_LIMITS, { stripNonLatin1: false });
   const cols = Object.keys(data);
   if (!cols.length) return 0;
   const sql = `UPDATE linkedin_ad_ocr_ocb_details SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE linkedin_ad_id = ?`;

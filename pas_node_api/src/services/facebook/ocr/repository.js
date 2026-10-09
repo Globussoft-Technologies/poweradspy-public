@@ -18,6 +18,11 @@
  *   facebook_ad           (join only — type = 'IMAGE', last_seen / created_date window)
  */
 
+const { fitOcrColumns } = require('../../common/helpers/ocrColumnFit');
+
+// Prod facebook_ad_variants OCR/OCB columns: latin1 varchar(256).
+const OCR_COL_LIMITS = { image_ocr: 256, image_object: 256, image_celebrity: 256, image_brand_logo: 256 };
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 
@@ -133,6 +138,9 @@ async function getVariantByAdId(exec, adId) {
 
 /** PHP updateData(): UPDATE facebook_ad_variants SET ... WHERE facebook_ad_id = ?. */
 async function updateVariant(exec, adId, data) {
+  // A non-latin1 char or an over-long value in an OCR/OCB column fails the whole UPDATE
+  // (STRICT_TRANS_TABLES) → 401 "Image Object not updated". ES still gets the full text.
+  fitOcrColumns(data, OCR_COL_LIMITS);
   const cols = Object.keys(data);
   if (!cols.length) return 0;
   const sql = `UPDATE facebook_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE facebook_ad_id = ?`;

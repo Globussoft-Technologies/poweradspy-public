@@ -15,6 +15,9 @@
  *   pinterest_ad           (join only, for type = 'IMAGE')
  */
 
+const { fitOcrColumns } = require('../../common/helpers/ocrColumnFit');
+const { timeCapHint } = require('../../common/helpers/sqlTimeCap');
+
 const rows = (r) => (Array.isArray(r) ? r : []);
 const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRows : 0);
 
@@ -23,8 +26,9 @@ const affected = (r) => (r && typeof r.affectedRows === 'number' ? r.affectedRow
 /**
  * PHP getImagesUrl(): up to 20 IMAGE-type ads at the given image_url_status,
  * newest first. `withOcr` adds the image_ocr column (status 4 / OCR queue).
+ * `maxExecutionMs` caps the SELECT (not a positive integer → no cap).
  */
-async function getImagesUrl(exec, imageUrlStatus, withOcr) {
+async function getImagesUrl(exec, imageUrlStatus, withOcr, maxExecutionMs) {
   const select = [
     'pinterest_ad_variants.pinterest_ad_id AS ad_id',
     'pinterest_ad_variants.image_url',
@@ -32,7 +36,7 @@ async function getImagesUrl(exec, imageUrlStatus, withOcr) {
   if (withOcr) select.push('pinterest_ad_variants.image_ocr');
 
   const sql = `
-    SELECT ${select.join(', ')}
+    SELECT${timeCapHint(maxExecutionMs)} ${select.join(', ')}
       FROM pinterest_ad_variants
       LEFT JOIN pinterest_ad ON pinterest_ad.id = pinterest_ad_variants.pinterest_ad_id
      WHERE pinterest_ad.type = 'IMAGE'
@@ -59,6 +63,9 @@ async function getVariantByAdId(exec, adId) {
 
 /** PHP updateData(): UPDATE pinterest_ad_variants ... WHERE pinterest_ad_id = ?. Skips undefined keys. */
 async function updateVariant(exec, adId, data) {
+  // OCR/OCB columns are latin1 text: a non-latin1 char fails the whole UPDATE → 401
+  // "Image Object not updated". No length cap (text). ES still gets the full text.
+  fitOcrColumns(data);
   const cols = Object.keys(data).filter((k) => data[k] !== undefined);
   if (!cols.length) return 0;
   const sql = `UPDATE pinterest_ad_variants SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE pinterest_ad_id = ?`;

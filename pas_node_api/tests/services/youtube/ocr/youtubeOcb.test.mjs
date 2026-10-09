@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
+// Lease time cap the services read from config (ocrLease.maxExecutionMs).
+const OCR_CAP = require("../../../../src/config").ocrLease?.maxExecutionMs;
 
 // ── Leaf mocks (set BEFORE requiring the module under test) ───────────────────
 
@@ -69,7 +71,7 @@ describe("youtube/ocr getOcbUrlService.leaseOcb", () => {
     repo.leaseImageAds.mockResolvedValue([{ ad_id: 1, image_url: "/pas/yt/a.webp" }]);
     repo.updateVariantStatusByAdIds.mockResolvedValue(1);
     const out = await leaseOcb({ sql: {} }, log, "1");
-    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 0); // PENDING
+    expect(repo.leaseImageAds).toHaveBeenCalledWith({}, 0, OCR_CAP); // PENDING
     expect(out.code).toBe(200);
     expect(out.data[0].image_url).toBe("https://media.test/pas/yt/a.webp");
     expect(repo.updateVariantStatusByAdIds).toHaveBeenCalledWith({}, [1], 1); // LEASED=1
@@ -160,6 +162,27 @@ describe("youtube/ocr insertUpdateOcbService.insertUpdateOcb", () => {
     const out = await insertUpdateOcb({ sql: {}, elastic: es }, log,
       { ad_id: 7, status: 1, object: "x", celebrity: "", brand_logo: "y", ocr: "" });
     expect(out).toMatchObject({ code: 400, message: "Image Object not updated" });
+  });
+
+  it("ES doc missing (404) after the MySQL save → 200 'not in search index' (no retry loop)", async () => {
+    repo.ocbRowExists.mockResolvedValue(false);
+    repo.insertOcb.mockResolvedValue(true);
+    repo.updateVariantStatus.mockResolvedValue(1);
+    const es = mkEs();
+    es.update.mockRejectedValue(Object.assign(new Error("document_missing_exception"), { meta: { statusCode: 404 } }));
+    const out = await insertUpdateOcb({ sql: {}, elastic: es }, log, { ad_id: 7, status: 4, ocr: "buy" });
+    expect(out).toEqual({ code: 200, message: "Image Data Updated Successfully (ad not in search index)" });
+    expect(repo.insertOcb).toHaveBeenCalled();
+  });
+
+  it("other ES errors still → 500 'DB Exception'", async () => {
+    repo.ocbRowExists.mockResolvedValue(false);
+    repo.insertOcb.mockResolvedValue(true);
+    repo.updateVariantStatus.mockResolvedValue(1);
+    const es = mkEs();
+    es.update.mockRejectedValue(Object.assign(new Error("cluster_block_exception"), { meta: { statusCode: 403 } }));
+    const out = await insertUpdateOcb({ sql: {}, elastic: es }, log, { ad_id: 7, status: 4, ocr: "buy" });
+    expect(out).toMatchObject({ code: 500, messages: "DB Exception" });
   });
 
   it("no sql/elastic → 500 'DB Exception'", async () => {

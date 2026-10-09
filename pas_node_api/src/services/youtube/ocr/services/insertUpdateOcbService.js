@@ -39,6 +39,14 @@ function esResult(res) {
   return res?.result || res?.body?.result || null;
 }
 
+const SAVED_NOT_INDEXED = 'Image Data Updated Successfully (ad not in search index)';
+
+/** ES update by _id on a missing doc → 404 document_missing_exception (any client version). */
+function isEsDocMissing(e) {
+  const status = e?.meta?.statusCode ?? e?.statusCode ?? e?.status;
+  return status === 404 || /document_missing/i.test(String(e?.message || ''));
+}
+
 async function insertUpdateOcb(db, log, body) {
   const sql = db?.sql;
   const elastic = db?.elastic;
@@ -87,12 +95,22 @@ async function insertUpdateOcb(db, log, body) {
       return { code: 400, message: 'Image Data is already updated' };
     }
 
-    const updRes = await elastic.update({
-      index: ES_INDEX,
-      type: ES_DOC_TYPE,
-      id: adId,
-      body: { doc: esData, detect_noop: false },
-    });
+    let updRes;
+    try {
+      updRes = await elastic.update({
+        index: ES_INDEX,
+        type: ES_DOC_TYPE,
+        id: adId,
+        body: { doc: esData, detect_noop: false },
+      });
+    } catch (esErr) {
+      // The result is already saved in MySQL; the ad just has no youtube_ads_data doc.
+      // Reporting 500 made the worker retry, and the retry then hit "already updated"
+      // (400) forever. Report success; the missing search doc is logged.
+      if (!isEsDocMissing(esErr)) throw esErr;
+      log?.error?.('youtube.ocr.insertUpdateOcb ES doc missing; saved to MySQL only', { adId });
+      return { code: 200, message: SAVED_NOT_INDEXED };
+    }
 
     if (esResult(updRes) === 'updated') {
       return { code: 200, message: 'Image Data Updated Successfully' };
