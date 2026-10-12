@@ -342,7 +342,9 @@ const AutocompleteFilter = ({
                 setCatSuggestions([]);
                 setShowSuggestions(false);
               }}
-              className="p-0.5 hover:text-red-400 transition-colors"
+              aria-label="Clear"
+              // pwa-clear-btn: bigger round tap target in the installed phone app (index.css).
+              className="pwa-clear-btn p-0.5 hover:text-red-400 transition-colors"
             >
               <X
                 size={14}
@@ -363,14 +365,16 @@ const AutocompleteFilter = ({
             }}
             aria-label={isSubmitting ? "Stop AI analysis" : "Search"}
             title={isSubmitting ? "Stop AI analysis" : undefined}
+            // pwa-ai-submit: installed phone app restyles the AI submit as a
+            // small filled circle (index.css); no effect on the website.
             className={`transition-all duration-200 ${
               submitIcon
-                ? `mr-1 flex h-9 w-9 items-center justify-center rounded-full border bg-theme-card transition-colors ${
+                ? `${isSubmitting ? "" : "pwa-ai-submit"} mr-1 flex h-9 w-9 items-center justify-center rounded-full border bg-theme-card transition-colors ${
                     isSubmitting
                       ? "border-[#7c3aed] bg-[#7c3aed]/10 text-[#7c3aed] hover:bg-[#7c3aed]/20 dark:text-[#c4b5fd]"
                       : "border-theme-border text-theme-text hover:border-[#7c3aed] hover:bg-[#f7f5ff] hover:text-[#4f46e5] dark:hover:bg-[#30234a] dark:hover:text-[#c4b5fd]"
                   }`
-                : `p-1.5 rounded-md ${
+                : `pwa-kw-submit p-1.5 rounded-md ${
                     searchQuery.trim().length > 0
                       ? "bg-[#335296] text-white shadow-md shadow-[#3759a3]/30 hover:bg-[#3f63b3] animate-pulse"
                       : "text-theme-text-muted hover:text-[#6b99ff]"

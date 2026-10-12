@@ -147,7 +147,7 @@ const BottomNav = ({
       )}
 
       <nav
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-theme-border bg-theme-card"
+        className="pwa-bottom-nav fixed inset-x-0 bottom-0 z-40 border-t border-theme-border bg-theme-card"
         style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
       >
         <div className="flex h-14 items-stretch">

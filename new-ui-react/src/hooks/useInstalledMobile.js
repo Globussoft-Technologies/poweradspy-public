@@ -10,7 +10,12 @@ import { useEffect, useState } from 'react';
 // the `pwa:` Tailwind variant and the index.css phone rules key off.
 export const PWA_MOBILE_CLASS = 'pwa-mobile';
 const PHONE_QUERY = '(max-width: 767px)';
-const STANDALONE_QUERY = '(display-mode: standalone)';
+// fullscreen / minimal-ui: browsers that fall back from "standalone".
+const STANDALONE_QUERIES = [
+  '(display-mode: standalone)',
+  '(display-mode: fullscreen)',
+  '(display-mode: minimal-ui)',
+];
 
 const mq = (query) =>
   typeof window !== 'undefined' &&
@@ -19,7 +24,7 @@ const mq = (query) =>
 
 export const isInstalledMobileNow = () =>
   typeof window !== 'undefined' &&
-  (mq(STANDALONE_QUERY) || window.navigator?.standalone === true) &&
+  (STANDALONE_QUERIES.some(mq) || window.navigator?.standalone === true) &&
   (typeof window.matchMedia === 'function' ? mq(PHONE_QUERY) : window.innerWidth < 768);
 
 export function useInstalledMobile() {
@@ -35,12 +40,12 @@ export function useInstalledMobile() {
     update();
     window.addEventListener('resize', update);
     const standalone = typeof window.matchMedia === 'function'
-      ? window.matchMedia(STANDALONE_QUERY)
-      : null;
-    standalone?.addEventListener?.('change', update);
+      ? STANDALONE_QUERIES.map((q) => window.matchMedia(q))
+      : [];
+    standalone.forEach((m) => m.addEventListener?.('change', update));
     return () => {
       window.removeEventListener('resize', update);
-      standalone?.removeEventListener?.('change', update);
+      standalone.forEach((m) => m.removeEventListener?.('change', update));
     };
   }, []);
 

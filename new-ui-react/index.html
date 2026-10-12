@@ -23,7 +23,9 @@
       // Safari). KEEP IN SYNC with isInstalledMobileNow in hooks/useInstalledMobile.js.
       (function markInstalledMobile() {
         var mq = function (q) { return !!(window.matchMedia && window.matchMedia(q).matches); };
-        var standalone = mq('(display-mode: standalone)') || window.navigator.standalone === true;
+        // fullscreen / minimal-ui: browsers that fall back from "standalone".
+        var standalone = mq('(display-mode: standalone)') || mq('(display-mode: fullscreen)') ||
+          mq('(display-mode: minimal-ui)') || window.navigator.standalone === true;
         var phone = window.matchMedia ? mq('(max-width: 767px)') : window.innerWidth < 768;
         if (standalone && phone) document.documentElement.classList.add('pwa-mobile');
         if (standalone) {

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { SlidersHorizontal, BarChart3, Swords, TrendingUp, Tag, Plus, Minus, X } from "lucide-react";
+import { SlidersHorizontal, BarChart3, Swords, TrendingUp, Tag, Plus, Minus, X, ChevronDown } from "lucide-react";
 
 // How long to wait after the user stops typing/changing a field before
 // actually applying the filter (re-fetching). Long enough that a normal
@@ -9,15 +9,17 @@ import { SlidersHorizontal, BarChart3, Swords, TrendingUp, Tag, Plus, Minus, X }
 // used to have.
 const AUTO_APPLY_DEBOUNCE_MS = 450;
 
+// pwa: installed phone app — inputs stretch to the row instead of a fixed 64px.
 const inputCls =
-  "w-16 rounded-lg border border-theme-border bg-theme-text/[0.04] px-2.5 py-1.5 text-xs text-theme-text transition-all focus:outline-none focus:border-[#6b99ff] focus:bg-transparent focus:ring-2 focus:ring-[#6b99ff]/15 placeholder:text-theme-text-muted";
+  "w-16 pwa:w-full pwa:min-w-0 pwa:py-2 rounded-lg border border-theme-border bg-theme-text/[0.04] px-2.5 py-1.5 text-xs text-theme-text transition-all focus:outline-none focus:border-[#6b99ff] focus:bg-transparent focus:ring-2 focus:ring-[#6b99ff]/15 placeholder:text-theme-text-muted";
 
 // Tooltips use the native `title` attribute rather than a styled popover: the
 // filter bar is inside a scroll container + sticky region, which clipped the
 // old absolutely-positioned tooltip. Native title is never clipped/covered.
+// pwa: label on its own line, then min – max filling the width.
 const NumberRange = ({ icon, label, tip, minVal, maxVal, onMinChange, onMaxChange, onApply }) => (
-  <div className="flex items-center gap-2">
-    <span title={tip || undefined} className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-theme-text-secondary cursor-help">
+  <div className="flex items-center gap-2 pwa:grid pwa:grid-cols-[1fr_auto_1fr] pwa:gap-x-2 pwa:gap-y-1.5">
+    <span title={tip || undefined} className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-theme-text-secondary cursor-help pwa:col-span-3">
       {icon}{label}
     </span>
     <input type="number" placeholder="min" value={minVal ?? ""} onChange={(e) => onMinChange(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onApply()} className={inputCls} />
@@ -35,7 +37,7 @@ const TextInput = ({ icon, placeholder, value, onChange, tip, onApply }) => (
       value={value || ""}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => e.key === "Enter" && onApply()}
-      className="w-28 bg-transparent py-1.5 text-xs text-theme-text focus:outline-none placeholder:text-theme-text-muted"
+      className="w-28 pwa:w-full pwa:min-w-0 pwa:flex-1 pwa:py-2 bg-transparent py-1.5 text-xs text-theme-text focus:outline-none placeholder:text-theme-text-muted"
     />
   </div>
 );
@@ -87,12 +89,31 @@ const KeywordFilterBar = ({ filters, onChange }) => {
   const clear = () => { clearPendingApply(); setDraft({}); onChange({}); };
 
   const hasDraft = Object.values(draft).some((v) => v !== undefined && v !== "");
+  const activeCount = Object.values(filters || {}).filter((v) => v !== undefined && v !== "").length;
+  // Installed phone app: the filters fold behind a "Filters" button (they
+  // filled ~5 rows of the screen); the website always shows them.
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3.5 gap-y-3 rounded-2xl border border-theme-border bg-theme-card px-4 py-3 shadow-sm">
-      <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-theme-text-muted">
+    <div className={`flex flex-wrap items-center gap-x-3.5 gap-y-3 rounded-2xl border border-theme-border bg-theme-card px-4 py-3 shadow-sm pwa:grid pwa:grid-cols-1 pwa:gap-y-3.5 pwa:px-3.5 ${
+      mobileOpen ? "" : "pwa:[&>*:not(.pwa-kf-toggle)]:hidden"
+    }`}>
+      <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-theme-text-muted pwa:hidden">
         <SlidersHorizontal size={13} className="text-[#6b99ff]" /> Filters
       </span>
+      <button
+        type="button"
+        onClick={() => setMobileOpen((o) => !o)}
+        aria-expanded={mobileOpen}
+        className="pwa-kf-toggle hidden pwa:flex w-full items-center gap-2 text-[13px] font-bold text-theme-text"
+      >
+        <SlidersHorizontal size={15} className="text-[#6b99ff]" />
+        Filters
+        {activeCount > 0 && (
+          <span className="rounded-full bg-[#335296] px-2 py-0.5 text-[10px] font-bold text-white">{activeCount}</span>
+        )}
+        <ChevronDown size={16} className={`ml-auto text-theme-text-muted transition-transform duration-200 ${mobileOpen ? "rotate-180" : ""}`} />
+      </button>
       <Divider />
       <NumberRange
         icon={<BarChart3 size={12} className="text-[#6b99ff]" />}
@@ -135,7 +156,7 @@ const KeywordFilterBar = ({ filters, onChange }) => {
         <button
           type="button"
           onClick={clear}
-          className="inline-flex items-center gap-1 rounded-lg border border-theme-border px-3 py-1.5 text-xs font-semibold text-theme-text-secondary transition-colors hover:border-[#6b99ff]/50 hover:text-[#6b99ff]"
+          className="inline-flex items-center gap-1 rounded-lg border border-theme-border px-3 py-1.5 pwa:py-2 pwa:justify-self-start text-xs font-semibold text-theme-text-secondary transition-colors hover:border-[#6b99ff]/50 hover:text-[#6b99ff]"
         >
           <X size={12} /> Clear
         </button>

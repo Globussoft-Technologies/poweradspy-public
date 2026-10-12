@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles } from "lucide-react";
+import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles, RotateCcw } from "lucide-react";
 
 // PRD FR-11 — networks with materially lower crawled ad volume than the rest of
 // the platform today. When every currently-active platform is one of these, the
@@ -1066,6 +1066,27 @@ const AdGrid = ({
   isInstalledMobileRef.current = isInstalledMobile;
   const shouldCollapseHeader = Boolean(isHeaderScrolled && ads.length > 0 && !isInstalledMobile);
 
+  // Installed phone app: AI search can take a while, so show what it is doing
+  // (a rotating step + seconds elapsed), swap the stale cards for shimmer
+  // placeholders, and bring the feed back to the top for the new results.
+  const isPwaAiLoading = Boolean(isInstalledMobile && aiSearchLoading);
+  const [aiElapsed, setAiElapsed] = useState(0);
+  useEffect(() => {
+    if (!isPwaAiLoading) { setAiElapsed(0); return undefined; }
+    scrollRef.current?.scrollTo?.({ top: 0, behavior: "smooth" });
+    const started = Date.now();
+    const timer = setInterval(() => setAiElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [isPwaAiLoading]);
+  const AI_LOADING_STEPS = [
+    "Reading your prompt",
+    "Choosing platforms & filters",
+    "Finding matching ads",
+    "Ranking the best results",
+    "Almost there — big searches take a little longer",
+  ];
+  const aiLoadingStep = AI_LOADING_STEPS[Math.min(Math.floor(aiElapsed / 3), AI_LOADING_STEPS.length - 1)];
+
   // Synchronous lock that serializes page bumps. `loadingMore` is React state,
   // so it only flips to true on the next render — in the gap between issuing a
   // bump and that re-render, fast scroll events (or the auto-bump) would fire
@@ -1177,26 +1198,63 @@ const AdGrid = ({
   }, [ads.length, hasMore, loadingMore, measuredHeights, setPage]);
 
   return (
+    // pwa: in the installed phone app this outer box is the scroller: the
+    // platform row is pinned at its top (CSS sticky — no JS while scrolling),
+    // and the other filters scroll away with the ads.
     <div
-      className="flex-1 overflow-hidden relative bg-fixed flex flex-col"
+      ref={isInstalledMobile ? scrollRef : undefined}
+      className={`flex-1 relative bg-fixed flex flex-col ${
+        isInstalledMobile ? (ads.length > 0 ? "overflow-y-auto overscroll-contain" : "overflow-hidden") : "overflow-hidden"
+      }`}
       data-ai-notice-bounds
     >
+      {isInstalledMobile && (
+        // Pinned platform row (the main filter bar below hides its own copy).
+        <div className="sticky top-0 z-30 bg-theme-bg pb-1.5 pt-2">
+          <div>
+            <AdFilterBar
+              pwaHideControls
+              sdui={sdui}
+              platformOptions={platformOptions}
+              specificPlatforms={specificPlatforms}
+              handleAllClick={handleAllClick}
+              handlePlatformClick={handlePlatformClick}
+              isAllActive={isAllActive}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              sortTabs={sortTabs}
+              onDateChange={onDateChange}
+              isFilterRestricted={isFilterRestricted}
+              onDateRestricted={onDateRestricted}
+              onSortRestricted={onSortRestricted}
+              onAdTypeRestricted={onAdTypeRestricted}
+              onAiFilterRestricted={onAiFilterRestricted}
+              guest={guest}
+            />
+          </div>
+        </div>
+      )}
       <div className="pb-2 pt-3 sm:px-5">
         {aiSearchLoading && (
           <div
-            className="mb-3 flex items-center gap-3 rounded-2xl border border-[#7c3aed]/35 bg-theme-surface px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.16)]"
+            // pwa: installed phone app adds the live step, seconds and a progress bar.
+            className="mb-3 flex items-center gap-3 rounded-2xl border border-[#7c3aed]/35 bg-theme-surface px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.16)] pwa:mx-3 pwa:flex-wrap pwa:gap-y-2.5"
             role="status"
             aria-live="polite"
           >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#7c3aed]/15 text-[#6d28d9] dark:text-[#c4b5fd]">
-              <RefreshCw size={16} className="animate-spin" />
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#7c3aed]/15 text-[#6d28d9] dark:text-[#c4b5fd] pwa:h-10 pwa:w-10">
+              <Sparkles size={16} className="hidden pwa:block animate-pulse" />
+              <RefreshCw size={16} className="animate-spin pwa:hidden" />
             </span>
-            <div className="min-w-0">
-              <p className="text-xs font-bold text-theme-text">
+            <div className="min-w-0 pwa:flex-1">
+              <p className="text-xs font-bold text-theme-text pwa:text-[14px]">
                 AI is analyzing your request
               </p>
-              <p className="mt-0.5 truncate text-[10px] text-theme-text-muted">
+              <p className="mt-0.5 truncate text-[10px] text-theme-text-muted pwa:hidden">
                 Reading your prompt and matching relevant ads
+              </p>
+              <p className="hidden pwa:block mt-0.5 truncate text-[12px] text-theme-text-muted">
+                {aiLoadingStep}… <span className="tabular-nums">{aiElapsed}s</span>
               </p>
             </div>
             <span className="ml-auto flex gap-1" aria-hidden="true">
@@ -1207,6 +1265,9 @@ const AdGrid = ({
                   style={{ animationDelay: `${dot * 180}ms` }}
                 />
               ))}
+            </span>
+            <span className="hidden pwa:block basis-full h-1 overflow-hidden rounded-full bg-[#7c3aed]/15" aria-hidden="true">
+              <span className="block h-full w-1/3 rounded-full bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] animate-[pwaAiProgress_1.4s_ease-in-out_infinite]" />
             </span>
           </div>
         )}
@@ -1234,6 +1295,25 @@ const AdGrid = ({
             }`}
           >
             <AdFilterBar
+              pwaTrailing={isInstalledMobile ? (
+                <>
+                  {SHOW_TOTAL_ADS_COUNT && adsCount !== null && (
+                    <span className="truncate whitespace-nowrap text-[12px] text-theme-text-muted">
+                      <b className="text-[13px] font-bold text-theme-text">{adsCount}</b> ads
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={exportAdsToCSV}
+                    disabled={!ads || ads.length === 0 || exportLoading}
+                    aria-label="Export first 100 ads as CSV"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-theme-border bg-theme-card text-theme-text disabled:opacity-40"
+                  >
+                    {exportLoading ? <RefreshCw size={15} className="animate-spin" /> : <FileDown size={16} />}
+                  </button>
+                </>
+              ) : null}
+              pwaHidePlatforms={isInstalledMobile}
               sdui={sdui}
               platformOptions={platformOptions}
               specificPlatforms={specificPlatforms}
@@ -1291,9 +1371,26 @@ const AdGrid = ({
                     );
                 })}
             </div> */}
-        <div className="flex flex-wrap items-start justify-between mt-3 gap-1 mb-2 px-3">
-          <div className="px-3 py-1 flex flex-wrap items-center gap-2 max-w-full lg:max-w-[40%] xl:max-w-[50%] 2xl:max-w-[55%] max-h-[120px] 2xl:max-h-[150px] overflow-y-auto">
-            {SHOW_TOTAL_ADS_COUNT && adsCount !== null && (
+        {/* pwa: installed phone app — line 1 is "Total Ads" + Export, line 2 the
+            filter chips in one sideways-scrolling row (they used to wrap into
+            three ragged lines under an AI search). */}
+        {/* pwa: count + Export live in the filter row; only the chip row is left here. */}
+        <div className="flex flex-wrap items-start justify-between mt-3 gap-1 mb-2 px-3 pwa:mt-0 pwa:mb-0 pwa:items-center">
+          <div className="px-3 py-1 flex flex-wrap items-center gap-2 max-w-full lg:max-w-[40%] xl:max-w-[50%] 2xl:max-w-[55%] max-h-[120px] 2xl:max-h-[150px] overflow-y-auto pwa:order-last pwa:basis-full pwa:gap-1.5 pwa:flex-nowrap pwa:overflow-x-auto pwa:overflow-y-hidden pwa:max-h-none pwa:px-1 pwa-scrollbar pwa:[&>*]:shrink-0 pwa:empty:hidden">
+            {/* Installed phone app: a clear "Clear all" at the front of the
+                chip row (replaces the header's red ✕ there). Same action as
+                the empty state's "Clear all filters". */}
+            {isInstalledMobile && chipGroups.length > 0 && !guest?.isRestricted && !guest?.isPublicLanding && (
+              <button
+                type="button"
+                onClick={() => { if (onClearAll) onClearAll(); else sdui.clearAll?.(); }}
+                className="inline-flex h-7 items-center gap-1 rounded-full border border-theme-border bg-theme-card px-2.5 text-[11px] font-semibold text-theme-text-secondary shadow-sm transition-transform active:scale-95"
+              >
+                <RotateCcw size={11} strokeWidth={2.4} />
+                Clear all
+              </button>
+            )}
+            {!isInstalledMobile && SHOW_TOTAL_ADS_COUNT && adsCount !== null && (
               <span className="text-[14px] font-bold whitespace-nowrap text-theme-text capitalize tracking-widest mr-1">
                 {isAllActive || specificPlatforms.length > 1 ? "Total Ads" : activePlatformLabel}
                 {`: ${adsCount}`}
@@ -1301,7 +1398,7 @@ const AdGrid = ({
             )}
 
             {isAiSearchResult && chipGroups.length > 0 && (
-              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#8b5cf6]/30 bg-[#8b5cf6]/10 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-theme-text">
+              <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-[#8b5cf6]/30 bg-[#8b5cf6]/10 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-[0.08em] text-theme-text pwa:h-7 pwa:py-0 pwa:px-2 pwa:text-[9.5px]">
                 <Sparkles size={11} className="text-[#8b5cf6]" />
                 Filters AI inferred
               </span>
@@ -1383,7 +1480,7 @@ const AdGrid = ({
             )}
           </div>
 
-          <div className="flex items-center flex-wrap gap-2">
+          <div className="flex items-center flex-wrap gap-2 pwa:hidden">
             <div className={`transition-all duration-300 ease-in-out ${
               shouldCollapseHeader
                 ? "max-h-0 opacity-0 invisible overflow-hidden pointer-events-none"
@@ -1407,8 +1504,8 @@ const AdGrid = ({
           through (empty / error states), so the infinite-scroll handler can't fire
           spurious page-bumps that cause flicker at high browser zoom levels. */}
       <div
-        className={`px-5 pb-5 flex-1 ${ads.length > 0 ? "overflow-y-auto" : "overflow-hidden"}`}
-        ref={scrollRef}
+        className={`px-5 pb-5 flex-1 ${isInstalledMobile ? "" : ads.length > 0 ? "overflow-y-auto" : "overflow-hidden"}`}
+        ref={isInstalledMobile ? undefined : scrollRef}
       >
         {/* Error state */}
         {error && !aiSearchLoading && !loadingMore && (
@@ -1600,8 +1697,9 @@ const AdGrid = ({
           </div>
         )} */}
 
-        {/* Masonry Grid */}
-        {ads.length > 0 && (
+        {/* Masonry Grid — in the installed phone app the stale cards give way to
+            shimmer placeholders while an AI search runs. */}
+        {ads.length > 0 && !isPwaAiLoading && (
           <Masonry
             key={`${activePlatforms.join(",")}-${activeTab}`}
             items={masonryItems}
@@ -1653,9 +1751,9 @@ const AdGrid = ({
         )}
 
         {/* Skeleton loader — shown when loading with no existing ads */}
-        {loadingMore && ads.length === 0 && (
+        {((loadingMore && ads.length === 0) || isPwaAiLoading) && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
-            {Array.from({ length: 10 }).map((_, i) => (
+            {Array.from({ length: isPwaAiLoading ? 3 : 10 }).map((_, i) => (
               <div
                 key={`skeleton-${i}`}
                 className="flex flex-col bg-theme-card rounded-xl border border-theme-border overflow-hidden"
@@ -1737,7 +1835,8 @@ const AdGrid = ({
               scrollRef.current.scrollTo({ top: 0, behavior: "smooth" });
             }
           }}
-          className={`absolute bottom-24 right-6 w-[55px] h-[55px] flex items-center justify-center rounded-full bg-white border-theme-border text-[#335296] shadow-lg hover:bg-theme-surface/80 hover:border-theme-text-muted transition-all duration-300 z-40 ${
+          // pwa: smaller and tucked into the corner on phones, so it covers less of a card.
+          className={`absolute bottom-24 right-6 w-[55px] h-[55px] pwa:fixed pwa:bottom-[calc(68px+env(safe-area-inset-bottom))] pwa:right-3 pwa:w-11 pwa:h-11 pwa:bg-white/90 flex items-center justify-center rounded-full bg-white border-theme-border text-[#335296] shadow-lg hover:bg-theme-surface/80 hover:border-theme-text-muted transition-all duration-300 z-40 ${
             showScrollTop
               ? "opacity-100 visible translate-y-0"
               : "opacity-0 invisible translate-y-4"

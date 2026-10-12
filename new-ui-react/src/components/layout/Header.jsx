@@ -21,6 +21,8 @@ import {
   Globe,
   ArrowLeftRight,
   Sparkles,
+  Loader2,
+  ArrowUpRight,
   Plus,
   Search,
 } from "lucide-react";
@@ -29,7 +31,8 @@ import { createDashboardShare, buildSearchPayload, trackEvent } from "../../serv
 import AutocompleteFilter from "../filters/AutocompleteFilter";
 import { useTheme, THEMES } from "../../hooks/useTheme";
 import { isInstalledMobileNow } from "../../hooks/useInstalledMobile";
-import { useAuth } from "../../hooks/useAuth";
+import { InstallIconButton } from "./InstallAppPrompt";
+import { useAuth, disableEnvAuthFallback } from "../../hooks/useAuth";
 import powerAdSpyLogo from "../../assets/poweradspy-logo.webp";
 import whatsappLogo from "../../assets/whatsapp.png";
 import PlatformTab from "../shared/PlatformTab";
@@ -526,12 +529,25 @@ const Header = ({
   };
   // In the installed phone app the header keeps logo/bell/profile visible and
   // search opens from its icon, instead of the overlay covering them on load.
-  // Set when the installed-app search pill is tapped: the pill's vertical centre,
-  // so the expanded bar opens in place (null = classic full-screen overlay).
+  // Set when the installed-app search bar is tapped: the bar's top edge, so the
+  // open search (input + mode chips) drops in right where the bar was
+  // (null = classic full-screen overlay).
   const [pwaSearchAnchor, setPwaSearchAnchor] = useState(null);
   const [isSearchOpenMobile, setIsSearchOpenMobile] = useState(
     window.innerWidth < 768 && !isInstalledMobileNow(),
   );
+  const isPwaSearchOpen = isSearchOpenMobile && !!pwaSearchAnchor;
+  const closeMobileSearch = () => {
+    // Installed app: drop focus too, so the phone keyboard closes with it.
+    if (pwaSearchAnchor) document.activeElement?.blur?.();
+    setIsSearchOpenMobile(false);
+    setPwaSearchAnchor(null);
+  };
+  // index.css hides the installed app's bottom nav while search is open.
+  useEffect(() => {
+    document.body.classList.toggle("pwa-search-open", isPwaSearchOpen);
+    return () => document.body.classList.remove("pwa-search-open");
+  }, [isPwaSearchOpen]);
   const searchTypeRef = useRef(null);
 
   useEffect(() => {
@@ -681,6 +697,8 @@ const Header = ({
     if (setSearchQuery) setSearchQuery('');
 
     setSearchTypeOpen(false);
+    // Installed app: a picked category runs the search, so close it like a submit.
+    if (pwaSearchAnchor) closeMobileSearch();
   };
 
   // Local UI state for AdFilterBar dropdowns in the header
@@ -716,24 +734,25 @@ const Header = ({
         <img
           src={powerAdSpyLogo}
           alt="PowerAdSpy"
-          className="h-8 w-auto max-w-[126px] cursor-pointer sm:h-9 sm:max-w-none 2xl:h-12"
+          className="pwa-logo h-8 w-auto max-w-[126px] cursor-pointer sm:h-9 sm:max-w-none 2xl:h-12"
         />
       </div>
 
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && isSearchOpenMobile && (
         <div
           className="fixed inset-0 bg-[#0a0a0a] backdrop-blur-sm z-40 md:hidden"
-          // In-place expansion: dim the page instead of hiding it. Inline so the
-          // light-theme override that repaints bg-[#0a0a0a] can't win.
-          style={pwaSearchAnchor ? { backgroundColor: "rgba(15, 23, 42, 0.35)" } : undefined}
-          onClick={() => { setIsSearchOpenMobile(false); setPwaSearchAnchor(null); }}
+          // Installed app: a plain white (theme card colour) page behind the
+          // search panel — no dimmed feed showing through; tapping it closes.
+          // Inline so the light-theme override that repaints bg-[#0a0a0a] can't win.
+          style={pwaSearchAnchor ? { backgroundColor: "var(--color-card)" } : undefined}
+          onClick={closeMobileSearch}
         />
       )}
 
       {/* Center the absolute search controls against the full header, not just
           the remaining flex space between the logo and actions. */}
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
-        <div className="mx-1 flex h-full pwa:h-12 min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
+        <div className="mx-1 flex h-full pwa:h-12 pwa:mx-0 min-w-0 flex-1 items-center sm:mx-2 xl:mx-4">
           {/* Desktop Search bar & Mobile Search Overlay */}
           {/* Keep the bar viewport-centered while reserving enough space for
               the logo and action group at compact breakpoints. */}
@@ -750,22 +769,25 @@ const Header = ({
               ${
                 isSearchOpenMobile
                   ? pwaSearchAnchor
-                    // Installed phone app: expand in place — a bar centred on the
-                    // small search pill it was opened from, growing out to full width.
-                    ? "fixed inset-x-0 z-50 flex items-center px-3 gap-2 pointer-events-auto bg-transparent animate-[pwaSearchExpand_220ms_ease-out]"
+                    // Installed phone app: a clean search panel across the top —
+                    // line 1 is ← and the full-width field, line 2 the search-mode
+                    // chips — with the ads still visible (lightly dimmed) below.
+                    // `!fixed`: the base `absolute` above otherwise wins (it comes
+                    // later in Tailwind's CSS) and pins this inside the header.
+                    ? "!fixed !inset-x-0 !top-0 !bottom-auto z-50 flex flex-wrap items-center px-3 pb-3 pt-[calc(env(safe-area-inset-top)+10px)] gap-x-2 gap-y-3 pointer-events-auto bg-theme-card animate-[pwaSearchOpen_200ms_ease-out]"
                     : "fixed inset-0 z-50 bg-theme-bg/98 backdrop-blur-xl flex items-center px-4 gap-3 pointer-events-auto"
                   : "absolute items-center hidden md:flex gap-2"
               }
               ${isScrolled ? "xl:opacity-0 xl:invisible xl:-translate-y-6 xl:pointer-events-none opacity-100 visible translate-y-0" : "opacity-100 visible translate-y-0"}
             `}
-            style={isSearchOpenMobile && pwaSearchAnchor
-              ? { top: pwaSearchAnchor.center - 26, height: 52, bottom: "auto" }
-              : undefined}
           >
             {isSearchOpenMobile && (
               <button
-                onClick={() => setIsSearchOpenMobile(false)}
-                className="p-2 text-theme-text-muted hover:text-theme-text transition-colors pwa:rounded-full pwa:bg-theme-card pwa:p-1.5"
+                onClick={closeMobileSearch}
+                aria-label={t("back", "Back")}
+                // pwa: sits inside the left end of the full-width field, so the
+                // field, the mode chips and the prompt cards share one left edge.
+                className="p-2 text-theme-text-muted hover:text-theme-text transition-colors pwa:absolute pwa:left-3.5 pwa:top-[calc(env(safe-area-inset-top)+10px)] pwa:z-10 pwa:flex pwa:h-11 pwa:w-10 pwa:items-center pwa:justify-center pwa:rounded-full pwa:p-0 pwa:text-theme-text pwa:active:bg-theme-text/[0.06]"
               >
                 <ArrowLeft size={20} />
               </button>
@@ -773,10 +795,10 @@ const Header = ({
 
             <div
               ref={searchBarBoxRef}
-              className={`relative flex flex-1 items-center gap-0 transition-all ${
+              className={`relative flex flex-1 items-center gap-0 transition-all pwa:min-w-0 pwa:shadow-sm ${
                 aiMode
-                  ? "h-[50px] pwa:h-[44px] rounded-[26px] bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] p-0.5"
-                  : aiSearchIdleClass
+                  ? "h-[50px] pwa:h-[44px] rounded-[26px] bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] p-0.5 pwa:p-[1.5px]"
+                  : `${aiSearchIdleClass} pwa:h-[44px]`
               }`}
             >
               {/* Legacy normal-mode selector replaced by the unified + menu.
@@ -826,9 +848,11 @@ const Header = ({
 
               */}
 
+              {/* pwa: hidden in the installed app, where the mode chips under
+                  the field replace this "+" menu. */}
               {searchTypeDoc?.visible !== false && searchTypeOptions.length > 0 && (
                 <div
-                  className="relative flex h-full shrink-0 items-center rounded-l-[24px] bg-theme-card"
+                  className="relative flex h-full shrink-0 items-center rounded-l-[24px] bg-theme-card pwa:hidden"
                   ref={searchTypeRef}
                   data-search-type-ref
                 >
@@ -899,14 +923,18 @@ const Header = ({
                 </div>
               )}
 
-              <div className={`flex-1 ${aiMode ? "h-full min-w-0 overflow-hidden rounded-r-[24px] bg-theme-card" : ""}`}>
+              {/* pwa:pl-8 leaves room for the ← that sits inside the field's left end. */}
+              <div className={`flex-1 pwa:min-w-0 pwa:pl-8 ${aiMode ? "h-full min-w-0 overflow-hidden rounded-r-[24px] bg-theme-card pwa:rounded-l-[24px]" : ""}`}>
                 <AutocompleteFilter
                   placeholder={
                     aiMode
-                      ? t(
-                          "ai_search_placeholder",
-                          "Describe what you're looking for — e.g. Facebook video ads for weight loss in the US"
-                        )
+                      // Installed app: a short prompt that fits the phone field.
+                      ? pwaSearchAnchor
+                        ? t("ai_search_placeholder_short", "Ask AI anything…")
+                        : t(
+                            "ai_search_placeholder",
+                            "Describe what you're looking for — e.g. Facebook video ads for weight loss in the US"
+                          )
                       : normalSearchPlaceholder
                   }
                   value={localQuery}
@@ -946,6 +974,10 @@ const Header = ({
                       if (query !== val) setLocalQuery(query);
                       onSearch(query, localSearchIn);
                     }
+                    // Installed app: close the search once it's submitted, so the
+                    // results (and the "AI is analyzing" card) aren't left dimmed
+                    // behind it.
+                    if (pwaSearchAnchor && String(val || "").trim()) closeMobileSearch();
                   }}
                   // AI mode takes a free-form prompt — keyword/category suggestions
                   // don't apply, so suppress them.
@@ -979,19 +1011,23 @@ const Header = ({
 
               {aiMode && showAiPrompts && !searchTypeOpen && !aiSearchLoading && !localQuery.trim() && (
                 <div
-                  className="absolute left-0 right-0 top-full z-[80] mt-3 rounded-2xl border border-[#8b5cf6]/30 bg-theme-surface p-3 shadow-[0_18px_45px_rgba(0,0,0,0.22)] animate-in fade-in slide-in-from-top-2 duration-200"
+                  // pwa: below the mode chips, spanning the panel edge to edge
+                  // (the field itself starts 12px in), joined to the search panel
+                  // as prompt cards.
+                  className="absolute left-0 right-0 top-full z-[80] mt-3 pwa:mt-[56px] pwa:-left-3 pwa:-right-3 pwa:rounded-none pwa:border-0 pwa:border-t pwa:border-theme-border pwa:bg-theme-card pwa:px-3 pwa:pb-4 pwa:pt-3.5 pwa:shadow-none rounded-2xl border border-[#8b5cf6]/30 bg-theme-surface p-3 shadow-[0_18px_45px_rgba(0,0,0,0.22)] animate-in fade-in slide-in-from-top-2 duration-200"
                   role="dialog"
                   aria-label="AI search prompts"
                 >
-                  <div className="mb-2 flex items-center justify-between gap-3 px-1">
-                    <span className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8b5cf6]">
+                  <div className="mb-2 flex items-center justify-between gap-3 px-1 pwa:mb-2.5">
+                    <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8b5cf6] pwa:text-[11px]">
+                      <Sparkles size={12} className="hidden pwa:block" />
                       Try asking
                     </span>
-                    <span className="text-[10px] text-theme-text-muted">
+                    <span className="text-[10px] text-theme-text-muted pwa:hidden">
                       Describe the ads you want to explore
                     </span>
                   </div>
-                  <div className="flex flex-col gap-1.5">
+                  <div className="flex flex-col gap-1.5 pwa:gap-2">
                     {AI_SEARCH_PROMPTS.map((prompt) => (
                       <button
                         key={prompt}
@@ -1000,14 +1036,20 @@ const Header = ({
                           setShowAiPrompts(false);
                           setLocalQuery(prompt);
                           onAiSearch?.(prompt);
+                          if (pwaSearchAnchor) closeMobileSearch();
                         }}
-                        className="group flex min-h-9 min-w-0 items-center gap-2 rounded-xl border border-theme-border bg-theme-text/[0.025] px-3 py-2 text-left text-[11px] font-medium text-theme-text transition-colors hover:border-[#8b5cf6]/45 hover:bg-[#8b5cf6]/10"
+                        // pwa: a soft card per prompt — tinted ✦ badge, text, and a
+                        // "go" arrow (tapping runs the search right away).
+                        className="group flex min-h-9 min-w-0 items-center gap-2 rounded-xl border border-theme-border bg-theme-text/[0.025] px-3 py-2 text-left text-[11px] pwa:min-h-[52px] pwa:gap-3 pwa:rounded-2xl pwa:border-theme-border/70 pwa:bg-theme-card pwa:pl-2.5 pwa:pr-3 pwa:text-[14px] pwa:shadow-[0_1px_2px_rgba(15,23,42,0.05)] pwa:active:scale-[0.98] font-medium text-theme-text transition-colors hover:border-[#8b5cf6]/45 hover:bg-[#8b5cf6]/10"
                       >
-                        <Sparkles
-                          size={13}
-                          className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
-                        />
-                        <span className="min-w-0 truncate whitespace-nowrap">{prompt}</span>
+                        <span className="contents pwa:flex pwa:h-8 pwa:w-8 pwa:shrink-0 pwa:items-center pwa:justify-center pwa:rounded-full pwa:bg-[#8b5cf6]/10">
+                          <Sparkles
+                            size={13}
+                            className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
+                          />
+                        </span>
+                        <span className="min-w-0 truncate whitespace-nowrap pwa:flex-1 pwa:whitespace-normal pwa:leading-snug pwa:line-clamp-2">{prompt}</span>
+                        <ArrowUpRight size={16} className="hidden pwa:block shrink-0 text-theme-text-muted" />
                       </button>
                     ))}
                   </div>
@@ -1067,7 +1109,8 @@ const Header = ({
 
             {!aiMode && localQuery.trim().length > 0 && preciseSearchAllowed && (
               <label
-                className="flex items-center gap-1.5 cursor-pointer select-none shrink-0"
+                // pwa: the installed app shows this as an "Exact" chip instead.
+                className="flex items-center gap-1.5 cursor-pointer select-none shrink-0 pwa:hidden"
                 title={t("search_precisely_tooltip")}
               >
                 <input
@@ -1085,10 +1128,78 @@ const Header = ({
             {isSearchOpenMobile && (
               <button
                 onClick={() => setIsSearchOpenMobile(false)}
-                className="p-2 text-theme-text-muted hover:text-theme-text transition-colors pwa:rounded-full pwa:bg-theme-card pwa:p-1.5"
+                // pwa: hidden — ← already closes it, and the field has its own clear ✕.
+                className="p-2 text-theme-text-muted hover:text-theme-text transition-colors pwa:hidden"
               >
                 <X size={20} />
               </button>
+            )}
+
+            {/* Installed phone app only: search-mode chips on the second line.
+                preventDefault on mousedown keeps focus (and the keyboard) in
+                the field while switching modes. */}
+            {isPwaSearchOpen && (
+              <div
+                className="hidden pwa:flex basis-full min-w-0 items-center gap-1.5 overflow-x-auto hide-scrollbar pb-0.5"
+                role="toolbar"
+                aria-label={t("search_mode", "Search mode")}
+              >
+                {aiSearchAvailable && (
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => handleSearchModeSelect("ai")}
+                    aria-pressed={aiMode}
+                    className={`flex h-8 shrink-0 items-center gap-1 rounded-full px-3 text-[12px] font-semibold shadow-sm transition-colors active:scale-95 ${
+                      aiMode
+                        ? "bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] text-white"
+                        : "border border-[#8b5cf6]/40 bg-theme-card text-[#7c3aed]"
+                    }`}
+                  >
+                    <Sparkles size={13} />
+                    {t("ai_search_mode_label", "AI search")}
+                  </button>
+                )}
+                {searchTypeDoc?.visible !== false && searchTypeOptions.map((opt) => {
+                  const selected = !aiMode && localSearchIn === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => handleSearchModeSelect(opt.value)}
+                      aria-pressed={selected}
+                      className={`notranslate flex h-8 shrink-0 items-center rounded-full border px-3 text-[12px] font-semibold shadow-sm transition-colors active:scale-95 ${
+                        selected
+                          ? "border-[#3759a3] bg-[#335296] text-white"
+                          : "border-theme-border bg-theme-card text-theme-text"
+                      }`}
+                    >
+                      {t(opt.value, opt.label) || opt.label}
+                    </button>
+                  );
+                })}
+                {!aiMode && localQuery.trim().length > 0 && preciseSearchAllowed && (() => {
+                  const exact = preciseSearch || /^".+"$/.test(localQuery.trim());
+                  return (
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => handleExactSearchToggle(!exact)}
+                      aria-pressed={exact}
+                      title={t("search_precisely_tooltip")}
+                      className={`notranslate flex h-8 shrink-0 items-center gap-1 rounded-full border px-3 text-[12px] font-semibold shadow-sm transition-colors active:scale-95 ${
+                        exact
+                          ? "border-[#3759a3] bg-[#335296]/10 text-[#3759a3]"
+                          : "border-theme-border bg-theme-card text-theme-text-muted"
+                      }`}
+                    >
+                      {exact && <Check size={12} />}
+                      {t("search_precisely")}
+                    </button>
+                  );
+                })()}
+              </div>
             )}
           </div>
 
@@ -1149,8 +1260,13 @@ const Header = ({
         )}
         {/* Keep the clear action compact while the header is space-constrained;
             wider layouts regain the roomier button for readability. */}
+        {/* Phone browsers only (hidden on desktop and in the installed app):
+            download icon that installs the app or shows how to. */}
+        <InstallIconButton />
         {isAdsLibraryPage && !guest?.isRestricted && (
-          <div className="w-8 shrink-0 sm:w-[96px] md:w-[100px] lg:w-[104px] xl:w-[108px] 2xl:w-[112px]">
+          // pwa: not in the installed app's top row — there "Clear all" sits in
+          // the filter-chip row and the search bar has its own ✕.
+          <div className="w-8 pwa:hidden shrink-0 sm:w-[96px] md:w-[100px] lg:w-[104px] xl:w-[108px] 2xl:w-[112px]">
             {showClearFilters && (
               <button
                 onClick={() => {
@@ -1221,7 +1337,7 @@ const Header = ({
             <button
               id="notification-bell"
               onClick={() => setNotifOpen((prev) => !prev)}
-              className="relative sm:w-7 sm:h-7 2xl:w-9 2xl:h-9 flex items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-theme-text/[0.08] transition-all"
+              className="pwa-action relative sm:w-7 sm:h-7 2xl:w-9 2xl:h-9 flex items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-theme-text/[0.08] transition-all"
               title="Notifications"
             >
               <Bell size={18} />
@@ -1247,7 +1363,7 @@ const Header = ({
           <button
             onClick={() => setLangOpen((prev) => !prev)}
             title={t("language")}
-            className="flex items-center gap-0.5 sm:w-auto h-7 2xl:h-9 px-1.5 justify-center rounded-lg text-white/70 hover:text-white hover:bg-theme-text/[0.08] transition-all"
+            className="pwa-action flex items-center gap-0.5 sm:w-auto h-7 2xl:h-9 px-1.5 justify-center rounded-lg text-white/70 hover:text-white hover:bg-theme-text/[0.08] transition-all"
           >
             <Globe size={16} />
             <ChevronDown size={10} />
@@ -1284,7 +1400,7 @@ const Header = ({
             --color-* vars updates in lockstep. */}
         <AnimatedThemeToggler
           title={t("toggle_theme", "Toggle theme")}
-          className="hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg text-theme-text-muted transition-all hover:bg-theme-text/[0.08] hover:text-theme-text sm:flex pwa:flex [&_svg]:h-4 [&_svg]:w-4 2xl:h-9 2xl:w-9 2xl:[&_svg]:h-[18px] 2xl:[&_svg]:w-[18px]"
+          className="pwa-action hidden h-7 w-7 shrink-0 items-center justify-center rounded-lg text-theme-text-muted transition-all hover:bg-theme-text/[0.08] hover:text-theme-text sm:flex pwa:flex [&_svg]:h-4 [&_svg]:w-4 2xl:h-9 2xl:w-9 2xl:[&_svg]:h-[18px] 2xl:[&_svg]:w-[18px]"
         />
 
         {/* Fullscreen toggle — currently hidden via `hidden` class; the
@@ -1304,7 +1420,7 @@ const Header = ({
               since there is no hover. The website keeps hover-only behaviour. */}
           <div
             tabIndex={isInstalledMobileNow() ? 0 : undefined}
-            className="pwa:outline-none w-6 h-6 2xl:w-8 2xl:h-8 rounded-lg bg-[#335296] flex items-center justify-center text-[11px] 2xl:text-sm font-black cursor-pointer hover:bg-[#3762c1] transition-colors text-white"
+            className="pwa:outline-none w-6 h-6 pwa:w-8 pwa:h-8 pwa:text-[13px] 2xl:w-8 2xl:h-8 rounded-lg bg-[#335296] flex items-center justify-center text-[11px] 2xl:text-sm font-black cursor-pointer hover:bg-[#3762c1] transition-colors text-white"
             title={isGuestMode ? "Guest" : (user?.name || user?.email || "")}
           >
             {isLanding || isGuestMode
@@ -1427,7 +1543,20 @@ const Header = ({
             {!isLanding && !isGuestMode && (
               <a
                 href="https://app-dev.poweradspy.com/amember/logout"
-                onClick={logout}
+                onClick={(e) => {
+                  logout();
+                  // Installed phone app: the aMember link is outside the app's
+                  // scope, so iOS/Android open it in a separate browser sheet
+                  // and the app itself stays on the dashboard. And because
+                  // logout() wipes localStorage (including the env-token lock),
+                  // the next launch silently signs back in with the env token.
+                  // Re-lock the env token and navigate the app window itself.
+                  if (isInstalledMobileNow()) {
+                    e.preventDefault();
+                    disableEnvAuthFallback();
+                    window.location.replace(e.currentTarget.href);
+                  }
+                }}
                 className="group w-full flex items-center gap-2 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-500 rounded-b-lg transition-all duration-300"
               >
                 <LogOut size={14} className="group-hover:scale-110 transition-transform" />
@@ -1476,29 +1605,33 @@ const Header = ({
         )}
       </div>
 
-      {/* Installed phone app only: second header row with a compact search pill
-          (purple in AI mode, plain otherwise). Tapping it expands the search bar
-          in place. The website keeps its search icon + full-screen overlay. */}
+      {/* Installed phone app only: second header row with a full-width search
+          bar (purple in AI mode, plain otherwise), like Flipkart/Myntra. Tapping
+          it opens the search field + mode chips right there. The website keeps
+          its search icon + full-screen overlay. */}
       {activePage !== "projects" && activePage !== "intelligence" && activePage !== "keywords-explorer" && (
+        // Wrapper so the clear ✕ can sit beside (not inside) the bar's button.
+        <div className={`relative hidden pwa:block w-full basis-full ${
+          // The open search sits exactly on top of this bar; hide the bar under it.
+          isPwaSearchOpen ? "invisible" : ""
+        }`}>
         <button
           type="button"
           onClick={(e) => {
-            // Installed phone app: remember where the pill is so the search bar
-            // expands right there instead of jumping to the top of the screen.
+            // Installed phone app: remember where the bar is so the open search
+            // drops in right there instead of jumping to the top of the screen.
             const r = e.currentTarget.getBoundingClientRect();
             const inPlace = isInstalledMobileNow();
             // Render the overlay synchronously, then focus its input inside this
             // same tap so the phone keyboard opens right away.
             flushSync(() => {
-              setPwaSearchAnchor(inPlace ? { center: r.top + r.height / 2 } : null);
+              setPwaSearchAnchor(inPlace ? { top: r.top } : null);
               setIsSearchOpenMobile(true);
             });
             document.querySelector("header input")?.focus();
           }}
           aria-label={t("search_placeholder", "Search")}
-          // pwa: same spot, centred, as a smaller pill (shorter, ~2/3 width);
-          // tapping it expands in place to full width.
-          className={`hidden pwa:flex h-8 w-full basis-full items-stretch rounded-full max-w-[68%] mx-auto ${
+          className={`flex h-[44px] w-full items-stretch rounded-full shadow-sm transition-transform active:scale-[0.99] ${
             aiMode
               ? "bg-gradient-to-r from-[#6366f1] via-[#a855f7] to-[#4f46e5] p-0.5"
               : theme === "light"
@@ -1506,14 +1639,14 @@ const Header = ({
                 : "border border-theme-border"
           }`}
         >
-          <span className="flex min-w-0 flex-1 items-center gap-2 pwa:gap-1.5 rounded-full bg-theme-card px-3 pwa:px-2.5">
-            <Plus
-              size={16}
-              strokeWidth={2.2}
-              className={`shrink-0 ${aiMode ? "text-[#7c3aed]" : "text-theme-text"}`}
-            />
+          <span className={`flex min-w-0 flex-1 items-center gap-2.5 rounded-full bg-theme-card pl-4 ${localQuery ? "pr-12" : "pr-3"}`}>
+            {aiMode ? (
+              <Sparkles size={18} className="shrink-0 text-[#7c3aed]" />
+            ) : (
+              <Search size={18} strokeWidth={2.2} className="shrink-0 text-theme-text-muted" />
+            )}
             <span
-              className={`min-w-0 flex-1 truncate text-left text-xs pwa:text-[11px] ${
+              className={`min-w-0 flex-1 truncate text-left text-[14px] ${
                 localQuery ? "text-theme-text" : "text-theme-text-muted"
               }`}
             >
@@ -1525,9 +1658,37 @@ const Header = ({
                     )
                   : normalSearchPlaceholder)}
             </span>
-            {aiMode && <ArrowUp size={16} className="shrink-0 text-theme-text" />}
+            {aiMode && !localQuery && (aiSearchLoading
+              ? <Loader2 size={17} className="shrink-0 animate-spin text-[#7c3aed]" aria-label="AI is searching" />
+              : <ArrowUp size={16} className="shrink-0 text-theme-text" />)}
           </span>
         </button>
+        {/* Clear the current search right from the bar (no need to open it). */}
+        {localQuery && (
+          aiSearchLoading ? (
+            <span className="absolute right-3 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center" aria-label="AI is searching">
+              <Loader2 size={17} className="animate-spin text-[#7c3aed]" />
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setLocalQuery("");
+                if (aiMode) {
+                  onClearAiSearch?.();
+                  return;
+                }
+                endProjectSearch();
+                onSearch?.("", localSearchIn);
+              }}
+              aria-label={t("clear_search", "Clear search")}
+              className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full bg-theme-text/[0.07] text-theme-text-secondary transition-transform active:scale-90"
+            >
+              <X size={16} strokeWidth={2.4} />
+            </button>
+          )
+        )}
+        </div>
       )}
     </header>
   );

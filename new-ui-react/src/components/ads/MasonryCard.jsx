@@ -637,10 +637,12 @@ const MasonryCard = ({
     <div
       onClick={() => onClick?.(ad)}
       className={`group relative h-full cursor-pointer rounded-2xl overflow-hidden hover:shadow-2xl hover:-translate-y-0.5 transition-all duration-300 bg-[#0f111a] border ${
+        // pwa: the same thin border as the website, in a solid violet — the
+        // 70% tint read as plain grey on phones.
         hasAiMeta
           ? isLight
-            ? "border-violet-300/70 shadow-[0_0_0_2px_rgba(109,40,217,0.12),0_0_20px_rgba(109,40,217,0.18),0_10px_20px_-8px_rgba(15,23,42,0.20)] hover:border-slate-300 hover:shadow-2xl"
-            : "border-violet-400/60 shadow-[0_0_0_2px_rgba(139,92,246,0.14),0_0_22px_rgba(109,40,217,0.24),0_12px_24px_-10px_rgba(0,0,0,0.55)] hover:border-white/25 hover:shadow-2xl"
+            ? "border-violet-300/70 shadow-[0_0_0_2px_rgba(109,40,217,0.12),0_0_20px_rgba(109,40,217,0.18),0_10px_20px_-8px_rgba(15,23,42,0.20)] hover:border-slate-300 hover:shadow-2xl pwa:border-violet-500 pwa:hover:border-violet-500"
+            : "border-violet-400/60 shadow-[0_0_0_2px_rgba(139,92,246,0.14),0_0_22px_rgba(109,40,217,0.24),0_12px_24px_-10px_rgba(0,0,0,0.55)] hover:border-white/25 hover:shadow-2xl pwa:border-violet-500 pwa:hover:border-violet-500"
           : "border-white/10 shadow-lg hover:border-white/25"
       }`}
     >
@@ -668,7 +670,9 @@ const MasonryCard = ({
                   src={currentImg}
                   alt=""
                   aria-hidden="true"
-                  className="absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-2xl"
+                  // pwa: no blurred backdrop in the installed phone app — it read
+                  // as a smeared/blurry card and re-blurred on every scroll frame.
+                  className="absolute inset-0 h-full w-full scale-110 object-cover opacity-40 blur-2xl pwa:hidden"
                 />
                 <img
                   key={`${currentImg}_${imgRetryCount}`}
@@ -978,12 +982,14 @@ const MasonryCard = ({
           )}
 
           {/* Keep this mark over the media so the card body never reflows, and
-              fade it out when the hover action strip needs the same corner. */}
+              fade it out when the hover action strip needs the same corner.
+              pwa: always shown in the installed phone app (no hover there); the
+              action strip below moves left of it instead. */}
           {hasAiMeta && (
             <div
               aria-label="AI analysed result"
               title="AI analysed result"
-              className="absolute right-0 top-0 z-30 h-12 w-12 overflow-hidden pointer-events-none transition-opacity duration-200 group-hover:opacity-0 pwa:opacity-0"
+              className="absolute right-0 top-0 z-30 h-12 w-12 overflow-hidden pointer-events-none transition-opacity duration-200 group-hover:opacity-0 pwa:opacity-100 pwa:group-hover:opacity-100"
             >
               <div
                 className={`absolute inset-0 shadow-lg ${
@@ -1020,9 +1026,11 @@ const MasonryCard = ({
               Stays visible while the hide menu is open so the user can click
               the EyeOff icon again to dismiss without losing track of it.
               Always visible in the installed phone app (pwa:), which has no
-              hover; the AI corner mark above yields the corner to it there. */}
+              hover; on AI-analysed cards it sits left of the AI corner mark there. */}
           <div
             className={`absolute top-2.5 right-2.5 z-30 flex items-center gap-1.5 transition-opacity duration-200 ${
+              hasAiMeta ? "pwa:right-[52px]" : ""
+            } ${
               showHideMenu ? "opacity-100" : "opacity-0 group-hover:opacity-100 pwa:opacity-100"
             }`}
           >

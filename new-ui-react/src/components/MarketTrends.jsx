@@ -130,9 +130,12 @@ function AdvScope({ terms, activeTerm, onPick }) {
 function InfoTip({ text }) {
   if (!text) return null;
   return (
-    <span className="relative inline-flex group align-middle shrink-0">
-      <Info size={12} className="text-white/40 hover:text-white/80 cursor-pointer" />
-      <span className="pointer-events-none absolute left-0 top-5 z-50 w-64 max-w-[75vw] rounded-lg border border-theme-border bg-theme-card px-2.5 py-2 text-[10.5px] leading-snug text-white/80 opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100 whitespace-normal font-normal normal-case tracking-normal">
+    // pwa: phones have no hover — the tip is out of the layout (display:none;
+    // even an invisible one pushed the page wider than the screen) until the
+    // ⓘ is tapped (focus), and then opens to the left of it.
+    <span className="relative inline-flex group align-middle shrink-0 pwa:outline-none" tabIndex={0}>
+      <Info size={12} className="text-white/40 hover:text-white/80 cursor-pointer pwa:h-4 pwa:w-4" />
+      <span className="pointer-events-none absolute left-0 top-5 z-50 w-64 max-w-[75vw] rounded-lg border border-theme-border bg-theme-card px-2.5 py-2 text-[10.5px] leading-snug text-white/80 opacity-0 shadow-xl transition-opacity duration-150 group-hover:opacity-100 whitespace-normal font-normal normal-case tracking-normal pwa:hidden pwa:left-auto pwa:right-[-40px] pwa:max-w-[70vw] pwa:text-[12px] pwa:group-focus-within:block pwa:group-focus-within:opacity-100">
         {text}
       </span>
     </span>
@@ -186,8 +189,9 @@ const Insight = ({ children }) => (children ? (
 // loading; only the plot area swaps.
 function Panel({ title, subtitle, info, right, note, scope, className = '', loading, error, onRetry, skeleton, children }) {
   return (
-    <div className={`p-3.5 rounded-xl border border-theme-border bg-theme-bg flex flex-col gap-2.5 min-w-0 ${className}`}>
-      <div className="flex items-start justify-between gap-2">
+    <div className={`p-3.5 rounded-xl border border-theme-border bg-theme-bg flex flex-col gap-2.5 min-w-0 pwa:rounded-2xl pwa:bg-theme-card ${className}`}>
+      {/* pwa: controls (e.g. the index/count toggle) go under the title on phones */}
+      <div className="flex items-start justify-between gap-2 pwa:flex-col pwa:gap-2.5">
         <div className="min-w-0">
           <span className="text-[13px] font-medium text-white flex items-center gap-1.5">
             {title}<InfoTip text={info} />
@@ -216,7 +220,7 @@ function TrendTable({ title, subtitle, info, columnLabel, valueLabel, rows, colo
   const start = page * TABLE_PAGE;
   const pageRows = rows.slice(start, start + TABLE_PAGE);
   return (
-    <div className="p-3.5 rounded-xl border border-theme-border bg-theme-bg flex flex-col gap-2 min-w-0 relative">
+    <div className="p-3.5 rounded-xl border border-theme-border bg-theme-bg flex flex-col gap-2 min-w-0 relative pwa:rounded-2xl pwa:bg-theme-card">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <span className="text-[13px] font-medium text-white flex items-center gap-1.5">
@@ -306,20 +310,22 @@ function DateRangePicker({ days, from, to, onPreset, onRange, onClear }) {
   useEffect(() => { setSel(from && to ? { from: new Date(from), to: new Date(to) } : undefined); }, [from, to]);
   const label = (days === 'custom' && from && to) ? `${from} → ${to}` : (days >= 365 ? 'All time' : `Last ${days} days`);
   return (
-    <div ref={ref} className="relative">
+    // pwa (installed phone app): fills its half of the toolbar row; the panel
+    // opens full-width with preset chips above the calendar.
+    <div ref={ref} className="relative pwa:order-1 pwa:min-w-0 pwa:flex-1">
       <button onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1.5 text-xs bg-theme-bg border border-theme-border rounded-lg px-3 py-1.5 text-white h-fit">
-        <Calendar size={13} /> {label} <ChevronDown size={12} className="opacity-70" />
+        className="flex items-center gap-1.5 text-xs bg-theme-bg border border-theme-border rounded-lg px-3 py-1.5 text-white h-fit pwa:h-10 pwa:w-full pwa:text-[13px]">
+        <Calendar size={13} /> <span className="pwa:min-w-0 pwa:flex-1 pwa:truncate pwa:text-left">{label}</span> <ChevronDown size={12} className="opacity-70" />
       </button>
       {open && (
-        <div className="absolute right-0 mt-2 z-50 bg-theme-card border border-theme-border rounded-xl shadow-2xl p-3 flex gap-3 text-white">
-          <div className="flex flex-col gap-1 min-w-[118px]">
+        <div className="absolute right-0 mt-2 z-50 bg-theme-card border border-theme-border rounded-xl shadow-2xl p-3 flex gap-3 text-white pwa:right-auto pwa:left-0 pwa:w-[calc(100vw-24px)] pwa:flex-col">
+          <div className="flex flex-col gap-1 min-w-[118px] pwa:flex-row pwa:flex-wrap pwa:gap-1.5">
             {DATE_PRESETS.map(([lbl, d]) => (
               <button key={d} onClick={() => { onPreset(d); setSel(undefined); setOpen(false); }}
-                className={`text-left text-xs px-3 py-2 rounded-md transition-colors ${days === d ? 'bg-[#335296] text-white' : 'text-white/70 hover:bg-white/5'}`}>{lbl}</button>
+                className={`text-left text-xs px-3 py-2 rounded-md transition-colors pwa:rounded-full pwa:border pwa:border-theme-border pwa:text-[12px] ${days === d ? 'bg-[#335296] text-white pwa:border-transparent' : 'text-white/70 hover:bg-white/5'}`}>{lbl}</button>
             ))}
           </div>
-          <div className="border-l border-theme-border pl-3 mt-rdp">
+          <div className="border-l border-theme-border pl-3 mt-rdp pwa:border-l-0 pwa:border-t pwa:pl-0 pwa:pt-3 pwa:flex pwa:flex-col pwa:items-center">
             <style>{`
               .mt-rdp .rdp-root { --rdp-accent-color: #335296; margin: 0; }
               .mt-rdp .rdp-day_button { color: currentColor; font-size: 12px; }
@@ -335,13 +341,13 @@ function DateRangePicker({ days, from, to, onPreset, onRange, onClear }) {
             `}</style>
             <DayPicker mode="range" selected={sel} onSelect={setSel} captionLayout="dropdown"
               defaultMonth={sel?.from || new Date()} disabled={{ after: new Date() }} />
-            <div className="flex items-center justify-between gap-2 pt-2 border-t border-theme-border mt-1">
-              <span className="text-[11px] text-white/60">{sel?.from && sel?.to ? `${toYMD(sel.from)} → ${toYMD(sel.to)}` : 'Pick start & end'}</span>
+            <div className="flex items-center justify-between gap-2 pt-2 border-t border-theme-border mt-1 pwa:w-full pwa:pt-3">
+              <span className="text-[11px] text-white/60 pwa:text-[12px]">{sel?.from && sel?.to ? `${toYMD(sel.from)} → ${toYMD(sel.to)}` : 'Pick start & end'}</span>
               <div className="flex gap-2">
                 <button onClick={() => { setSel(undefined); onClear(); setOpen(false); }}
-                  className="text-[11px] text-white/70 border border-theme-border rounded-md px-3 py-1 hover:text-white">Clear</button>
+                  className="text-[11px] text-white/70 border border-theme-border rounded-md px-3 py-1 hover:text-white pwa:h-9 pwa:rounded-lg pwa:px-4 pwa:text-[13px]">Clear</button>
                 <button disabled={!sel?.from || !sel?.to} onClick={() => { onRange(toYMD(sel.from), toYMD(sel.to)); setOpen(false); }}
-                  className="text-[11px] bg-[#335296] text-white rounded-md px-3 py-1 disabled:opacity-40">Apply</button>
+                  className="text-[11px] bg-[#335296] text-white rounded-md px-3 py-1 disabled:opacity-40 pwa:h-9 pwa:rounded-lg pwa:px-4 pwa:text-[13px] pwa:font-semibold">Apply</button>
               </div>
             </div>
           </div>
@@ -801,24 +807,28 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
   const exportRisingCategories = () => { trackMarketTrend('downloaded_raising_categories'); exportCsv(); };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-theme-bg">
-      <div className="max-w-[1500px] mx-auto px-5 py-6 flex flex-col gap-5 text-white">
+    // pwa: never pan sideways in the installed phone app — wide rows (network
+    // chips, charts) scroll inside themselves instead of moving the page.
+    <div className="flex-1 overflow-y-auto bg-theme-bg pwa:overflow-x-hidden">
+      {/* pwa: installed phone app — tighter padding; header controls sit on
+          one toolbar row under the title (date · country · export icon). */}
+      <div className="max-w-[1500px] mx-auto px-5 py-6 flex flex-col gap-5 text-white pwa:px-3 pwa:py-4 pwa:gap-4 pwa:[&>*]:min-w-0 pwa:[&>*]:max-w-full">
         {/* Header */}
-        <div className="flex items-start gap-3 flex-wrap">
+        <div className="flex items-start gap-3 flex-wrap pwa:gap-y-3">
           <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500"><TrendingUp size={20} /></div>
-          <div className="flex-1 min-w-[220px]">
+          <div className="flex-1 min-w-[220px] pwa:min-w-0 pwa:basis-[calc(100%-52px)]">
             <h1 className="text-lg font-semibold text-white">Market Trends</h1>
             <p className="text-xs text-white/60">Compare advertisers &amp; networks over time, see where ads run and what's trending — on real ad data.</p>
           </div>
-          <button onClick={exportCsvTracked} className="text-xs flex items-center gap-1.5 bg-white/5 hover:bg-white/10 rounded-lg px-3 py-1.5 text-white h-fit">
-            <Download size={13} /> Export CSV
+          <button onClick={exportCsvTracked} aria-label="Export CSV" className="text-xs flex items-center gap-1.5 bg-white/5 hover:bg-white/10 rounded-lg px-3 py-1.5 text-white h-fit pwa:order-3 pwa:h-10 pwa:w-10 pwa:shrink-0 pwa:justify-center pwa:border pwa:border-theme-border pwa:px-0">
+            <Download size={13} className="pwa:h-4 pwa:w-4" /> <span className="pwa:hidden">Export CSV</span>
           </button>
           <select value={country} onChange={(e) => {
             const v = e.target.value;
             setCountry(v);
             if (v) trackMarketTrend('country_filter_applied', { country: v });
           }}
-            className="text-xs bg-theme-bg border border-theme-border rounded-lg px-3 py-1.5 text-white h-fit max-w-[150px]">
+            className="text-xs bg-theme-bg border border-theme-border rounded-lg px-3 py-1.5 text-white h-fit max-w-[150px] pwa:order-2 pwa:h-10 pwa:min-w-0 pwa:max-w-none pwa:flex-1">
             <option value="">All countries</option>
             {countryOpts.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
@@ -837,12 +847,13 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
             </span>
           ))}
           {terms.length < 5 && (
-            <div className="relative flex items-center">
-              <Search className="absolute left-2.5 text-white/60" size={13} />
+            <div className="relative flex items-center pwa:basis-full">
+              <Search className="absolute left-2.5 text-white/60 pwa:left-3.5" size={13} />
               <input value={termInput} onChange={(e) => setTermInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') addTerm(); if (e.key === 'Escape') setTermInput(''); }}
+                enterKeyHint="search"
                 placeholder={terms.length ? 'Add advertiser…' : 'Compare advertisers (e.g. Nykaa, Myntra) — press Enter'}
-                className="text-xs bg-theme-bg border border-theme-border rounded-full pl-7 pr-2 py-1.5 text-white w-64" />
+                className="text-xs bg-theme-bg border border-theme-border rounded-full pl-7 pr-2 py-1.5 text-white w-64 pwa:h-11 pwa:min-w-0 pwa:flex-1 pwa:pl-10 pwa:pr-3" />
               {termInput && <button onClick={addTerm} className="ml-1 text-xs bg-[#335296] text-white rounded-full p-1.5"><Plus size={12} /></button>}
             </div>
           )}
@@ -851,10 +862,12 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
         </PlanLockedSection>
 
         {/* Network selector — "All" or a single network (icons from assets) */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* pwa: one sideways-scrolling row of chips in the installed phone app
+            (it wrapped to 4 lines), bleeding to the screen edges. */}
+        <div className="flex flex-wrap items-center gap-2 pwa:-mx-3 pwa:flex-nowrap pwa:overflow-x-auto pwa:px-3 pwa:pb-1 pwa-scrollbar pwa:[&>*]:shrink-0">
           <span className="text-[11px] text-white/60 mr-1">Network:</span>
           <button onClick={selectAll}
-            className={`flex items-center gap-1.5 text-[11px] rounded-full px-2.5 py-1 border transition-colors ${isAllNets ? 'bg-[#335296] text-white border-transparent' : 'border-theme-border text-white/60 hover:border-white/30'}`}>
+            className={`flex items-center gap-1.5 text-[11px] rounded-full px-2.5 py-1 border transition-colors pwa:py-1.5 pwa:text-[12px] ${isAllNets ? 'bg-[#335296] text-white border-transparent' : 'border-theme-border text-white/60 hover:border-white/30'}`}>
             <LayoutGrid size={13} /> All
           </button>
           {CHIP_NETWORKS.map((n) => {
@@ -866,7 +879,7 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
             const has = planRestricted || !overview || allNets.includes(n);
             return (
               <button key={n} onClick={() => toggleNet(n)} disabled={!has} title={planRestricted ? 'Upgrade your plan to unlock this network' : undefined}
-                className={`flex items-center gap-1.5 text-[11px] rounded-full px-2.5 py-1 border transition-colors ${on ? 'border-transparent text-white' : 'border-theme-border text-white/60 hover:border-white/30'} ${!has ? 'opacity-30 cursor-not-allowed' : ''} ${planRestricted ? 'opacity-50' : ''}`}
+                className={`flex items-center gap-1.5 text-[11px] rounded-full px-2.5 py-1 border transition-colors pwa:py-1.5 pwa:text-[12px] ${on ? 'border-transparent text-white' : 'border-theme-border text-white/60 hover:border-white/30'} ${!has ? 'opacity-30 cursor-not-allowed' : ''} ${planRestricted ? 'opacity-50' : ''}`}
                 style={on ? { backgroundColor: NET_COLOR[n] } : undefined}>
                 <img src={NET_ICON[n]} alt="" className="w-3.5 h-3.5 rounded-sm object-contain" />
                 {NET_LABEL[n]}
@@ -892,9 +905,9 @@ const MarketTrends = ({ onDrill, allowedPlatforms, onNetworkRestricted }) => {
                 : 'One line per network showing how many ads were live each day (by last-seen date). 0–100 index scales every line to its own peak; Ad counts shows raw daily volume.'}
               note={interestNote}
               right={(
-                <div className="flex rounded-lg overflow-hidden border border-theme-border">
-                  <button onClick={() => setIndexed(true)} className={`text-[10px] px-2 py-1 ${indexed ? 'bg-[#335296] text-white' : 'text-white/60'}`}>0–100 index</button>
-                  <button onClick={() => setIndexed(false)} className={`text-[10px] px-2 py-1 ${!indexed ? 'bg-[#335296] text-white' : 'text-white/60'}`}>Ad counts</button>
+                <div className="flex rounded-lg overflow-hidden border border-theme-border shrink-0">
+                  <button onClick={() => setIndexed(true)} className={`whitespace-nowrap text-[10px] px-2 py-1 pwa:px-3 pwa:py-1.5 pwa:text-[12px] ${indexed ? 'bg-[#335296] text-white' : 'text-white/60'}`}>0–100 index</button>
+                  <button onClick={() => setIndexed(false)} className={`whitespace-nowrap text-[10px] px-2 py-1 pwa:px-3 pwa:py-1.5 pwa:text-[12px] ${!indexed ? 'bg-[#335296] text-white' : 'text-white/60'}`}>Ad counts</button>
                 </div>
               )}>
               {chartData?.length && chartKeys.length ? (

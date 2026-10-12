@@ -1,7 +1,10 @@
 import React, { useMemo, useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, ChevronRight, Filter, SlidersHorizontal } from "lucide-react";
-import PlatformTab from "../shared/PlatformTab";
+import { createPortal } from "react-dom";
+import PlatformTab, { PLATFORM_ASSET_MAP, PLATFORM_FULL_NAMES } from "../shared/PlatformTab";
+import RowSlider from "../shared/RowSlider";
+import { useInstalledMobile } from "../../hooks/useInstalledMobile";
 import AdDateDropdown from "./AdDateDropdown";
 import { PLATFORMS } from "../../constants";
 import {
@@ -146,6 +149,13 @@ const AdFilterBar = ({
   isScrolled = false,
   disableTooltips = false,
   guest,
+  // Installed phone app: content shown at the right end of the Date / Ad
+  // type / Sort / AI row (AdGrid passes the ads count + Export there).
+  pwaTrailing = null,
+  // Installed phone app: AdGrid renders the platform row pinned on its own
+  // (pwaHideControls) and the rest of the bar below it (pwaHidePlatforms).
+  pwaHideControls = false,
+  pwaHidePlatforms = false,
 }) => {
   const { t } = useTranslation();
   const {
@@ -188,6 +198,37 @@ const AdFilterBar = ({
   // Ad type filter dropdown state (owned here, not lifted to AdGrid)
   const [showAdTypeFilter, setShowAdTypeFilter] = useState(false);
   const adTypeFilterRef = useRef(null);
+
+  // Platform tab row; RowSlider adds the installed app's ‹ › and indicator.
+  const platformRowRef = useRef(null);
+
+  // Installed phone app: the row shows "All" + the first few networks like an
+  // app dock, plus a "+N" tile that opens every network in a grid sheet. A
+  // selected network always stays visible in the row. Website: all tabs.
+  const isInstalledMobile = useInstalledMobile();
+  const [showAllNetworks, setShowAllNetworks] = useState(false);
+  const platformValue = (opt) => opt.value ?? opt.label;
+  const platformFallback = (opt) => {
+    const value = platformValue(opt);
+    return (
+      opt._fallback ||
+      PLATFORMS.find((f) => f.id.toLowerCase() === value.toLowerCase() || f.label === opt.label) ||
+      {}
+    );
+  };
+  // Room for the wider "more" pill: 4 networks on most phones, 3 on the smallest.
+  const pwaVisibleCount = typeof window !== "undefined" && window.innerWidth < 360 ? 3 : window.innerWidth >= 412 ? 5 : 4;
+  // Never more than pwaVisibleCount in the row: selected networks take the
+  // slots first (e.g. an AI search that picks many), unselected fill the rest;
+  // original order is kept. Everything else sits behind "+N".
+  const visiblePlatformOptions = (() => {
+    if (!isInstalledMobile) return platformOptions;
+    const isSel = (opt) => specificPlatforms.includes(platformValue(opt));
+    const pickedSel = platformOptions.filter(isSel).slice(0, pwaVisibleCount);
+    const fill = platformOptions.filter((opt) => !isSel(opt)).slice(0, pwaVisibleCount - pickedSel.length);
+    return platformOptions.filter((opt) => pickedSel.includes(opt) || fill.includes(opt));
+  })();
+  const hiddenPlatformCount = platformOptions.length - visiblePlatformOptions.length;
 
   // Entitlements can refresh after the filter was selected (login, plan change,
   // or policy publish). Never retain a now-denied value in search state.
@@ -396,9 +437,11 @@ const AdFilterBar = ({
     >
       {/* Platform tabs */}
       <div
-        className={`flex items-center min-w-[120px] ${!showPlatformsOnMobile ? "hidden md:flex" : "flex"} ${!hasActiveFilter ? "flex-1 2xl:flex-initial" : ""} pwa:w-full pwa:flex-none`}
+        className={`flex items-center min-w-[120px] ${!showPlatformsOnMobile ? "hidden md:flex" : "flex"} ${!hasActiveFilter ? "flex-1 2xl:flex-initial" : ""} pwa:relative pwa:w-full pwa:flex-none ${pwaHidePlatforms ? "pwa:hidden" : ""}`}
       >
-        <div className="flex w-full max-w-[760px] items-center gap-0.5 overflow-x-auto rounded-xl border border-theme-border bg-theme-card p-1 hide-scrollbar pwa-scrollbar pwa:pb-1.5 2xl:w-auto">
+        {/* pwa: snaps tab by tab on swipe; RowSlider below adds ‹ › and the
+            position indicator (in place of the native scrollbar). */}
+        <div ref={platformRowRef} className="flex w-full max-w-[760px] items-center gap-0.5 overflow-x-auto rounded-xl border border-theme-border bg-theme-card p-1 hide-scrollbar pwa:justify-between pwa:snap-x pwa:snap-proximity pwa:scroll-px-1 2xl:w-auto">
           <PlatformTab
             label="All"
             active={isAllActive}
@@ -407,16 +450,9 @@ const AdFilterBar = ({
             onClick={handleAllClick}
             disableTooltips={disableTooltips}
           />
-          {platformOptions.map((opt) => {
-            const value = opt.value ?? opt.label;
-            const fallback =
-              opt._fallback ||
-              PLATFORMS.find(
-                (f) =>
-                  f.id.toLowerCase() === value.toLowerCase() ||
-                  f.label === opt.label,
-              ) ||
-              {};
+          {visiblePlatformOptions.map((opt) => {
+            const value = platformValue(opt);
+            const fallback = platformFallback(opt);
             return (
               <PlatformTab
                 key={value}
@@ -425,6 +461,7 @@ const AdFilterBar = ({
                 imageUrl={opt.icon_url || null}
                 label={opt.label}
                 active={specificPlatforms.includes(value)}
+                dimmed={isInstalledMobile && !isAllActive && specificPlatforms.length > 0 && !specificPlatforms.includes(value)}
                 onClick={() => handlePlatformClick(value)}
                 color={fallback.color}
                 activeBg={fallback.activeBg}
@@ -433,14 +470,130 @@ const AdFilterBar = ({
               />
             );
           })}
+          {isInstalledMobile && hiddenPlatformCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAllNetworks(true)}
+              aria-label={`Show all networks (${hiddenPlatformCount} more)`}
+              // Avatar-stack "more" pill (Slack/Google style): the next two hidden
+              // networks overlapping, then the "+N" count.
+              className="flex h-10 shrink-0 snap-start items-center rounded-full border border-theme-border bg-theme-bg pl-1 pr-2.5 shadow-sm transition-transform active:scale-95"
+            >
+              <span className="flex items-center">
+                {platformOptions
+                  .filter((opt) => !visiblePlatformOptions.includes(opt))
+                  .slice(0, 2)
+                  .map((opt, i) => {
+                    const key = platformValue(opt).toLowerCase();
+                    const src = PLATFORM_ASSET_MAP[key] || opt.icon_url;
+                    const NextIcon = platformFallback(opt).Icon;
+                    return (
+                      <span
+                        key={key}
+                        className={`flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-theme-card ring-2 ring-theme-bg ${i ? "-ml-1.5" : ""}`}
+                        style={{ zIndex: 2 - i }}
+                      >
+                        {src ? (
+                          <img src={src} alt="" className="h-[18px] w-[18px] object-contain" />
+                        ) : NextIcon ? (
+                          <NextIcon size={16} />
+                        ) : (
+                          <span className="text-[10px] font-black text-theme-text">{opt.label?.slice(0, 2)}</span>
+                        )}
+                      </span>
+                    );
+                  })}
+              </span>
+              <span className="ml-1.5 text-[12px] font-bold text-[#335296] dark:text-[#8fb0ff]">+{hiddenPlatformCount}</span>
+            </button>
+          )}
         </div>
+        <RowSlider rowRef={platformRowRef} deps={[platformOptions.length, visiblePlatformOptions.length]} />
       </div>
+
+      {/* Installed phone app: "All networks" sheet — every network as an app
+          tile; tap to toggle (same as tapping its tab). */}
+      {isInstalledMobile && showAllNetworks && createPortal(
+        <>
+          <div className="fixed inset-0 z-[70] bg-black/40 animate-in fade-in duration-200" onClick={() => setShowAllNetworks(false)} aria-hidden="true" />
+          <div
+            role="dialog"
+            aria-label="All networks"
+            className="fixed inset-x-0 bottom-0 z-[71] max-h-[80dvh] overflow-y-auto rounded-t-[24px] bg-theme-card px-4 pt-3 shadow-2xl animate-in slide-in-from-bottom duration-300"
+            style={{ paddingBottom: "calc(16px + env(safe-area-inset-bottom))" }}
+          >
+            <span className="mx-auto mb-3 block h-1 w-10 rounded-full bg-theme-text-muted/40" />
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <p className="text-[17px] font-bold text-theme-text">All networks</p>
+              <button
+                type="button"
+                onClick={handleAllClick}
+                className={`h-8 rounded-full border px-3 text-[12px] font-semibold transition-colors ${
+                  isAllActive ? "border-[#3759a3] bg-[#335296]" : "border-theme-border text-theme-text-secondary"
+                }`}
+                style={isAllActive ? { color: "#ffffff" } : undefined}
+              >
+                {isAllActive ? "✓ All selected" : "Select all"}
+              </button>
+            </div>
+            <div className="grid grid-cols-4 gap-x-2 gap-y-4">
+              {platformOptions.map((opt) => {
+                const value = platformValue(opt);
+                const fallback = platformFallback(opt);
+                const key = value.toLowerCase();
+                const iconSrc = PLATFORM_ASSET_MAP[key] || opt.icon_url;
+                const Icon = fallback.Icon;
+                const name = key === "gdn" ? "GDN" : PLATFORM_FULL_NAMES[key] || opt.label;
+                const on = specificPlatforms.includes(value);
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => handlePlatformClick(value)}
+                    aria-pressed={on}
+                    className="flex min-w-0 flex-col items-center gap-1.5 active:scale-95"
+                  >
+                    <span
+                      className={`relative flex h-14 w-14 items-center justify-center rounded-2xl border bg-theme-bg transition-colors ${
+                        on ? "border-transparent ring-2 ring-[#335296]" : "border-theme-border"
+                      }`}
+                    >
+                      {iconSrc ? (
+                        <img src={iconSrc} alt="" className="h-8 w-8 object-contain" />
+                      ) : Icon ? (
+                        <Icon size={28} className={fallback.color} />
+                      ) : (
+                        <span className="text-[13px] font-black text-theme-text">{opt.label?.slice(0, 2)}</span>
+                      )}
+                      {on && (
+                        <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-[#335296] shadow" style={{ color: "#ffffff" }}>
+                          <Check size={12} strokeWidth={3} />
+                        </span>
+                      )}
+                    </span>
+                    <span className={`w-full truncate text-center text-[11px] font-medium ${on ? "text-theme-text" : "text-theme-text-secondary"}`}>{name}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAllNetworks(false)}
+              className="mt-6 h-12 w-full rounded-2xl bg-[#335296] text-[15px] font-bold shadow-md active:scale-[0.98]"
+              style={{ color: "#ffffff" }}
+            >
+              Done
+            </button>
+          </div>
+        </>,
+        document.body,
+      )}
 
       {/* Right side controls */}
       {/* pwa: this row is the anchor for the Date / Ad Type / Sort dropdowns
           (their own wrappers go static), so each opens right under the row,
           aligned to the screen gutters, whichever button opened it. */}
-      <div className="flex items-center gap-2 flex-wrap shrink-0 pwa:relative">
+      <div className={`flex items-center gap-2 flex-wrap shrink-0 pwa:relative pwa:w-full pwa:flex-nowrap pwa:gap-1.5 ${pwaHideControls ? "pwa:hidden" : ""}`}>
 
         <AdDateDropdown onDateChange={onDateChange} filterValues={sdui?.filterValues} isTikTok={specificPlatforms.length === 1 && specificPlatforms[0]?.toLowerCase() === "tiktok"} isAdmobOnly={isAdmobOnly} disableTooltips={disableTooltips} isChatgptOnly={isChatgptOnly} isFilterRestricted={isFilterRestricted} onRestricted={onDateRestricted} />
         {/* Ad Type Filter — hidden when no options available for current platform */}
@@ -655,34 +808,54 @@ const AdFilterBar = ({
             aria-checked={isAiAnalysedOnly}
             aria-label="AI analysed only"
             onClick={toggleAiAnalysedOnly}
-            className={`items-center gap-2.5 rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 ${
+            // pwa: installed phone app — a ✦ AI icon button instead of the
+            // switch: outlined when off, filled violet when on. Website unchanged.
+            className={`items-center gap-2.5 rounded-lg border px-3 py-2 text-[11px] font-semibold transition-colors pwa:h-8 pwa:gap-1 pwa:px-2.5 pwa:py-0 pwa:active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/40 ${
               !showAiToggleOnMobile ? "hidden md:flex" : "flex"
             } ${
               isAiAnalysedOnly
-                ? "ai-analysed-toggle--active border-violet-400/30 bg-violet-500/10 text-violet-300"
+                ? "ai-analysed-toggle--active border-violet-400/30 bg-violet-500/10 text-violet-300 pwa:border-transparent pwa:bg-gradient-to-r pwa:from-[#6366f1] pwa:to-[#7c3aed] pwa:shadow-md pwa:shadow-violet-500/30"
                 // Keep hover neutral so violet communicates the enabled state only.
-                : "border-theme-border bg-theme-card text-theme-text-muted hover:border-theme-text-muted hover:bg-theme-text/[0.04] hover:text-theme-text"
+                : "border-theme-border bg-theme-card text-theme-text-muted hover:border-theme-text-muted hover:bg-theme-text/[0.04] hover:text-theme-text pwa:border-violet-400/50"
             }`}
           >
             <span className="hidden whitespace-nowrap sm:inline">AI analysed only</span>
             <span
+              className="hidden pwa:flex items-center gap-1 text-[12px] font-bold"
+              style={{ color: isAiAnalysedOnly ? "#ffffff" : "#7c3aed" }}
+            >
+              {/* Inline sparkles (the test's lucide mock has no Sparkles). */}
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M9.94 14.06 4 12l5.94-2.06L12 4l2.06 5.94L20 12l-5.94 2.06L12 20z" />
+                <path d="M19 3v4M17 5h4" />
+              </svg>
+              AI
+            </span>
+            <span
               aria-hidden="true"
               data-testid="ai-analysed-toggle-track"
-              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+              className={`relative h-5 w-9 shrink-0 rounded-full transition-colors pwa:hidden ${
                 isAiAnalysedOnly
-                  ? "bg-violet-600"
+                  ? "bg-violet-600 pwa:animate-[pwaToggleGlow_700ms_ease-out]"
                   : "bg-slate-300 dark:bg-zinc-600"
               }`}
             >
               <span
                 data-testid="ai-analysed-toggle-thumb"
-                className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full shadow-sm transition-transform duration-200 ${
+                className={`absolute left-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full shadow-sm transition-transform duration-200 pwa:duration-300 pwa:ease-[cubic-bezier(0.34,1.56,0.64,1)] ${
                   isAiAnalysedOnly ? "translate-x-4" : "translate-x-0"
                 }`}
                 style={{ backgroundColor: "#ffffff" }}
-              />
+              >
+                {isAiAnalysedOnly && (
+                  <span className="hidden pwa:block text-[9px] leading-none text-violet-600 animate-[pwaSparkIn_400ms_ease-out]">✦</span>
+                )}
+              </span>
             </span>
           </button>
+        )}
+        {pwaTrailing && (
+          <div className="hidden pwa:flex ml-auto min-w-0 items-center gap-1.5">{pwaTrailing}</div>
         )}
       </div>
     </div>

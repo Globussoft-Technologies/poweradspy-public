@@ -1,4 +1,5 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
+import { isInstalledMobileNow } from "../../hooks/useInstalledMobile";
 import fbIcon from "../../assets/fb.png";
 import igIcon from "../../assets/ig.png";
 import ytIcon from "../../assets/yt.png";
@@ -13,7 +14,8 @@ import tiktokIcon from "../../assets/tiktoklogo.jpg";
 import admobIcon from "../../assets/admob.svg";
 import chatgptIcon from "../../assets/chatgpt.svg";
 
-const PLATFORM_ASSET_MAP = {
+// Exported for the installed app's "All networks" grid (AdFilterBar).
+export const PLATFORM_ASSET_MAP = {
   facebook: fbIcon,
   fb: fbIcon,
   instagram: igIcon,
@@ -41,7 +43,7 @@ const PLATFORM_ASSET_MAP = {
   gpt: chatgptIcon,
 };
 
-const PLATFORM_FULL_NAMES = {
+export const PLATFORM_FULL_NAMES = {
   fb: "Facebook",
   facebook: "Facebook",
   ig: "Instagram",
@@ -83,6 +85,8 @@ const PlatformTab = ({
   onMouseLeave,
   value,
   disableTooltips,
+  // Installed phone app: fade this tab (another network is selected).
+  dimmed = false,
 }) => {
   const assetIcon = PLATFORM_ASSET_MAP[(value || label || "").toLowerCase()];
   const iconSrc = assetIcon || imageUrl;
@@ -91,6 +95,18 @@ const PlatformTab = ({
   const [showTip, setShowTip] = useState(false);
   const [tipPos, setTipPos] = useState({ x: 0, y: 0 });
   const btnRef = useRef(null);
+
+  // Installed phone app: when a tab becomes selected, glide the tab row so it
+  // sits in the middle (scrolls only the row, never the page).
+  useEffect(() => {
+    if (!active || !isInstalledMobileNow()) return;
+    const btn = btnRef.current;
+    const row = btn?.parentElement;
+    if (!btn || !row || row.scrollWidth <= row.clientWidth) return;
+    const rb = row.getBoundingClientRect();
+    const bb = btn.getBoundingClientRect();
+    row.scrollBy?.({ left: bb.left - rb.left - (rb.width - bb.width) / 2, behavior: "smooth" });
+  }, [active]);
 
   const handleMouseEnter = (e) => {
     if (disableTooltips) return;
@@ -122,11 +138,14 @@ const PlatformTab = ({
               }
             : {}
         }
-        className={`flex items-center justify-center py-1.5 rounded-lg text-[13px] font-black uppercase tracking-tight transition-all whitespace-nowrap border ${
+        // pwa: installed phone app only — no coloured box: plain icons, the
+        // selected one marked by a short underline (others fade when a specific
+        // network is chosen), press feedback and a pop. Website unchanged.
+        className={`flex items-center justify-center py-1.5 rounded-lg text-[13px] font-black uppercase tracking-tight transition-all whitespace-nowrap border pwa:relative pwa:shrink-0 pwa:snap-start pwa:min-h-[40px] pwa:rounded-xl pwa:px-2 pwa:!border-transparent pwa:!bg-transparent pwa:shadow-none pwa:duration-200 pwa:ease-out pwa:active:scale-90 ${
           active
-            ? "text-theme-text shadow-sm px-3"
+            ? "text-theme-text shadow-sm px-3 pwa:animate-[pwaTabPop_280ms_ease-out] pwa:after:absolute pwa:after:bottom-0 pwa:after:left-1/2 pwa:after:h-[3px] pwa:after:w-5 pwa:after:-translate-x-1/2 pwa:after:rounded-full pwa:after:bg-[#335296] dark:pwa:after:bg-[#6b99ff]"
             : "border-transparent px-2.5 text-theme-text-muted hover:text-theme-text hover:bg-theme-text/[0.06]"
-        }`}
+        } ${dimmed ? "pwa:opacity-40 pwa:grayscale" : ""}`}
       >
         <span className={color || "text-theme-text-muted"}>
           {iconSrc ? (

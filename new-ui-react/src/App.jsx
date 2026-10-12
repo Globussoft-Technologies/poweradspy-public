@@ -15,7 +15,6 @@ import {
 } from "./utils/planEntitlement";
 import { getDashboardAdNavigation } from "./utils/dashboardAdNavigation";
 import { classifyError, getFilterCountBucket, getNetworkContext, trackAdAction, trackAnalyticsPageView, trackGuestRoutePageView, trackProductEvent } from "./utils/googleAnalytics";
-import { useTheme } from "./hooks/useTheme";
 
 import { useInstalledMobile } from "./hooks/useInstalledMobile";
 import { useAuth } from "./hooks/useAuth";
@@ -375,7 +374,6 @@ const App = () => {
 
   // ── SDUI State ───────────────────────────────────────────────────────
   const sdui = useSDUI();
-  const { theme, colors } = useTheme();
   // Installed PWA on a phone: swap the sidebar nav for an app-style bottom nav.
   const isInstalledMobile = useInstalledMobile();
 
@@ -3613,7 +3611,10 @@ const App = () => {
   return (
     <div
       className="h-screen pwa:h-[100dvh] pwa:pt-[env(safe-area-inset-top)] flex flex-col font-sans selection:bg-[#3762c1]/20 overflow-hidden transition-colors duration-300"
-      style={{ backgroundColor: colors.bg, color: colors.text }}
+      // CSS variables (set on <html> by useTheme) instead of the theme context:
+      // reading the context here re-rendered the entire app on every theme
+      // toggle, which made the switch stall on phones. Same colours.
+      style={{ backgroundColor: "var(--color-bg)", color: "var(--color-text)" }}
     >
       <Header
         isSidebarOpen={ui.isSidebarOpen}
@@ -3675,6 +3676,15 @@ const App = () => {
           isOpen={ui.isSidebarOpen}
           setIsOpen={(val) => dispatch(setSidebarOpen(val))}
           sdui={sdui}
+          // Installed app filters sheet "Clear all": AI-search filters go through
+          // the AI clear path (sdui.clearAll alone leaves them applied).
+          onClearFilters={() => {
+            if (ui.aiPrompt) {
+              clearAiSearchFilters();
+              return;
+            }
+            sdui.clearAll?.();
+          }}
           onGenerateStrategy={handleGenerateCampaign}
           activePage={ui.activePage}
           onPageChange={handleNavPageChange}
@@ -3937,7 +3947,6 @@ const App = () => {
             }}
             onPlatformRestricted={() => showUpgradeOrLoginPrompt("Please login to switch platforms")}
             onToggleSidebar={() => dispatch(setSidebarOpen(!ui.isSidebarOpen))}
-            theme={theme}
             guest={guest}
             isLanding={!!landingAd}
             isHeaderScrolled={isHeaderScrolled}
@@ -4118,8 +4127,21 @@ const App = () => {
                 : searchDropdownOpen
                   ? 'right-4'
                   : 'left-1/2 -translate-x-1/2 lg:left-[65%]'
-          } top-[87px] px-3 py-2 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4`}
-          style={{
+          } top-[87px] px-3 py-2 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4 ${
+            // Installed phone app: a snackbar above the bottom nav instead of
+            // over the search bar and platform tabs; hidden while the search
+            // suggestions are open.
+            searchDropdownOpen ? 'pwa:hidden' : ''
+          } pwa:top-auto pwa:bottom-[calc(68px+env(safe-area-inset-bottom))] pwa:slide-in-from-bottom-4 pwa:left-3 pwa:right-3 pwa:translate-x-0 pwa:max-w-none pwa:rounded-2xl pwa:px-3.5 pwa:py-3`}
+          style={isInstalledMobile ? {
+            // Installed phone app: a full-width dark snackbar above the bottom
+            // nav, like native apps, instead of a narrow 4-line box.
+            maxWidth: 'none',
+            backgroundColor: 'rgba(23, 32, 56, 0.96)',
+            borderColor: 'transparent',
+            color: '#ffffff',
+            boxShadow: '0 10px 30px rgba(15, 23, 42, 0.35)',
+          } : {
             ...(searchDropdownOpen && searchDropdownRightEdge != null
               ? { left: `${searchDropdownRightEdge + 12}px` }
               : {}),
@@ -4142,12 +4164,12 @@ const App = () => {
             boxShadow: '0 4px 12px rgba(51, 82, 150, 0.14)',
           }}
         >
-          <div className="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-white bg-[#335296]">
+          <div className="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-white bg-[#335296] pwa:h-8 pwa:w-8 pwa:bg-white/15" style={isInstalledMobile ? { color: '#ffffff' } : undefined}>
             {searchBannerShowUnderway
               ? <Loader2 size={14} strokeWidth={3} className="animate-spin" />
               : <Info size={14} strokeWidth={3} />}
           </div>
-          <span className="font-semibold tracking-tight text-xs">{searchBannerMessage}</span>
+          <span className="font-semibold tracking-tight text-xs pwa:text-[13px] pwa:font-medium pwa:leading-snug pwa:tracking-normal">{searchBannerMessage}</span>
         </div>
       )}
 

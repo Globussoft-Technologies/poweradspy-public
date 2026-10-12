@@ -122,10 +122,33 @@ body.pwa-install-open #fc_frame {
   display: none !important;
 }
 
-/* Installed-app search: the small pill grows out to full width in place. */
-@keyframes pwaSearchExpand {
-  from { transform: scaleX(0.68); opacity: 0.6; }
-  to { transform: scaleX(1); opacity: 1; }
+/* Installed-app search: the open search (input + mode chips) drops in where
+   the search bar was. */
+@keyframes pwaSearchOpen {
+  from { transform: translateY(-6px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+/* Installed-app AI search: indeterminate progress bar sweeping across. */
+@keyframes pwaAiProgress {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+/* Installed-app "AI analysed only" toggle: a violet ring that spreads once
+   when it is switched on, and the ✦ in the thumb popping in. */
+@keyframes pwaToggleGlow {
+  0% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.55); }
+  100% { box-shadow: 0 0 0 10px rgba(139, 92, 246, 0); }
+}
+@keyframes pwaSparkIn {
+  0% { transform: scale(0) rotate(-90deg); opacity: 0; }
+  70% { transform: scale(1.3) rotate(10deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); opacity: 1; }
+}
+/* Installed-app platform tabs: a short "pop" when a tab becomes selected. */
+@keyframes pwaTabPop {
+  0% { transform: scale(0.86); }
+  60% { transform: scale(1.08); }
+  100% { transform: scale(1); }
 }
 
 /* ── Installed PWA on a phone ──
@@ -170,11 +193,113 @@ html.pwa-mobile body {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }
-/* Compact scale for phones: rem-based Tailwind sizes shrink ~7%, and the
-   large fixed-px headings/values used across the app step down a notch so
-   screens don't feel zoomed-in. */
+/* Phone scale: rem-based Tailwind sizes follow the screen width — ~14px on
+   small phones (320–360px), 15px on a 390px iPhone, 15.5px on large phones —
+   and the large fixed-px headings/values used across the app step down a
+   notch so screens don't feel zoomed-in. text-size-adjust stops iOS from
+   inflating text on its own. */
 html.pwa-mobile {
-  font-size: 15px;
+  font-size: clamp(13.5px, 3.85vw, 15.5px);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+/* iOS zooms the whole page into any focused field under 16px (that is what
+   pushed the search bar off-screen), so text fields are 16px in the app. */
+.pwa-mobile input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+.pwa-mobile textarea,
+.pwa-mobile select {
+  font-size: 16px !important;
+}
+/* Header icons: at least 40px tap targets (36px on the smallest phones,
+   where the logo also shrinks so logo + icons stay on one row). */
+.pwa-mobile .pwa-action {
+  min-width: 40px;
+  min-height: 40px;
+}
+@media (max-width: 359px) {
+  .pwa-mobile .pwa-action {
+    min-width: 36px;
+    min-height: 36px;
+  }
+  .pwa-mobile .pwa-logo {
+    max-width: 96px;
+  }
+  /* Ad cards: drop the IMAGE/VIDEO label so the action buttons (moved left
+     of the AI corner mark) don't run into the platform icon. */
+  .pwa-mobile .ad-type-badge {
+    display: none;
+  }
+}
+/* Narrowest phones (Galaxy Fold folded, 280px): five bottom-nav tabs only get
+   ~56px each, so labels go a size smaller instead of "Ads Lib…". */
+@media (max-width: 339px) {
+  .pwa-mobile .pwa-bottom-nav button > span:last-child {
+    padding-left: 0;
+    padding-right: 0;
+    font-size: 9px;
+    letter-spacing: -0.01em;
+  }
+}
+/* AI search submit (↑) in the installed app: a small filled gradient circle
+   instead of the 36px outlined one. */
+.pwa-mobile .pwa-ai-submit.pwa-ai-submit {
+  width: 30px;
+  height: 30px;
+  margin-right: 6px;
+  border: 0;
+  background: linear-gradient(135deg, #6366f1, #7c3aed);
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.35);
+}
+.pwa-mobile .pwa-ai-submit svg {
+  width: 15px;
+  height: 15px;
+  color: #ffffff !important;
+}
+/* Keyword/advertiser/domain search submit (🔍) in the installed app: the same
+   30px circle as the AI ↑, in brand blue, and no pulsing. */
+.pwa-mobile .pwa-kw-submit.pwa-kw-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin-right: 1px;
+  padding: 0;
+  border-radius: 9999px;
+  background: #335296;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(51, 82, 150, 0.3);
+  animation: none;
+}
+.pwa-mobile .pwa-kw-submit svg {
+  width: 15px;
+  height: 15px;
+  color: #ffffff !important;
+}
+/* Clear-text ✕ inside the search field: a 28px round tap target. */
+.pwa-mobile .pwa-clear-btn.pwa-clear-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--color-text-muted) 14%, transparent);
+}
+/* Search open: the bottom nav steps aside for the keyboard and suggestions. */
+body.pwa-search-open .pwa-bottom-nav {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pwa-mobile *,
+  .pwa-mobile *::before,
+  .pwa-mobile *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 .pwa-mobile .text-\[20px\] { font-size: 17px; }
 .pwa-mobile .text-\[18px\] { font-size: 15px; }
@@ -210,6 +335,23 @@ html.pwa-mobile body:not(.pwa-chat-open) #fc_frame {
 .pwa-mobile #fc_frame,
 .pwa-mobile #fc_frame.fc-widget-normal {
   bottom: calc(72px + env(safe-area-inset-bottom)) !important;
+}
+/* Chat open (BottomNav → "Chat with us"): a full-screen sheet below the
+   status bar, like a native chat screen — the offset above made the
+   expanded widget slide off the left edge and get cut. */
+html.pwa-mobile body.pwa-chat-open #fc_frame,
+html.pwa-mobile body.pwa-chat-open #fc_frame.fc-widget-normal,
+html.pwa-mobile body.pwa-chat-open #fc_frame.fc-open {
+  top: env(safe-area-inset-top) !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: calc(100dvh - env(safe-area-inset-top)) !important;
+  max-height: none !important;
+  border-radius: 0 !important;
+  transform: none !important;
 }
 
 @layer base {

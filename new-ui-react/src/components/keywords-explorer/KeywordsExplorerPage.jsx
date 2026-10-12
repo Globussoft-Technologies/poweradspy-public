@@ -89,8 +89,10 @@ const KeywordTableSkeleton = ({ rows = 8 }) => (
 
 const fmtNum = (n) => (n == null ? "–" : Number(n).toLocaleString("en-US"));
 
+// pwa: compact tiles in the installed phone app (number + label only; the
+// caption lines are hidden) so the 4 stats take ~1/3 of the old height.
 const StatCard = ({ icon, label, children }) => (
-  <div className="rounded-2xl border border-theme-border bg-theme-card px-4 py-3.5 shadow-sm">
+  <div className="rounded-2xl border border-theme-border bg-theme-card px-4 py-3.5 shadow-sm pwa:rounded-xl pwa:px-3 pwa:py-2.5 pwa:[&_.kx-caption]:hidden">
     <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-theme-text-muted">
       {icon}{label}
     </div>
@@ -117,32 +119,32 @@ const StatCards = ({ stats, loading, access = {}, onUpgrade }) => {
   if (loading && !stats) return <StatCardsSkeleton />;
   if (!stats) return null;
   return (
-    <FadeIn className={`grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4 [font-variant-numeric:tabular-nums] transition-opacity duration-200 ${loading ? "opacity-50" : "opacity-100"}`}>
+    <FadeIn className={`grid grid-cols-2 lg:grid-cols-4 gap-3 mt-4 pwa:gap-2 pwa:mt-3 [font-variant-numeric:tabular-nums] transition-opacity duration-200 ${loading ? "opacity-50" : "opacity-100"}`}>
       <StatCard icon={<Search size={12} className="text-[#6b99ff]" />} label="Keywords Tracked">
-        <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{fmtNum(stats.keywords)}</div>
-        <div className="mt-0.5 text-[11px] text-theme-text-muted">across the whole database</div>
+        <div className="mt-1.5 pwa:mt-1 text-2xl pwa:text-[20px] font-extrabold text-theme-text">{fmtNum(stats.keywords)}</div>
+        <div className="kx-caption mt-0.5 text-[11px] text-theme-text-muted">across the whole database</div>
       </StatCard>
       <PlanLockedSection allowed={access.competition !== false} title="Total Advertisers" onUpgrade={onUpgrade} compact>
       <StatCard icon={<Users size={12} className="text-[#6b99ff]" />} label="Total Advertisers">
-        <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{fmtNum(stats.total_advertisers)}</div>
-        <div className="mt-0.5 text-[11px] text-theme-text-muted">unique businesses bidding</div>
+        <div className="mt-1.5 pwa:mt-1 text-2xl pwa:text-[20px] font-extrabold text-theme-text">{fmtNum(stats.total_advertisers)}</div>
+        <div className="kx-caption mt-0.5 text-[11px] text-theme-text-muted">unique businesses bidding</div>
       </StatCard>
       </PlanLockedSection>
       <PlanLockedSection allowed={access.adVolume !== false} title="Total Ad Volume" onUpgrade={onUpgrade} compact>
       <StatCard icon={<BarChart3 size={12} className="text-[#6b99ff]" />} label="Total Ad Volume">
-        <div className="mt-1.5 text-2xl font-extrabold text-theme-text">{fmtNum(stats.total_ad_volume)}</div>
-        <div className="mt-0.5 text-[11px] text-theme-text-muted">ads across matches</div>
+        <div className="mt-1.5 pwa:mt-1 text-2xl pwa:text-[20px] font-extrabold text-theme-text">{fmtNum(stats.total_ad_volume)}</div>
+        <div className="kx-caption mt-0.5 text-[11px] text-theme-text-muted">ads across matches</div>
       </StatCard>
       </PlanLockedSection>
       <PlanLockedSection allowed={access.growth !== false} title="Trending" onUpgrade={onUpgrade} compact>
       <StatCard icon={<TrendingUp size={12} className="text-[#6b99ff]" />} label="Trending">
         {stats.trending_last_30d == null || stats.trending_prior_30d == null ? (
-          <div className="mt-1.5 text-2xl font-extrabold text-theme-text">–</div>
+          <div className="mt-1.5 pwa:mt-1 text-2xl pwa:text-[20px] font-extrabold text-theme-text">–</div>
         ) : (() => {
           const isUp = stats.trending_last_30d >= stats.trending_prior_30d;
           return (
             <div
-              className={`mt-1.5 inline-flex items-center gap-1 text-2xl font-extrabold ${isUp ? "text-emerald-500" : "text-red-500"}`}
+              className={`mt-1.5 pwa:mt-1 inline-flex items-center gap-1 text-2xl pwa:text-[20px] font-extrabold ${isUp ? "text-emerald-500" : "text-red-500"}`}
               title={`Last 30 days: ${fmtNum(stats.trending_last_30d)} · Prior 30 days: ${fmtNum(stats.trending_prior_30d)}`}
             >
               {isUp ? <TrendingUp size={20} /> : <TrendingDown size={20} />}
@@ -390,11 +392,11 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
     <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden">
       {/* pb-24 keeps the table's Prev/Next pagination clear of the fixed
           chatbot widget floating at the bottom-right of the viewport. */}
-      <div className="px-4 sm:px-6 pt-5 pb-24">
+      <div className="px-4 sm:px-6 pt-5 pb-24 pwa:px-3 pwa:pt-4">
         {/* ── Header ───────────────────────────────────────────── */}
-        <div className="mb-4">
+        <div className="mb-4 pwa:mb-3">
           <h1 className="text-xl font-bold tracking-tight text-theme-text">Keywords Explorer</h1>
-          <p className="mt-1 text-xs text-theme-text-secondary">
+          <p className="mt-1 text-xs text-theme-text-secondary pwa:text-[11px]">
             Volume, Competition &amp; Growth — proxies from PowerAdSpy&apos;s crawled Google-ads data.
           </p>
         </div>
@@ -510,7 +512,9 @@ const KeywordsExplorerPage = ({ onOpenKeyword, onUpgrade }) => {
         {activeTab === "explorer" ? (
           <>
             <PlanLockedSection allowed={access.filters} title="Keyword filters" onUpgrade={onUpgrade} compact>
-            <div className="sticky top-0 z-10 -mx-1 px-1 py-1">
+            {/* pwa: not sticky in the installed phone app — the wrapped filter
+                block is ~5 rows tall there and covered the keyword list. */}
+            <div className="sticky top-0 z-10 -mx-1 px-1 py-1 pwa:static">
               {/* Filters always operate on the full DB (not the loaded search/import
                   result), so any filter change switches back to browse mode + refetches.
                   Without this, changing/clearing a filter while a search result was shown

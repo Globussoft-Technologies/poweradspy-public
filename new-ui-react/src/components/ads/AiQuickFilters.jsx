@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import RowSlider from "../shared/RowSlider";
 import {
   BarChart3,
   Briefcase,
@@ -155,6 +156,9 @@ const AiQuickFilters = ({
     isRestricted,
   ]);
 
+  // Quick-filter row; RowSlider adds the installed app's ‹ › and indicator.
+  const presetRowRef = useRef(null);
+
   if (!doc || doc.visible === false || presets.length === 0) return null;
 
   // Never treat a missing availability value as eligible. It previously made a
@@ -192,7 +196,9 @@ const AiQuickFilters = ({
 
   return (
     <section
-      className="mx-3 mt-3 flex min-w-0 items-center gap-3 rounded-xl border border-theme-border bg-theme-card px-3 py-2 shadow-sm"
+      // pwa: no box of its own in the installed phone app — a row of compact
+      // pills on the page background, to cut the stacked-cards clutter.
+      className="mx-3 mt-3 flex min-w-0 items-center gap-3 rounded-xl border border-theme-border bg-theme-card px-3 py-2 shadow-sm pwa:mt-2.5 pwa:gap-1.5 pwa:border-0 pwa:bg-transparent pwa:p-0 pwa:shadow-none"
       aria-label="AI strategy quick filters"
     >
       <div className="hidden w-[118px] shrink-0 border-r border-theme-border pr-3 sm:block">
@@ -202,7 +208,10 @@ const AiQuickFilters = ({
         </p>
       </div>
 
-      <div className="scrollbar-hide flex min-w-0 flex-1 items-stretch gap-2 overflow-x-auto py-0.5">
+      {/* pwa: snaps card by card on swipe; RowSlider adds ‹ › and the
+          position indicator under the cards. */}
+      <div className="relative min-w-0 flex-1">
+      <div ref={presetRowRef} className="scrollbar-hide flex min-w-0 flex-1 items-stretch gap-2 overflow-x-auto py-0.5 pwa:snap-x pwa:snap-proximity pwa:gap-1.5">
         {visiblePresets.map((preset) => {
           const Icon = PRESET_ICONS[preset.id] || Zap;
           const isActive = activePreset?.id === preset.id;
@@ -212,29 +221,29 @@ const AiQuickFilters = ({
               type="button"
               aria-pressed={isActive}
               onClick={() => commit(preset.filters, preset.id)}
-              className={`group relative flex min-w-[136px] shrink-0 items-center gap-2 rounded-lg border py-2 pl-2.5 pr-7 text-left transition-all ${
+              className={`group relative flex min-w-[136px] shrink-0 items-center gap-2 rounded-lg border py-2 pl-2.5 pr-7 text-left transition-all pwa:snap-start pwa:h-9 pwa:min-w-0 pwa:gap-1.5 pwa:rounded-full pwa:py-0 pwa:pl-1 pwa:pr-3 pwa:active:scale-95 ${
                 isActive
                   ? "border-[#6b99ff] bg-[#3762c1]/12 shadow-[0_0_0_1px_rgba(107,153,255,0.15)]"
                   : "border-theme-border bg-theme-bg hover:border-[#6b99ff]/45 hover:bg-theme-text/[0.025]"
               }`}
             >
               <span
-                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border pwa:rounded-full ${
                   PRESET_ACCENTS[preset.id]
                 }`}
               >
                 <Icon size={14} />
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-[11px] font-semibold text-theme-text">
+                <span className="block truncate text-[11px] font-semibold text-theme-text pwa:text-[12px]">
                   {preset.label}
                 </span>
-                <span className="block truncate text-[8px] font-semibold uppercase tracking-[0.1em] text-theme-text-muted">
+                <span className="block truncate text-[8px] font-semibold uppercase tracking-[0.1em] text-theme-text-muted pwa:hidden">
                   {preset.tag}
                 </span>
               </span>
               {isActive && (
-                <span className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#3762c1] text-white">
+                <span className="absolute right-1.5 top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-[#3762c1] text-white pwa:hidden">
                   <Check size={9} strokeWidth={3} />
                 </span>
               )}
@@ -242,15 +251,19 @@ const AiQuickFilters = ({
           );
         })}
       </div>
+      <RowSlider rowRef={presetRowRef} deps={[presetAvailability, presets.length, isRestricted]} indicator="dots" />
+      </div>
 
       <button
         type="button"
         onClick={() => commit({})}
         disabled={!hasAiFilters}
-        className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-semibold text-[#6b99ff] transition-colors hover:bg-[#3762c1]/10 disabled:cursor-not-allowed disabled:opacity-35"
+        // pwa: installed phone app — same icon button, just a more vibrant blue
+        // (and less faded when nothing is applied). Website unchanged.
+        className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1.5 text-[10px] font-semibold text-[#6b99ff] transition-colors hover:bg-[#3762c1]/10 disabled:cursor-not-allowed disabled:opacity-35 pwa:text-[#2563eb] dark:pwa:text-[#60a5fa] pwa:disabled:opacity-60"
         title="Clear all AI filters"
       >
-        <RotateCcw size={11} />
+        <RotateCcw size={11} className="pwa:h-4 pwa:w-4 pwa:[stroke-width:2.4]" />
         <span className="hidden lg:inline">Reset</span>
       </button>
     </section>

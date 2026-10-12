@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ChevronUp, ChevronDown, ChevronsUpDown, TrendingUp, TrendingDown, SearchX, Lock } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronRight, ChevronsUpDown, TrendingUp, TrendingDown, SearchX, Lock } from "lucide-react";
 import { fmtInt } from "../modals/google/GoogleIntelShared.jsx";
 import AddToListMenu from "./AddToListMenu.jsx";
 
@@ -117,7 +117,8 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
   };
 
   return (
-    <div className="mt-4 flex flex-col rounded-2xl border border-theme-border bg-theme-card overflow-hidden shadow-sm">
+    // pwa: overflow-visible so the phone sort bar can stick while the page scrolls.
+    <div className="mt-4 flex flex-col rounded-2xl border border-theme-border bg-theme-card overflow-hidden shadow-sm pwa:mt-3 pwa:overflow-visible">
       {SHOW_ADD_TO_LIST && selected.size > 0 ? (
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-theme-border bg-[#6b99ff]/[0.07]">
           <span className="text-xs font-semibold text-[#6b99ff]">{selected.size} selected</span>
@@ -125,8 +126,87 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
         </div>
       ) : null}
 
+      {/* Installed phone app only: sort chips + one card per keyword instead
+          of the 6-column table, which needed sideways scrolling on a phone. */}
+      <div className="hidden pwa:block">
+        {/* Stays pinned at the top while the keyword list scrolls. */}
+        <div className="sticky top-0 z-10 flex items-center gap-1.5 overflow-x-auto pwa-scrollbar rounded-t-2xl border-b border-theme-border bg-theme-card px-3 py-2.5">
+          <span className="shrink-0 pr-1 text-[10px] font-bold uppercase tracking-wider text-theme-text-muted">Sort</span>
+          {COLUMNS.filter((col) => col.sortable && access[col.accessKey] !== false).map((col) => {
+            const active = sort.sort_by === col.key;
+            return (
+              <button
+                key={col.key}
+                type="button"
+                onClick={() => toggleSort(col.key)}
+                aria-pressed={active}
+                className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-full border px-3 text-[12px] font-semibold transition-colors active:scale-95 ${
+                  active ? "border-[#3759a3] bg-[#335296] text-white" : "border-theme-border bg-theme-card text-theme-text-secondary"
+                }`}
+              >
+                {col.label}
+                {active ? (sort.sort_dir === "asc" ? <ChevronUp size={13} /> : <ChevronDown size={13} />) : null}
+              </button>
+            );
+          })}
+        </div>
+        {/* One tappable row per keyword: name + facts on the left, the
+            competition score as a fixed-width badge on the right, then ›. */}
+        <ul>
+          {rows.map((row) => {
+            const g = row.growth_pct;
+            const canOpen = access.keyword !== false;
+            // Locked values are their own Upgrade buttons — keep their tap from
+            // also opening the keyword.
+            const locked = (label) => (
+              <span onClick={(e) => e.stopPropagation()}><LockedValue label={label} onUpgrade={onUpgrade} /></span>
+            );
+            return (
+              <li
+                key={row.keyword_id}
+                role={canOpen ? "button" : undefined}
+                tabIndex={canOpen ? 0 : undefined}
+                onClick={canOpen ? () => onKeywordClick?.(row.keyword) : undefined}
+                onKeyDown={canOpen ? (e) => { if (e.key === "Enter") onKeywordClick?.(row.keyword); } : undefined}
+                className="flex items-center gap-3 border-b border-theme-border last:border-0 px-3.5 py-3 transition-colors active:bg-theme-text/[0.05]"
+              >
+                <div className="min-w-0 flex-1">
+                  {canOpen ? (
+                    <p className="text-[15px] font-semibold leading-snug text-[#6b99ff] break-words">{row.keyword}</p>
+                  ) : locked("Keyword")}
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-theme-text-muted">
+                    {access.adVolume === false ? locked("Ad Volume") : (
+                      <span><b className="font-semibold text-theme-text">{fmtInt(row.ads_total)}</b> ads</span>
+                    )}
+                    {access.growth === false ? locked("Growth") : g == null ? null : (
+                      <span className={`inline-flex items-center gap-0.5 font-semibold ${g >= 0 ? "text-emerald-500" : "text-red-500"}`}>
+                        {g >= 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                        {g >= 0 ? "+" : ""}{g}%
+                      </span>
+                    )}
+                    {access.parentTopic === false ? null : row.category ? (
+                      <span className="min-w-0 max-w-[45%] truncate">{row.category}</span>
+                    ) : null}
+                  </div>
+                  {access.firstSeen === false ? null : (
+                    <p className="mt-0.5 text-[11px] text-theme-text-muted">First seen {fmtDate(row.first_seen)}</p>
+                  )}
+                </div>
+                {access.competition === false ? locked("Competition") : (
+                  <span className={`flex w-12 shrink-0 flex-col items-center rounded-lg py-1 ${competitionColor(row.competition_score)}`}>
+                    <span className="text-[15px] font-extrabold leading-tight">{row.competition_score ?? "–"}</span>
+                    <span className="text-[9px] font-bold uppercase tracking-wide opacity-80">Comp</span>
+                  </span>
+                )}
+                {canOpen ? <ChevronRight size={16} className="shrink-0 text-theme-text-muted" /> : null}
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
       {/* Scrollable table area — thead sticks to the top of THIS box */}
-      <div className="overflow-auto max-h-[calc(100vh-15rem)]">
+      <div className="overflow-auto max-h-[calc(100vh-15rem)] pwa:hidden">
         <table className="w-full text-[13px] [font-variant-numeric:tabular-nums]">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-theme-border bg-theme-card/95 backdrop-blur text-left text-[11px] uppercase tracking-wider text-theme-text-secondary">
@@ -204,9 +284,11 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
 
       {/* Pagination footer (outside the scroll area) — 3-col grid so the
           Prev/Next controls sit dead-center while the count stays left. */}
-      <div className="grid grid-cols-3 items-center px-4 py-3 border-t border-theme-border text-xs text-theme-text-muted">
+      {/* pwa: installed phone app — count left, controls right, one line
+          (the 3 equal columns squeezed "Page 1 of 23" onto three lines). */}
+      <div className="grid grid-cols-3 items-center px-4 py-3 border-t border-theme-border text-xs text-theme-text-muted pwa:flex pwa:justify-between pwa:gap-2 pwa:px-3 pwa:whitespace-nowrap">
         <span className="justify-self-start"><b className="text-theme-text-secondary font-semibold">{fmtInt(total)}</b> keywords</span>
-        <div className="justify-self-center flex items-center gap-2">
+        <div className="justify-self-center flex items-center gap-2 pwa:gap-1.5">
           <button
             type="button"
             disabled={page <= 1}
@@ -215,7 +297,7 @@ const KeywordExplorerTable = ({ rows, total, page, pageSize, sort, onSortChange,
           >
             Prev
           </button>
-          <span className="px-1">Page <b className="text-theme-text font-semibold">{page}</b> of {totalPages}</span>
+          <span className="px-1"><span className="pwa:hidden">Page </span><b className="text-theme-text font-semibold">{page}</b> of {totalPages}</span>
           <button
             type="button"
             disabled={page >= totalPages}

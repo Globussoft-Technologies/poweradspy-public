@@ -4,6 +4,11 @@ import { X, ChevronDown, ChevronRight } from "lucide-react";
 
 const INLINE_CHILDREN_LIMIT = 3;
 
+// Installed phone app (pwa:): the remove ✕ becomes a 24px round button — the
+// 8–9px icon was too small to tap. No effect on the website.
+const PWA_REMOVE_BTN =
+  "pwa:ml-0 pwa:flex pwa:h-5 pwa:w-5 pwa:shrink-0 pwa:items-center pwa:justify-center pwa:rounded-full pwa:bg-[#3762c1]/15 pwa:active:scale-90 pwa:[&>svg]:h-2.5 pwa:[&>svg]:w-2.5";
+
 /**
  * ChipCluster — represents one parent category and its selected children.
  *
@@ -80,7 +85,7 @@ const ChipCluster = ({
   if (showAsCollapsed) {
     return (
       <span
-        className={`inline-flex items-center gap-1 whitespace-nowrap pl-1.5 pr-1.5 py-0.5 rounded-full text-[10px] 2xl:text-xs font-semibold transition-colors ${
+        className={`inline-flex items-center gap-1 whitespace-nowrap pl-1.5 pr-1.5 py-0.5 rounded-full text-[10px] 2xl:text-xs font-semibold transition-colors pwa:h-7 pwa:py-0 pwa:pl-2.5 pwa:pr-1 pwa:text-[11px] ${
           childCount > 0
             ? "bg-[#3762c1]/10 border border-[#3759a3]/30 text-[#6b99ff] cursor-pointer hover:border-[#3759a3]/60 hover:bg-[#3762c1]/15"
             : "bg-[#3762c1]/10 border border-[#3759a3]/20 text-[#6b99ff]"
@@ -103,7 +108,7 @@ const ChipCluster = ({
             e.stopPropagation();
             onRemoveParent();
           }}
-          className="hover:text-red-400 transition-colors ml-0.5"
+          className={`hover:text-red-400 transition-colors ml-0.5 ${PWA_REMOVE_BTN}`}
           aria-label={`Remove ${parent.label}`}
         >
           <X size={9} />
@@ -116,7 +121,7 @@ const ChipCluster = ({
   const overflow = items.slice(INLINE_CHILDREN_LIMIT);
 
   return (
-    <span className="relative inline-flex items-center gap-1 whitespace-nowrap pl-1.5 pr-1.5 py-0.5 bg-[#3762c1]/15 border border-[#3759a3]/55 rounded-full text-[10px] 2xl:text-xs font-semibold text-[#6b99ff] shadow-[0_0_0_1px_rgba(55,89,163,0.15)]">
+    <span className="relative inline-flex items-center gap-1 whitespace-nowrap pl-1.5 pr-1.5 py-0.5 bg-[#3762c1]/15 border border-[#3759a3]/55 rounded-full text-[10px] 2xl:text-xs font-semibold text-[#6b99ff] shadow-[0_0_0_1px_rgba(55,89,163,0.15)] pwa:min-h-7 pwa:pl-2.5 pwa:pr-1 pwa:text-[11px]">
       <button
         onClick={onCollapse}
         className="flex items-center gap-1 hover:text-white transition-colors"
@@ -127,7 +132,7 @@ const ChipCluster = ({
       </button>
       <button
         onClick={onRemoveParent}
-        className="hover:text-red-400 transition-colors"
+        className={`hover:text-red-400 transition-colors ${PWA_REMOVE_BTN}`}
         aria-label={`Remove ${parent.label}`}
       >
         <X size={9} />
@@ -138,12 +143,12 @@ const ChipCluster = ({
       {visible.map((ch) => (
         <span
           key={ch.value}
-          className="inline-flex items-center gap-0.5 pl-1.5 pr-1 py-px bg-[#3762c1]/25 border border-[#3759a3]/30 rounded-full text-[10px] font-medium text-[#cfd9f0]"
+          className="inline-flex items-center gap-0.5 pl-1.5 pr-1 py-px bg-[#3762c1]/25 border border-[#3759a3]/30 rounded-full text-[10px] font-medium text-[#cfd9f0] pwa:h-6 pwa:pl-2 pwa:pr-0.5 pwa:text-[10.5px]"
         >
           <span className="truncate max-w-[120px]">{ch.label}</span>
           <button
             onClick={() => onRemoveChild(ch.value)}
-            className="hover:text-red-400 transition-colors"
+            className={`hover:text-red-400 transition-colors ${PWA_REMOVE_BTN}`}
             aria-label={`Remove ${ch.label}`}
           >
             <X size={8} />
@@ -182,7 +187,7 @@ const ChipCluster = ({
                     <span className="truncate max-w-[150px]">{ch.label}</span>
                     <button
                       onClick={() => onRemoveChild(ch.value)}
-                      className="hover:text-red-400 transition-colors ml-0.5"
+                      className={`hover:text-red-400 transition-colors ml-0.5 ${PWA_REMOVE_BTN}`}
                       aria-label={`Remove ${ch.label}`}
                     >
                       <X size={8} />

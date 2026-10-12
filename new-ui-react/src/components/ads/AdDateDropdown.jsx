@@ -802,8 +802,11 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
           </div>
 
           {/* Footer — selected range display + close */}
-          <div className="px-5 py-3 pwa:px-3 pwa:py-2 pwa:gap-2 bg-theme-surface border-t border-[#363840]/70 flex items-center justify-between">
-            <div className="flex flex-col">
+          {/* pwa: on the narrowest phones (e.g. 280px Galaxy Fold) the buttons
+              move under the range instead of breaking "Clear Filter" in two,
+              and the footer stays pinned while the (height-capped) panel scrolls. */}
+          <div className="px-5 py-3 pwa:px-3 pwa:py-2 pwa:gap-2 pwa:flex-wrap pwa:sticky pwa:bottom-0 pwa:z-10 bg-theme-surface border-t border-[#363840]/70 flex items-center justify-between">
+            <div className="flex flex-col pwa:min-w-0">
               <span className="text-[10px] text-white/60 uppercase whitespace-nowrap tracking-widest font-bold">
                 Selected Range
               </span>
@@ -811,7 +814,7 @@ const AdDateDropdown = ({ onDateChange, filterValues, isTikTok = false, isAdmobO
                 {formatDateRange(dates[activeDateType])}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pwa:ml-auto pwa:[&>button]:whitespace-nowrap">
               <button
                 onClick={() => {
                   if (guest?.showGuestWarning("Please login to change date filters")) return;

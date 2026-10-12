@@ -2766,7 +2766,33 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
 
   // Map first, then sort using the cleaned-up `popularity` (or `runningDays`)
   // value — guarantees the order matches what the cards actually display.
-  const mappedAds = rawAds.map(mapAdToCard);
+  const mappedAdsBeforeTypeFilter = rawAds.map(mapAdToCard);
+  const requestedNetworksForType = Array.isArray(payload.network)
+    ? payload.network.map(n => String(n).trim().toLowerCase())
+    : [String(payload.network || '').trim().toLowerCase()];
+  const redditTypeFilterActive = requestedNetworksForType.length > 0
+    && requestedNetworksForType.every(n => n === 'reddit')
+    && Array.isArray(payload.type)
+    && payload.type.length > 0
+    && !payload.type.every(t => String(t).trim().toUpperCase() === 'NA');
+  const selectedRedditTypes = new Set(
+    (Array.isArray(payload.type) ? payload.type : [payload.type])
+      .map(t => String(t).trim().toLowerCase())
+      .filter(t => t && t !== 'na'),
+  );
+  const renderableIndexes = redditTypeFilterActive
+    ? mappedAdsBeforeTypeFilter.reduce((indexes, mapped, index) => {
+        // This is intentionally the same source order used by AnalyticsModal:
+        // adType || type || ad_type.
+        const analyticsType = String(
+          mapped.adType || rawAds[index]?.type || rawAds[index]?.ad_type || '',
+        ).trim().toLowerCase();
+        if (selectedRedditTypes.has(analyticsType)) indexes.push(index);
+        return indexes;
+      }, [])
+    : mappedAdsBeforeTypeFilter.map((_, index) => index);
+  const mappedAds = renderableIndexes.map(index => mappedAdsBeforeTypeFilter[index]);
+  const renderableRawAds = renderableIndexes.map(index => rawAds[index]);
   let sortedAds;
   if (admobPosterSortActive) {
     // AdMob Poster Intelligence is backend-scoped: the server already ranks
@@ -2787,14 +2813,14 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     // For these we pair mapped ads with their raw counterparts so the
     // comparator can read numeric values that mapAdToCard formatted into
     // display strings.
-    const paired = mappedAds.map((m, i) => ({ m, raw: rawAds[i] }));
+    const paired = mappedAds.map((m, i) => ({ m, raw: renderableRawAds[i] }));
     paired.sort((a, b) => cmpNumeric(
       toNumRaw(a.raw, sortField, sortField === 'days_running' ? a.m.runningDays : undefined),
       toNumRaw(b.raw, sortField, sortField === 'days_running' ? b.m.runningDays : undefined),
     ));
     sortedAds = paired.map(p => p.m);
   } else {
-    const paired = mappedAds.map((m, i) => ({ m, raw: rawAds[i] }));
+    const paired = mappedAds.map((m, i) => ({ m, raw: renderableRawAds[i] }));
     const dateCompare = (a, b) => {
       const aValue = sortField === 'domain_registration_date'
         ? (a.raw?.domain_registration_date ?? a.raw?.domain_registered_date)

@@ -6,6 +6,18 @@ import SectionLabel from "../shared/SectionLabel";
 import SidebarDivider from "../shared/SidebarDivider";
 import SchemaRenderer from "../sdui/SchemaRenderer";
 import AiSignalsModal from "../sdui/AiSignalsModal";
+import { useInstalledMobile } from "../../hooks/useInstalledMobile";
+
+// Draft helpers for the installed-app filters sheet.
+const COUNT_EXCLUDED_KEYS = new Set(["_autoSortField", "has_ai_meta", "sortDirection"]);
+const isActiveValue = (v) =>
+  Array.isArray(v) ? v.length > 0 : typeof v === "boolean" ? v : v !== null && v !== undefined && v !== "";
+const countActiveFilters = (values) =>
+  Object.entries(values || {}).filter(([key, v]) => !COUNT_EXCLUDED_KEYS.has(key) && isActiveValue(v)).length;
+const sameFilters = (a, b) => {
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  return [...keys].every((key) => key === "_autoSortField" || JSON.stringify(a?.[key]) === JSON.stringify(b?.[key]));
+};
 
 /**
  * Sidebar — Fully SDUI-driven.
@@ -38,6 +50,7 @@ const Sidebar = ({
   onShowSavedAdsPage,
   onOpenKeywordsExplorer,
   searchIn = "keyword",
+  onClearFilters,
 }) => {
   const AI_SIGNALS_OPEN_KEY = "sdui.aiSignals.open";
   const [aiSignalsOpen, setAiSignalsOpen] = useState(() => {
@@ -69,6 +82,71 @@ const Sidebar = ({
   const guestClearAll = guest?.isRestricted
     ? () => onRestricted ? onRestricted() : guest.showGuestWarning("Please login to change filters")
     : clearAll;
+
+  // Installed phone app: the filters sheet collects selections in a local draft
+  // and applies them together with "Apply filters" (one search instead of one
+  // per tap). Closing with ✕ / the backdrop discards the draft. The website
+  // sidebar and restricted guests keep applying each change immediately.
+  const isInstalledMobile = useInstalledMobile();
+  const useDraft = isInstalledMobile && !guest?.isRestricted;
+  const [draft, setDraft] = useState(null);
+  useEffect(() => {
+    setDraft(useDraft && isOpen ? { ...(filterValues || {}) } : null);
+    // Snapshot only when the sheet opens; later live changes don't reset it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useDraft, isOpen]);
+  const setDraftFilter = useCallback(
+    (key, value) => setDraft((d) => ({ ...(d || {}), [key]: value })),
+    [],
+  );
+  const sheetValues = draft ?? filterValues;
+  const draftCount = useMemo(() => countActiveFilters(draft), [draft]);
+  const draftDirty = Boolean(draft) && !sameFilters(draft, filterValues);
+  const applyDraft = () => {
+    if (draft) {
+      if (countActiveFilters(draft) === 0) {
+        clearAll();
+      } else {
+        // Same setter as a live tap, so analytics and the range auto-sort hint
+        // behave exactly as before; React batches these into one search.
+        const keys = new Set([...Object.keys(filterValues || {}), ...Object.keys(draft)]);
+        keys.forEach((key) => {
+          if (key === "_autoSortField") return;
+          if (JSON.stringify(filterValues?.[key]) !== JSON.stringify(draft[key])) setFilter(key, draft[key]);
+        });
+      }
+    }
+    setIsOpen(false);
+  };
+  // "Clear all" in the sheet takes effect right away (the feed updates and the
+  // sheet stays open) — it used to only empty the draft, so closing with ✕
+  // left every filter applied. AI-search filters are cleared via the parent.
+  const [justCleared, setJustCleared] = useState(false);
+  useEffect(() => {
+    if (!justCleared) return undefined;
+    const t = setTimeout(() => setJustCleared(false), 1200);
+    return () => clearTimeout(t);
+  }, [justCleared]);
+  const clearNow = () => {
+    setDraft({});
+    if (onClearFilters) onClearFilters();
+    else clearAll();
+    setJustCleared(true);
+  };
+
+  // The AI Signals popup applies live; fold what it changed into an open draft
+  // so "Apply filters" doesn't roll it back.
+  const applyAiSignals = (next, analytics) => {
+    setAllFilters(next, analytics);
+    setDraft((d) => {
+      if (!d) return d;
+      const merged = { ...d };
+      new Set([...Object.keys(next || {}), ...Object.keys(filterValues || {})]).forEach((key) => {
+        if (JSON.stringify(next?.[key]) !== JSON.stringify(filterValues?.[key])) merged[key] = next?.[key];
+      });
+      return merged;
+    });
+  };
 
   const { t } = useTranslation();
   const sidebarDocs = config?.sidebar || [];
@@ -171,7 +249,14 @@ const Sidebar = ({
           <div className="hidden pwa:flex flex-col items-center px-4 pb-2 border-b border-theme-border">
             <span className="mb-2 h-1 w-10 rounded-full bg-theme-text-muted/40" />
             <div className="flex w-full items-center justify-between">
-              <span className="text-base font-bold text-theme-text">{t("filters")}</span>
+              <span className="flex items-center gap-2 text-base font-bold text-theme-text">
+                {t("filters")}
+                {draft && draftCount > 0 && (
+                  <span className="rounded-full bg-[#335296]/10 px-2 py-0.5 text-[11px] font-bold text-[#335296] dark:text-[#8fb0ff]">
+                    {draftCount} selected
+                  </span>
+                )}
+              </span>
               <button
                 type="button"
                 onClick={() => setIsOpen(false)}
@@ -310,8 +395,8 @@ const Sidebar = ({
                         <React.Fragment key={doc._id}>
                           <SchemaRenderer
                             document={doc}
-                            filterValues={filterValues}
-                            onFilterChange={guestSetFilter}
+                            filterValues={sheetValues}
+                            onFilterChange={draft ? setDraftFilter : guestSetFilter}
                             onDocumentClick={
                               doc._id === "ai_meta" ? openAiSignals : undefined
                             }
@@ -339,8 +424,34 @@ const Sidebar = ({
                 )}
               </div>
 
-              {/* Clear All */}
-              {totalActiveFilters > 0 && (
+              {/* Installed phone app: Clear all + Apply, pinned under the list.
+                  Apply sends the draft as one search and closes the sheet. */}
+              {draft && (
+                <div className="hidden pwa:flex items-center gap-3 border-t border-theme-border bg-theme-bg px-4 pt-3 pb-2">
+                  <button
+                    type="button"
+                    onClick={clearNow}
+                    disabled={draftCount === 0 && totalActiveFilters === 0 && !justCleared}
+                    className={`h-11 shrink-0 rounded-xl border px-4 text-[13px] font-semibold transition-colors active:scale-[0.97] disabled:opacity-40 ${
+                      justCleared ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400" : "border-theme-border text-theme-text-secondary"
+                    }`}
+                  >
+                    {justCleared ? "✓ Cleared" : "Clear all"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyDraft}
+                    className="h-11 flex-1 rounded-xl bg-[#335296] text-[14px] font-bold text-white shadow-md transition-transform active:scale-[0.98]"
+                  >
+                    {draftDirty
+                      ? `Apply filters${draftCount > 0 ? ` · ${draftCount}` : ""}`
+                      : "Done"}
+                  </button>
+                </div>
+              )}
+
+              {/* Clear All (website, and restricted guests in the app) */}
+              {totalActiveFilters > 0 && !draft && (
                 <div className="px-3 py-4">
                   <button
                     onClick={guestClearAll}
@@ -366,7 +477,7 @@ const Sidebar = ({
         isFilterRestricted={isFilterRestricted}
         filterHasPlanEntry={filterHasPlanEntry}
         onRestricted={onRestricted}
-        onApply={setAllFilters}
+        onApply={applyAiSignals}
       />
     </>
   );

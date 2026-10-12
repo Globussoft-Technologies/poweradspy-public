@@ -44,8 +44,10 @@ export const AiSearchExplanation = ({
   const canDismiss = Boolean(onDismiss) && Boolean(headline || note);
 
   return (
+    // pwa: installed phone app keeps the card inside the screen gutters (it ran
+    // past the right edge on phones).
     <section
-      className={`relative mb-3 flex items-start gap-3 rounded-xl border py-2.5 pl-2.5 ${
+      className={`relative mb-3 flex items-start gap-3 rounded-xl border py-2.5 pl-2.5 pwa:mx-3 pwa:mb-2 ${
         canDismiss ? "pr-10" : "pr-3"
       } ${AI_TONE.panel}`}
       role="region"
