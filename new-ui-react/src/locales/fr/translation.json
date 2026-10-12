@@ -44,5 +44,10 @@
   "ai_search_button_label": "Demander à l'IA",
   "ai_search_on": "Rechercher avec l'IA",
   "ai_search_off": "Revenir à la recherche normale",
-  "ai_search_placeholder": "Décrivez ce que vous cherchez — ex. : publicités vidéo Facebook pour la perte de poids aux États-Unis"
+  "ai_search_placeholder": "Décrivez ce que vous cherchez — ex. : publicités vidéo Facebook pour la perte de poids aux États-Unis",
+  "ai_search_prompt_mobile_app_installs": "Trouvez des publicités pour l'installation d'applications mobiles.",
+  "ai_search_prompt_weight_loss_products": "Montrez-moi des publicités pour des produits minceur.",
+  "ai_search_prompt_beauty_trends": "Quelles publicités sont tendance dans le secteur de la beauté ?",
+  "ai_search_prompt_recent_india_ads": "Trouvez les publicités récemment lancées en Inde.",
+  "ai_search_prompt_high_engagement_video_ads": "Montrez-moi des publicités vidéo à fort engagement."
 }

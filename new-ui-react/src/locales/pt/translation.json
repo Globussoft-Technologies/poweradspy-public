@@ -44,5 +44,10 @@
   "ai_search_button_label": "Perguntar à IA",
   "ai_search_on": "Pesquisar com IA",
   "ai_search_off": "Voltar à pesquisa normal",
-  "ai_search_placeholder": "Descreva o que você procura — ex.: anúncios em vídeo no Facebook para emagrecimento nos EUA"
+  "ai_search_placeholder": "Descreva o que você procura — ex.: anúncios em vídeo no Facebook para emagrecimento nos EUA",
+  "ai_search_prompt_mobile_app_installs": "Encontre anúncios que promovem a instalação de aplicativos móveis.",
+  "ai_search_prompt_weight_loss_products": "Mostre-me anúncios de produtos para emagrecimento.",
+  "ai_search_prompt_beauty_trends": "Quais anúncios estão em alta no setor de beleza?",
+  "ai_search_prompt_recent_india_ads": "Encontre anúncios lançados recentemente na Índia.",
+  "ai_search_prompt_high_engagement_video_ads": "Mostre-me anúncios em vídeo com alto engajamento."
 }

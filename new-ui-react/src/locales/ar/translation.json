@@ -44,5 +44,10 @@
   "ai_search_button_label": "اسأل الذكاء الاصطناعي",
   "ai_search_on": "البحث باستخدام الذكاء الاصطناعي",
   "ai_search_off": "التبديل إلى البحث العادي",
-  "ai_search_placeholder": "صِف ما تبحث عنه — مثال: إعلانات فيديو على فيسبوك لإنقاص الوزن في الولايات المتحدة"
+  "ai_search_placeholder": "صِف ما تبحث عنه — مثال: إعلانات فيديو على فيسبوك لإنقاص الوزن في الولايات المتحدة",
+  "ai_search_prompt_mobile_app_installs": "اعثر على إعلانات تروّج لتثبيت تطبيقات الهاتف المحمول.",
+  "ai_search_prompt_weight_loss_products": "اعرض لي إعلانات لمنتجات إنقاص الوزن.",
+  "ai_search_prompt_beauty_trends": "ما الإعلانات الرائجة في مجال التجميل؟",
+  "ai_search_prompt_recent_india_ads": "اعثر على الإعلانات التي أُطلقت مؤخرًا في الهند.",
+  "ai_search_prompt_high_engagement_video_ads": "اعرض لي إعلانات فيديو عالية التفاعل."
 }

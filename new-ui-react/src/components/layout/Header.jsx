@@ -42,6 +42,11 @@ import { getNetworkContext, trackAdAction } from "../../utils/googleAnalytics";
 import NotificationPopup from "./NotificationPopup";
 import { PLATFORMS } from "../../constants";
 import { AnimatedThemeToggler } from "../ui/animated-theme-toggler";
+import {
+  AI_SEARCH_PROMPT_DEFINITIONS,
+  AI_SEARCH_PROMPTS,
+  getAiSearchPromptSelection,
+} from "../../utils/aiSearchPrompts";
 
 const LANGUAGES = [
   { code: "en", label: "English", flag: "🇺🇸" },
@@ -52,13 +57,7 @@ const LANGUAGES = [
 
 // Keep the first-use suggestions local to the search UI so choosing one uses
 // the same AI search path as a prompt typed by the user.
-export const AI_SEARCH_PROMPTS = [
-  "Find ads promoting mobile app installs.",
-  "Show me ads for weight-loss products.",
-  "What ads are trending in the beauty industry?",
-  "Find recently launched ads in India.",
-  "Show me high-engagement video ads.",
-];
+export { AI_SEARCH_PROMPTS };
 
 // Programmatically trigger Google Translate widget for full-page translation.
 // Retries up to 10 times (3 s total) to handle async widget initialization.
@@ -364,6 +363,15 @@ const Header = ({
     const searchType = TYPE_TO_SEARCHIN[notif?.type] || "keyword";
     const term = notif?.keyword || "";
     if (!term) return;
+
+    // A notification is an explicit normal-search navigation. Leave AI mode
+    // before submitting it so the active prompt cannot overwrite the query or
+    // hide the notification results behind the AI result state.
+    if (aiMode || aiPrompt?.trim()) {
+      preserveAiModeRef.current = false;
+      setAiMode(false);
+      onExitAiSearch?.();
+    }
     setLocalSearchIn(searchType);
     setLocalQuery(term);
     if (onSearch) onSearch(term, searchType, notif.network);
@@ -1028,14 +1036,16 @@ const Header = ({
                     </span>
                   </div>
                   <div className="flex flex-col gap-1.5 pwa:gap-2">
-                    {AI_SEARCH_PROMPTS.map((prompt) => (
+                    {AI_SEARCH_PROMPT_DEFINITIONS.map((definition) => {
+                      const selection = getAiSearchPromptSelection(definition, t);
+                      return (
                       <button
-                        key={prompt}
+                        key={definition.id}
                         type="button"
                         onClick={() => {
                           setShowAiPrompts(false);
-                          setLocalQuery(prompt);
-                          onAiSearch?.(prompt);
+                          setLocalQuery(selection.displayPrompt);
+                          onAiSearch?.(selection.prompt, selection.displayPrompt);
                           if (pwaSearchAnchor) closeMobileSearch();
                         }}
                         // pwa: a soft card per prompt — tinted ✦ badge, text, and a
@@ -1048,10 +1058,11 @@ const Header = ({
                             className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
                           />
                         </span>
-                        <span className="min-w-0 truncate whitespace-nowrap pwa:flex-1 pwa:whitespace-normal pwa:leading-snug pwa:line-clamp-2">{prompt}</span>
+                        <span className="min-w-0 truncate whitespace-nowrap pwa:flex-1 pwa:whitespace-normal pwa:leading-snug pwa:line-clamp-2">{selection.displayPrompt}</span>
                         <ArrowUpRight size={16} className="hidden pwa:block shrink-0 text-theme-text-muted" />
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

@@ -45,5 +45,10 @@
   "ai_search_button_label": "Ask AI",
   "ai_search_on": "Search with AI",
   "ai_search_off": "Switch to normal search",
-  "ai_search_placeholder": "Describe what you're looking for — e.g. Facebook video ads for weight loss in the US"
+  "ai_search_placeholder": "Describe what you're looking for — e.g. Facebook video ads for weight loss in the US",
+  "ai_search_prompt_mobile_app_installs": "Find ads promoting mobile app installs.",
+  "ai_search_prompt_weight_loss_products": "Show me ads for weight-loss products.",
+  "ai_search_prompt_beauty_trends": "What ads are trending in the beauty industry?",
+  "ai_search_prompt_recent_india_ads": "Find recently launched ads in India.",
+  "ai_search_prompt_high_engagement_video_ads": "Show me high-engagement video ads."
 }

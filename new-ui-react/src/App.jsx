@@ -2675,12 +2675,15 @@ const App = () => {
   // (most-specific first) until one returns results → commit that tier's filters
   // to state so the normal reactive pipeline renders it (pagination included).
   // The applied filters remain fully visible and manually editable afterward.
-  const runAiSearch = useCallback(async (prompt) => {
+  const runAiSearch = useCallback(async (prompt, displayPrompt = prompt) => {
     const trimmed = (prompt || '').trim();
     if (!trimmed) {
       resetAiSearchState();
       return;
     }
+    // Built-in prompts can be sent to DS in their stable canonical form while
+    // the localized selection remains visible in the controlled search input.
+    const visiblePrompt = String(displayPrompt || prompt).trim() || trimmed;
     if (guestGuard("Please login to search", { searchQuery: trimmed })) return;
     clearFailedAiPromptReloadMarker();
     aiFailedPromptRef.current = false;
@@ -2693,9 +2696,9 @@ const App = () => {
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
     clearAiSearchDisplay();
-    // Store the raw user prompt separately so Ask AI keeps showing exactly what
-    // the user typed even when the DS payload rewrites the internal query.
-    dispatch(setAiPrompt(trimmed));
+    // Store the visible prompt separately from the planner input so a selected
+    // localized template does not flash back to its canonical English text.
+    dispatch(setAiPrompt(visiblePrompt));
     dismissAiToast();
     setAiCapabilityMessage(null);
 
