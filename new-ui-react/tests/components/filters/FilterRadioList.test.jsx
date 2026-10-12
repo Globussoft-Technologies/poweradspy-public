@@ -32,6 +32,44 @@ describe("FilterRadioList", () => {
     );
     expect(container.querySelector("div.bg-\\[\\#335296\\]")).not.toBeNull();
   });
+  it("uses the SDUI default option when no value is selected", () => {
+    const { container } = render(
+      <FilterRadioList
+        options={[
+          { label: "All", value: "all", selected_by_default: true },
+          { label: "Male", value: "male" },
+        ]}
+        onChange={() => {}}
+      />,
+    );
+    expect(container.querySelector("div.bg-\\[\\#335296\\]")).not.toBeNull();
+  });
+  it("restores the SDUI default when a radio value is cleared as an empty array", () => {
+    const { container } = render(
+      <FilterRadioList
+        options={[
+          { label: "All", value: "all", selected_by_default: true },
+          { label: "Male", value: "male" },
+        ]}
+        value={[]}
+        onChange={() => {}}
+      />,
+    );
+    expect(container.querySelector("div.bg-\\[\\#335296\\]")).not.toBeNull();
+  });
+  it("restores the SDUI default when a chip clears a radio value to an empty string", () => {
+    const { container } = render(
+      <FilterRadioList
+        options={[
+          { label: "All", value: "all", selected_by_default: true },
+          { label: "Male", value: "male" },
+        ]}
+        value=""
+        onChange={() => {}}
+      />,
+    );
+    expect(container.querySelector("div.bg-\\[\\#335296\\]")).not.toBeNull();
+  });
   it("no value or selected → currentValue=''; no dot rendered", () => {
     const { container } = render(
       <FilterRadioList options={["A", "B"]} onChange={() => {}} />,

@@ -1343,7 +1343,7 @@ const platformSupports = (nets, field, dynamicMap) => {
 
 export const buildSearchPayload = (filters = {}) => {
   const {
-    searchQuery, searchIn, exactSearch, activePlatforms, activePlatform, selCategories, selCountries, sortBy,
+    searchQuery, searchIn, searchTerms, exactSearch, activePlatforms, activePlatform, selCategories, selCountries, sortBy,
     sortDirection,
     filterPlatformSupport: dynamicPlatformSupport,
   } = filters;
@@ -1624,8 +1624,11 @@ export const buildSearchPayload = (filters = {}) => {
   // - Any other combo (no GDN) → true
   const youtube_display_ads = !resolvedNetworks.includes('gdn');
 
-  const keyword = searchIn === 'keyword' ? (searchQuery || 'NA') : 'NA';
-  const advertiser = searchIn === 'advertiser' ? (searchQuery || 'NA') : 'NA';
+  // AI Search can send several keywords or advertisers as a list. Lists go out
+  // as arrays; a single value keeps the string form.
+  const searchList = Array.isArray(searchTerms) && searchTerms.length > 0 ? searchTerms : null;
+  const keyword = searchIn === 'keyword' ? (searchList || searchQuery || 'NA') : 'NA';
+  const advertiser = searchIn === 'advertiser' ? (searchList || searchQuery || 'NA') : 'NA';
   const domain = searchIn === 'domain' ? (searchQuery || 'NA') : 'NA';
 
   // Category: prefer adcategory from nested filter, then filterValues.categories, fallback to selCategories

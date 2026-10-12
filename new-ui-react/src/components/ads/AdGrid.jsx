@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
-import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles, Info, X } from "lucide-react";
+import { SearchX, AlertTriangle, RefreshCw, ArrowUp, FileDown, EyeOff, Radar, Sparkles } from "lucide-react";
 
 // PRD FR-11 — networks with materially lower crawled ad volume than the rest of
 // the platform today. When every currently-active platform is one of these, the
@@ -15,6 +15,7 @@ import OriginalPreview from "./OriginalPreview";
 import AdDetailModal from "./AdDetailModal";
 import AdFilterBar, { resolveActiveSortLabel, resolveSortPlanAccessId } from "./AdFilterBar";
 import AiQuickFilters from "./AiQuickFilters";
+import { AiSearchExplanation, AiSearchToast } from "./AiSearchNotices";
 import FilterChip from "../filters/FilterChip";
 import ChipCluster from "../filters/ChipCluster";
 import { getAiColorLabel } from "../../utils/aiColorPalette";
@@ -250,6 +251,7 @@ const AdGrid = ({
   onGuestLimit,
   closeDetailSignal,
   searchQuery,
+  searchTerms = null,
   searchIn,
   exactSearch,
   aiPrompt = "",
@@ -258,6 +260,8 @@ const AdGrid = ({
   onAiQuickFilterChange,
   onAiQuickFilterApply,
   aiCapabilityMessage = null,
+  aiToast = null,
+  onAiToastDismiss,
   aiSearchSummary = "",
   aiSearchNote = "",
   onAiSearchPlanContextDismiss,
@@ -293,9 +297,6 @@ const AdGrid = ({
   // result sources. Manual filters from the sidebar/modal remain unlabelled.
   const hasAiResultSource = Boolean(String(aiPrompt || "").trim()) || aiQuickFilterId != null;
   const isAiSearchResult = hasAiResultSource && isAiFilteredResult;
-  const hasAiSearchPlanContext =
-    Boolean(aiSearchSummary) || Boolean(aiSearchNote);
-  const hasAiSearchSuggestions = aiSearchSuggestions.length > 0;
 
   // "Total Ads" = the ES match total from the backend (`adsMeta` is per-network
   // `meta.total`, captured once at page 0 in App.jsx, stable across pages). The
@@ -1176,7 +1177,10 @@ const AdGrid = ({
   }, [ads.length, hasMore, loadingMore, measuredHeights, setPage]);
 
   return (
-    <div className="flex-1 overflow-hidden relative bg-fixed flex flex-col">
+    <div
+      className="flex-1 overflow-hidden relative bg-fixed flex flex-col"
+      data-ai-notice-bounds
+    >
       <div className="pb-2 pt-3 sm:px-5">
         {aiSearchLoading && (
           <div
@@ -1206,118 +1210,67 @@ const AdGrid = ({
             </span>
           </div>
         )}
-        {!aiSearchLoading && (hasAiSearchPlanContext || hasAiSearchSuggestions) && (
-          <div
-            className="mb-3 flex flex-wrap items-start gap-3 rounded-2xl border border-[#7c3aed]/35 bg-theme-surface px-4 py-3 shadow-[0_10px_28px_rgba(0,0,0,0.16)]"
-            role="region"
-            aria-label="AI search explanation"
-          >
-            {hasAiSearchPlanContext && (
-              <>
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#7c3aed]/15 text-[#6d28d9] dark:text-[#c4b5fd]">
-                  <Sparkles size={16} />
-                </span>
-                <div className="min-w-0 flex-1 space-y-1">
-                  {aiSearchSummary && (
-                    <p className="whitespace-pre-line break-words text-xs leading-5 text-theme-text-muted">
-                      {aiSearchSummary}
-                    </p>
-                  )}
-                  {aiSearchNote && (
-                    <p className="flex items-start gap-1.5 text-[10px] leading-4 text-theme-text-muted">
-                      <Info size={11} className="mt-0.5 shrink-0 text-[#8b5cf6]" />
-                      <span className="min-w-0 break-words">{aiSearchNote}</span>
-                    </p>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={onAiSearchPlanContextDismiss}
-                  className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-theme-text-muted transition-colors hover:bg-theme-text/[0.08] hover:text-theme-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8b5cf6]/50"
-                  aria-label="Dismiss AI search explanation"
-                  title="Dismiss AI search explanation"
-                >
-                  <X size={15} />
-                </button>
-              </>
-            )}
-            {hasAiSearchSuggestions && (
-              <div
-                className={`${hasAiSearchPlanContext ? "mt-1 basis-full border-t border-theme-border/70 pt-3" : "w-full"}`}
-                role="group"
-                aria-label="Did you mean suggestions"
-              >
-                <div className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[#8b5cf6]">
-                  Did you mean:
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {aiSearchSuggestions.map((suggestion, index) => (
-                    <button
-                      key={`${suggestion.prompt}-${index}`}
-                      type="button"
-                      onClick={() => {
-                        onAiSuggestionsDismiss?.();
-                        onAiSuggestionSelect?.(suggestion.prompt);
-                      }}
-                      className="group flex min-h-8 min-w-0 max-w-full items-center gap-2 rounded-full border border-theme-border bg-theme-text/[0.025] px-3 py-1.5 text-left text-[11px] font-medium text-theme-text transition-colors hover:border-[#8b5cf6]/45 hover:bg-[#8b5cf6]/10"
-                      aria-label={`Run suggested search: ${suggestion.prompt}`}
-                    >
-                      <Sparkles
-                        size={13}
-                        className="shrink-0 text-[#8b5cf6] transition-transform group-hover:scale-110"
-                      />
-                      <span className="min-w-0 whitespace-normal">{suggestion.prompt}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+        {!aiSearchLoading && (
+          <AiSearchExplanation
+            failureMessage={aiCapabilityMessage}
+            summary={aiSearchSummary}
+            note={aiSearchNote}
+            suggestions={aiSearchSuggestions}
+            onDismiss={onAiSearchPlanContextDismiss}
+            onSuggestionSelect={onAiSuggestionSelect}
+            onSuggestionsDismiss={onAiSuggestionsDismiss}
+          />
         )}
 
-        {/* Dynamic Filter Bar Wrapper */}
-        <div
-          className={`transition-all duration-300 ease-in-out ${
-            shouldCollapseHeader
-              ? "max-h-0 opacity-0 invisible overflow-hidden pointer-events-none mb-0"
-              : "max-h-[320px] opacity-100 visible mb-3"
-          }`}
-        >
-          <AdFilterBar
-            sdui={sdui}
-            platformOptions={platformOptions}
-            specificPlatforms={specificPlatforms}
-            handleAllClick={handleAllClick}
-            handlePlatformClick={handlePlatformClick}
-            isAllActive={isAllActive}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            sortTabs={sortTabs}
-            onDateChange={onDateChange}
-            isFilterRestricted={isFilterRestricted}
-            onDateRestricted={onDateRestricted}
-            onSortRestricted={onSortRestricted}
-            onAdTypeRestricted={onAdTypeRestricted}
-            onAiFilterRestricted={onAiFilterRestricted}
-            guest={guest}
-          />
-          <AiQuickFilters
-            document={aiFiltersDoc}
-            filterValues={filterValues}
-            onApply={onAiQuickFilterApply || setAllFilters}
-            aiPrompt={aiPrompt}
-            activeQuickFilterId={aiQuickFilterId}
-            onQuickFilterChange={onAiQuickFilterChange}
-            isRestricted={
-              !!guest?.isRestricted || !!isFilterRestricted?.("ai_meta")
-            }
-            onRestricted={onAiFilterRestricted}
-            activePlatforms={activePlatforms}
-            searchQuery={searchQuery}
-            searchIn={searchIn}
-            exactSearch={exactSearch}
-            filterPlatformSupport={filterPlatformSupport}
-          />
+        {/* Dynamic Filter Bar Wrapper. The AI notice floats directly under this
+            block, over the results rather than pushing them down, and it stays put
+            when the block collapses on scroll. */}
+        <div className="relative">
+          <div
+            className={`transition-all duration-300 ease-in-out ${
+              shouldCollapseHeader
+                ? "max-h-0 opacity-0 invisible overflow-hidden pointer-events-none mb-0"
+                : "max-h-[320px] opacity-100 visible mb-3"
+            }`}
+          >
+            <AdFilterBar
+              sdui={sdui}
+              platformOptions={platformOptions}
+              specificPlatforms={specificPlatforms}
+              handleAllClick={handleAllClick}
+              handlePlatformClick={handlePlatformClick}
+              isAllActive={isAllActive}
+              activeTab={activeTab}
+              setActiveTab={setActiveTab}
+              sortTabs={sortTabs}
+              onDateChange={onDateChange}
+              isFilterRestricted={isFilterRestricted}
+              onDateRestricted={onDateRestricted}
+              onSortRestricted={onSortRestricted}
+              onAdTypeRestricted={onAdTypeRestricted}
+              onAiFilterRestricted={onAiFilterRestricted}
+              guest={guest}
+            />
+            <AiQuickFilters
+              document={aiFiltersDoc}
+              filterValues={filterValues}
+              onApply={onAiQuickFilterApply || setAllFilters}
+              aiPrompt={aiPrompt}
+              activeQuickFilterId={aiQuickFilterId}
+              onQuickFilterChange={onAiQuickFilterChange}
+              isRestricted={
+                !!guest?.isRestricted || !!isFilterRestricted?.("ai_meta")
+              }
+              onRestricted={onAiFilterRestricted}
+              activePlatforms={activePlatforms}
+              searchQuery={searchQuery}
+              searchTerms={searchTerms}
+              searchIn={searchIn}
+              exactSearch={exactSearch}
+              filterPlatformSupport={filterPlatformSupport}
+            />
+          </div>
+          <AiSearchToast toast={aiToast} onDismiss={onAiToastDismiss} />
         </div>
 
         {/* Row 2: Sort tabs */}
@@ -1453,17 +1406,6 @@ const AdGrid = ({
       {/* Scrollable content area — disable scrolling when there's nothing to scroll
           through (empty / error states), so the infinite-scroll handler can't fire
           spurious page-bumps that cause flicker at high browser zoom levels. */}
-      {aiCapabilityMessage && ads.length > 0 && !error && (
-        <div
-          className="mx-5 mb-2 rounded-lg border border-[#8b5cf6]/25 bg-[#8b5cf6]/10 px-3 py-2 text-xs text-theme-text-muted"
-          role="status"
-          aria-live="polite"
-        >
-          <span className="font-semibold text-[#8b5cf6]">AI Search note:</span>{' '}
-          {aiCapabilityMessage}
-        </div>
-      )}
-
       <div
         className={`px-5 pb-5 flex-1 ${ads.length > 0 ? "overflow-y-auto" : "overflow-hidden"}`}
         ref={scrollRef}
@@ -1493,32 +1435,9 @@ const AdGrid = ({
           </div>
         )}
 
-        {/* A planner-only operation gets a capability state rather than the
-            misleading generic "No ads found" state or a broad fallback search. */}
-        {!error && !aiSearchLoading && aiCapabilityMessage && ads.length === 0 && !loadingMore && (
-          <div
-            className="flex flex-col items-center justify-center gap-5 py-32"
-            role="status"
-            aria-live="polite"
-          >
-            <div className="flex h-20 w-20 items-center justify-center rounded-2xl border border-[#8b5cf6]/25 bg-[#8b5cf6]/10">
-              <Info size={36} className="text-[#8b5cf6]" />
-            </div>
-            <div className="space-y-2 text-center">
-              <h3 className="text-lg font-bold text-theme-text-muted">
-                This request needs a supported filter
-              </h3>
-              <p className="max-w-sm text-xs leading-relaxed text-theme-text-muted">
-                {aiCapabilityMessage}
-              </p>
-            </div>
-          </div>
-        )}
-
         {/* Platform suggestion banner — pinned to top */}
         {!error &&
           !aiSearchLoading &&
-          !aiCapabilityMessage &&
           ads.length === 0 &&
           !loadingMore &&
           (() => {
@@ -1599,7 +1518,7 @@ const AdGrid = ({
             empty state below when every active platform is a known low-volume
             network, so the message explains the sparse coverage rather than
             implying the search terms were wrong. */}
-        {!error && !aiSearchLoading && !aiCapabilityMessage && ads.length === 0 && !loadingMore && activePlatforms.length > 0 &&
+        {!error && !aiSearchLoading && ads.length === 0 && !loadingMore && activePlatforms.length > 0 &&
           activePlatforms.every((p) => LOW_VOLUME_NETWORKS.includes(p.toLowerCase())) && (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-20 h-20 rounded-2xl bg-theme-surface border border-theme-border flex items-center justify-center">
@@ -1629,7 +1548,7 @@ const AdGrid = ({
         )}
 
         {/* Empty state (generic) */}
-        {!error && !aiSearchLoading && !aiCapabilityMessage && ads.length === 0 && !loadingMore &&
+        {!error && !aiSearchLoading && ads.length === 0 && !loadingMore &&
           !(activePlatforms.length > 0 && activePlatforms.every((p) => LOW_VOLUME_NETWORKS.includes(p.toLowerCase()))) && (
           <div className="flex flex-col items-center justify-center py-32 gap-5">
             <div className="w-20 h-20 rounded-2xl bg-theme-surface border border-theme-border flex items-center justify-center">

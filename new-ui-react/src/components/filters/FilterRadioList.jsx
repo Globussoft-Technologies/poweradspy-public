@@ -14,15 +14,21 @@ const FilterRadioList = ({
   onChange,
   accented = false,
 }) => {
-  const { theme } = useTheme();
+  const { theme = "dark" } = useTheme() || {};
   const isLightTheme = theme === "light";
   const [expandedCount, setExpandedCount] = useState(false);
 
   const getOptValue = (opt) => opt?.value ?? opt?.label ?? opt;
   const getOptLabel = (opt) => opt?.label ?? opt;
+  const defaultOption = options.find((opt) => opt?.selected_by_default);
 
-  // Support both `value` (string) and `selected` ([string]) patterns
-  const currentValue = value ?? selected[0] ?? "";
+  // Support both controlled values and SDUI defaults without turning the
+  // display-only default into an API filter value.
+  const selectedValue = Array.isArray(value) ? value[0] : value;
+  const fallbackValue = selectedValue === "" ? undefined : selectedValue;
+  const selectedFallback = selected[0] === "" ? undefined : selected[0];
+  const currentValue =
+    fallbackValue ?? selectedFallback ?? (defaultOption ? getOptValue(defaultOption) : "");
   const selectedCount = currentValue ? 1 : 0;
   // The AI filter popup uses a separate accent tint so the state still reads
   // clearly in light and dark themes.

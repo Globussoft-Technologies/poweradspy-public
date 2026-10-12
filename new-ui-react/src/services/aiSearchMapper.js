@@ -2,7 +2,7 @@
 // Translates a DS payload's `args` object into the shapes our search machinery
 // actually consumes:
 //   - searchQuery / searchIn   (Redux)         ← keyword | advertiser | domain
-//   - activePlatforms          (useSDUI)       ← network[]
+//   - activePlatforms          (useSDUI)       ← network[] or the explicit "all" scope
 //   - sortBy                   (useSDUI setter)← order_column + order_by
 //   - exactSearch             (Redux)         ← exact_search
 //   - filterValues            (useSDUI map)   ← everything else, keyed by SDUI _id
@@ -15,7 +15,7 @@
 //
 // DS `args` field reference (see PAYLOAD_API_GUIDE.md):
 //   keyword | advertiser | domain (mutually exclusive, ALL may be absent for a
-//   category-only search), network[], type, country[], adcategory, subCategory,
+//   category-only search), network[] or "all", type, country[], adcategory, subCategory,
 //   datePreset/dateRange (posted-date search),
 //   gender, verified, order_column, order_by, call_to_action[] (array),
 //   affiliate[], ecommerce[], funnel[], market_platform[], source[],
@@ -317,9 +317,11 @@ function mapSortValue(orderColumn) {
  * @param {object} args   the DS payload's `args` object
  * @param {object} config the live (normalized) SDUI config
  * @returns {{
- *   searchQuery: string,
+ *   searchQuery: string,       // shown in the search bar; lists are joined with ", "
  *   searchIn: 'keyword'|'advertiser'|'domain'|null,
+ *   searchTerms: string[]|null, // a keyword/advertiser list, sent to Common Ads Search as an array
  *   activePlatforms: string[],
+ *   networkScope: 'all'|null, // explicit DS all-network scope, when supplied
  *   sortBy: string|null,
  *   sortDirection: 'asc'|'desc'|null,
  *   exactSearch: boolean,
@@ -334,7 +336,9 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   const unmappedDetails = [];
   let searchQuery = '';
   let searchIn = null;
+  let searchTerms = null;
   let activePlatforms = [];
+  let networkScope = null;
   let sortBy = null;
   let sortDirection = null;
   // DS uses exact_search to protect explicit advertiser/domain matching. Keep
@@ -371,14 +375,37 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   );
 
   // ── Search scope + query (mutually exclusive) ──────────────────────────────
-  const advertiserValue = args.advertiser ?? args.page ?? args.brand;
-  if (args.keyword) { searchQuery = String(args.keyword); searchIn = 'keyword'; }
-  else if (advertiserValue) { searchQuery = String(advertiserValue); searchIn = 'advertiser'; }
+  // DS may send several keywords or advertisers as a list. A list stays an array
+  // for Common Ads Search (searchTerms); the search bar shows it joined. A single
+  // value keeps the original String() form.
+  const searchValue = (value) => {
+    if (Array.isArray(value)) {
+      const terms = value.map((item) => String(item ?? '').trim()).filter(Boolean);
+      return terms.length ? { text: terms.join(', '), terms } : null;
+    }
+    return value ? { text: String(value), terms: null } : null;
+  };
+  const keywordValue = searchValue(args.keyword);
+  const advertiserValue = searchValue(args.advertiser ?? args.page ?? args.brand);
+  if (keywordValue) { searchQuery = keywordValue.text; searchIn = 'keyword'; searchTerms = keywordValue.terms; }
+  else if (advertiserValue) { searchQuery = advertiserValue.text; searchIn = 'advertiser'; searchTerms = advertiserValue.terms; }
   else if (args.domain) { searchQuery = String(args.domain); searchIn = 'domain'; }
 
   // ── network → activePlatforms (resolve against platform_selector options) ──
   const platformFilter = findFilter(config, FILTER_IDS.platform);
-  const netValues = asArray(args.network);
+  const requestedNetworkValues = asArray(args.network);
+  const allNetworkRequested = requestedNetworkValues.some((raw) => norm(raw) === 'all');
+  const configuredNetworkValues = platformFilter
+    ? collectOptions(platformFilter)
+      .map((option) => canonicalNetworkSlug(option?.value ?? option?.label))
+      .filter(Boolean)
+    : [];
+  // `all` is a scope sentinel, not a real platform. Expand it for plan and
+  // capability checks, then let App.jsx commit the UI's actual All state.
+  const netValues = allNetworkRequested
+    ? [...new Set([...configuredNetworkValues, ...KNOWN_NETWORKS])]
+    : requestedNetworkValues;
+  if (allNetworkRequested) networkScope = 'all';
   if (netValues.length) {
     for (const raw of netValues) {
       if (platformFilter) {
@@ -915,7 +942,9 @@ export function mapArgsToFilters(args = {}, config = {}, planning = null) {
   return {
     searchQuery,
     searchIn,
+    searchTerms,
     activePlatforms,
+    networkScope,
     exactSearch,
     sortBy,
     sortDirection,
@@ -1078,13 +1107,19 @@ export function normalizeAiSearchArgs(payload = {}) {
   const consumedPhrases = Array.isArray(planning?.consumed_phrases)
     ? planning.consumed_phrases.map((phrase) => String(phrase || '').trim().toLowerCase()).filter(Boolean)
     : [];
-  const keyword = String(merged.keyword || '').trim().toLowerCase();
   const nonSubjectRole = ['instruction', 'unsupported', 'ambiguous'].includes(searchTermRole);
-  const keywordWasConsumed = keyword && consumedPhrases.some((phrase) =>
-    phrase === keyword || phrase.includes(keyword),
-  );
-  if (keyword && (nonSubjectRole || keywordWasConsumed)) {
-    delete merged.keyword;
+  const isConsumed = (term) => consumedPhrases.some((phrase) => phrase === term || phrase.includes(term));
+  // A keyword list is checked term by term: consumed terms drop out and the rest stay.
+  const keywordIsList = Array.isArray(merged.keyword);
+  const keywordTerms = (keywordIsList ? merged.keyword : [merged.keyword])
+    .map((term) => String(term ?? '').trim())
+    .filter(Boolean);
+  const keptTerms = nonSubjectRole
+    ? []
+    : keywordTerms.filter((term) => !isConsumed(term.toLowerCase()));
+  if (keywordTerms.length && keptTerms.length !== keywordTerms.length) {
+    if (keptTerms.length === 0) delete merged.keyword;
+    else merged.keyword = keywordIsList ? keptTerms : keptTerms[0];
     changed = true;
   }
 

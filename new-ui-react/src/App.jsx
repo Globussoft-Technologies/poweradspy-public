@@ -64,7 +64,8 @@ import { Check, X, Loader2, Info } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
-import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setAiPrompt, setSearchIn, setExactSearch, setActiveTab, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
+import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setSearchList, setAiPrompt, setSearchIn, setExactSearch, setActiveTab, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
+import { resolveSearchTerms } from './utils/searchLists';
 import { AI_FAILED_PROMPT_RELOAD_KEY } from './store/store';
 import { useBrowserHistoryState, coalesceNextHistoryWrite } from './hooks/useBrowserHistoryState';
 import { ADMOB_FRONTEND_ENABLED } from './constants';
@@ -452,17 +453,19 @@ const App = () => {
   const historySnapshot = useMemo(() => ({
     aiPrompt: ui.aiPrompt,
     searchQuery: ui.searchQuery,
+    searchList: ui.searchList,
     searchIn: ui.searchIn,
     exactSearch: ui.exactSearch,
     activeTab: ui.activeTab,
     specificPlatforms: ui.specificPlatforms,
     filterValues: sdui.filterValues,
     activePlatforms: sdui.activePlatforms,
-  }), [ui.aiPrompt, ui.searchQuery, ui.searchIn, ui.exactSearch, ui.activeTab, ui.specificPlatforms, sdui.filterValues, sdui.activePlatforms]);
+  }), [ui.aiPrompt, ui.searchQuery, ui.searchList, ui.searchIn, ui.exactSearch, ui.activeTab, ui.specificPlatforms, sdui.filterValues, sdui.activePlatforms]);
 
   useBrowserHistoryState(historySnapshot, (snap) => {
     if (snap.aiPrompt !== undefined) dispatch(setAiPrompt(snap.aiPrompt));
     if (snap.searchQuery !== undefined) dispatch(setSearchQuery(snap.searchQuery));
+    if (snap.searchList !== undefined) dispatch(setSearchList(snap.searchList));
     if (snap.searchIn !== undefined) dispatch(setSearchIn(snap.searchIn));
     if (snap.exactSearch !== undefined) dispatch(setExactSearch(snap.exactSearch));
     if (snap.activeTab !== undefined) dispatch(setActiveTab(snap.activeTab));
@@ -539,9 +542,9 @@ const App = () => {
   const [adsMeta, setAdsMeta] = useState({});
   const [availableNetworks, setAvailableNetworks] = useState([]);
   const [noDataMessage, setNoDataMessage] = useState(null);
-  // Explains planner requests that contain only an unsupported operation. This
-  // is separate from the ordinary empty-search state so the UI never says
-  // "No ads found" when no search was actually executed.
+  // Why the current AI prompt could not be applied. The Ads Library keeps its
+  // unfiltered results visible beside it. Cleared when the prompt changes, a new
+  // AI run starts, a manual search runs, or AI mode is left, not on filter changes.
   const [aiCapabilityMessage, setAiCapabilityMessage] = useState(null);
   // Planner-provided recovery prompts are transient UI state; they are not
   // search filters and must disappear when the prompt/context changes.
@@ -554,10 +557,12 @@ const App = () => {
     setAiSearchSuggestions([]);
     setAiSearchSummary("");
     setAiSearchNote("");
+    setAiCapabilityMessage(null);
   }, []);
   const dismissAiSearchPlanContext = useCallback(() => {
     setAiSearchSummary("");
     setAiSearchNote("");
+    setAiCapabilityMessage(null);
   }, []);
   const [useSample, setUseSample] = useState(USE_SAMPLE_DATA);
 
@@ -1212,6 +1217,7 @@ const App = () => {
     // cannot produce a false empty result.
     sdui.clearAll?.();
     dispatch(setSearchQuery(''));
+    dispatch(setSearchList(null));
     dispatch(setExactSearch(false));
     dispatch(setSpecificPlatforms([]));
     sdui.setActivePlatforms(purchasedNetworks);
@@ -1759,7 +1765,6 @@ const App = () => {
   const aiExpectationRecordsRef = useRef([]);
   const aiExpectationReportRef = useRef(null);
   const aiPaginationDiagnosticsRef = useRef(null);
-  const aiCapabilityOnlyRef = useRef(false);
 
   // The crawl-status banner is fully derived, not driven by any imperative
   // showToast() call — see the comment by hasActiveSearchQuery above for why.
@@ -1827,7 +1832,6 @@ const App = () => {
     // 25) before the real France+Réunion request settles (24). Page > 0 responses
     // below can still fill the count if a page-0 total is missing.
     setAdsMeta({});
-    setAiCapabilityMessage(null);
     setHasMore(true);
     emptyPageStreakRef.current = 0;
     // The actual fetch (loadAds, below) is deliberately debounced ~120ms past
@@ -1969,6 +1973,7 @@ const App = () => {
           const v = sdui.filterValues[k]; return v != null && v !== '' && v !== 'NA' && v !== 'all' && v !== false && !(Array.isArray(v) && v.length === 0);
         }))) {
           dispatch(setSearchQuery(''));
+          dispatch(setSearchList(null));
           sdui.clearAll?.();
           setLoadingMore(false);
           guest?.showGuestWarning?.("Please login to search and filter ads");
@@ -2038,6 +2043,7 @@ const App = () => {
                 .map((key) => [String(key), String(option.label)])),
           ),
           searchQuery: ui.searchQuery,
+          searchTerms: resolveSearchTerms(ui.searchList, ui.searchQuery, ui.searchIn),
           searchIn: ui.searchIn,
           exactSearch: ui.exactSearch,
           selCategories: sdui.selCategories,
@@ -2322,13 +2328,6 @@ const App = () => {
     // render (visible as 10–15 `(canceled)` /search rows) and still consumed the
     // server rate-limit bucket. Let page-zero state settle briefly so only the
     // final payload is sent. Pagination remains immediate.
-    if (aiCapabilityOnlyRef.current) {
-      // An unsupported AI plan intentionally has no Common Search request.
-      // Consume this guard once; a later manual change can use the normal flow.
-      aiCapabilityOnlyRef.current = false;
-      setLoadingMore(false);
-      return;
-    }
     const startTimer = setTimeout(loadAds, page === 0 ? 120 : 0);
     return () => {
       clearTimeout(startTimer);
@@ -2338,6 +2337,7 @@ const App = () => {
     debouncedFilterKey,
     platformKey,
     ui.searchQuery,
+    ui.searchList,
     ui.searchIn,
     ui.exactSearch,
     searchTrigger,
@@ -2432,9 +2432,8 @@ const App = () => {
   const [aiSearchLoading, setAiSearchLoading] = useState(false);
   const aiRunIdRef = useRef(0);
   const aiAbortRef = useRef(null);
-  // Separate from aiCapabilityOnlyRef: that ref is consumed by the Ads
-  // loading guard, while this one must survive until a failed prompt leaves AI
-  // mode so it cannot be rehydrated later.
+  // Must survive until a failed prompt leaves AI mode, so it cannot be
+  // rehydrated later.
   const aiFailedPromptRef = useRef(false);
   // Only filter-producing AI searches need prompt cleanup when their filters
   // are edited manually. Keyword-only AI searches must keep their prompt.
@@ -2528,7 +2527,6 @@ const App = () => {
     aiExpectationRecordsRef.current = [];
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
-    aiCapabilityOnlyRef.current = false;
     clearAiSearchDisplay();
     setAiSearchLoading(false);
     setAiQuickFilterId(undefined);
@@ -2540,6 +2538,7 @@ const App = () => {
     // load so the unfiltered library is restored reliably.
     setSearchTrigger((prev) => prev + 1);
     dispatch(setSearchQuery(''));
+    dispatch(setSearchList(null));
     dispatch(setAiPrompt(''));
     dispatch(setSearchIn('keyword'));
     dispatch(setExactSearch(false));
@@ -2638,7 +2637,6 @@ const App = () => {
     aiExpectationRecordsRef.current = [];
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
-    aiCapabilityOnlyRef.current = false;
     // Every handleSearch call is a genuine keyword/advertiser/domain search, never an AI
     // one (runAiSearch is a separate path) — clear any leftover ui.aiPrompt so it can't
     // stay stale from an earlier AI search the user didn't explicitly exit. searchBannerVisible
@@ -2646,6 +2644,7 @@ const App = () => {
     // banner" — without this, submitting a normal search right after an AI one (without
     // toggling Ask AI off first) would incorrectly keep the banner suppressed.
     dispatch(setAiPrompt(''));
+    dispatch(setSearchList(null));
     dispatch(setSearchQuery(query));
     if (type) dispatch(setSearchIn(type));
     if (platform) {
@@ -2695,7 +2694,6 @@ const App = () => {
     aiExpectationRecordsRef.current = [];
     aiExpectationReportRef.current = null;
     aiPaginationDiagnosticsRef.current = null;
-    aiCapabilityOnlyRef.current = false;
     clearAiSearchDisplay();
     // Store the raw user prompt separately so Ask AI keeps showing exactly what
     // the user typed even when the DS payload rewrites the internal query.
@@ -2715,6 +2713,7 @@ const App = () => {
     const buildProbeParams = (mapped, execution = null) => ({
       ...mapped.filterValues,
       searchQuery: mapped.searchQuery,
+      searchTerms: mapped.searchTerms,
       searchIn: mapped.searchIn || 'keyword',
       // Preserve DS's explicit exact-match intent during the probe too, so the
       // tier-selection request and the final committed request behave the same.
@@ -2743,7 +2742,6 @@ const App = () => {
       // partial-result explanation through planning.note; frontend mapping
       // diagnostics must not replace that copy with a generic warning.
       setAiCapabilityMessage(null);
-      aiCapabilityOnlyRef.current = false;
       const mappedFilters = mapped.filterValues || {};
       const previousAiFilters = aiPromptFilterSnapshotRef.current || {};
       const committedAiFilters = {
@@ -2778,13 +2776,17 @@ const App = () => {
       if (mapped.activePlatforms?.length) {
         aiPlatformSelectionSourceRef.current = 'ai';
         sdui.setActivePlatforms?.(mapped.activePlatforms);
-        dispatch(setSpecificPlatforms(mapped.activePlatforms));
+        // Keep an explicit DS `network: "all"` aligned with manual All. The
+        // concrete list remains available to capability/plan checks and the
+        // normal search effect narrows it when a filter is platform-scoped.
+        dispatch(setSpecificPlatforms(mapped.networkScope === 'all' ? [] : mapped.activePlatforms));
       }
       if (mapped.sortBy && sdui.setSortBy) sdui.setSortBy(mapped.sortBy);
       if (mapped.sortDirection && sdui.setSortDirection) sdui.setSortDirection(mapped.sortDirection);
       dispatch(setExactSearch(!!mapped.exactSearch));
       if (mapped.searchIn) dispatch(setSearchIn(mapped.searchIn));
       dispatch(setSearchQuery(mapped.searchQuery || ''));
+      dispatch(setSearchList(mapped.searchTerms ? { searchIn: mapped.searchIn, query: mapped.searchQuery || '', terms: mapped.searchTerms } : null));
       setSearchTrigger((prev) => prev + 1);
       trackProductEvent('search_submitted', {
         entry_point: 'header',
@@ -2812,11 +2814,36 @@ const App = () => {
       aiExpectationReportRef.current = null;
       aiPaginationDiagnosticsRef.current = null;
       dispatch(setSearchQuery(''));
+      dispatch(setSearchList(null));
       dispatch(setSearchIn('keyword'));
       aiFailedPromptRef.current = true;
       // Keep the failed prompt visible for this session, but remove it from
       // Redux persistence on the next reload so it cannot label all ads as AI results.
       markFailedAiPromptForReload();
+    };
+
+    // A prompt that does not resolve to an executable search is not an empty
+    // result. Keep the prompt visible with the explanation, then load the same
+    // unfiltered Ads Library a fresh visit shows, so no blank state is shown.
+    const showUnappliedPrompt = (message) => {
+      clearPreviousAiFilters();
+      // Drop a platform restriction left by an earlier AI prompt, as a fresh
+      // visit would. Platforms the user selected manually are kept.
+      restoreAiOwnedPlatforms();
+      dispatch(setExactSearch(false));
+      setAds([]);
+      setAdsMeta({});
+      setAvailableNetworks([]);
+      setHasMore(false);
+      setLoadingMore(false);
+      setNoDataMessage(null);
+      setAiQuickFilterId(null);
+      setAiCapabilityMessage(message);
+      setError(null);
+      // Nothing above is guaranteed to change the search context, so force one
+      // fresh page-zero load of the unfiltered library.
+      setSearchTrigger((prev) => prev + 1);
+      showToast("Couldn't apply your prompt. Showing all ads.", 'unapplied', 8000, 'below-filters', 'ai-search');
     };
 
     try {
@@ -2854,32 +2881,12 @@ const App = () => {
 
       if (outcome === 'unsupported_combination') {
         const message = String(topPlanning?.reason || 'This combination of filters is not currently supported.').trim();
-        clearPreviousAiFilters();
-        aiCapabilityOnlyRef.current = true;
-        setAds([]);
-        setAdsMeta({});
-        setAvailableNetworks([]);
-        setHasMore(false);
-        setLoadingMore(false);
-        setNoDataMessage(null);
-        setAiQuickFilterId(null);
-        setAiCapabilityMessage(message);
-        setError(null);
-        // Keep AI capability notices away from the platform and Quick Filter rows.
-        showToast(message, 'notice', 8000, 'bottom', 'ai-search');
+        showUnappliedPrompt(message);
         return;
       }
 
       if (!Array.isArray(payloads) || payloads.length === 0) {
-        clearPreviousAiFilters();
-        aiCapabilityOnlyRef.current = true;
-        setAds([]);
-        setAdsMeta({});
-        setHasMore(false);
-        setNoDataMessage(null);
-        setAiQuickFilterId(null);
-        setAiCapabilityMessage('AI could not produce an executable search plan for this request.');
-        showToast("AI couldn't interpret that prompt. Try rephrasing.", "error", 3000, "bottom", "ai-search");
+        showUnappliedPrompt('AI could not produce an executable search plan for this request.');
         return;
       }
 
@@ -3021,20 +3028,9 @@ const App = () => {
       if (matchedIndex === -1) {
         if (searchFailureMessage) {
           // Common Search can return HTTP 200 with per-network errors. Keep
-          // that controller message visible when no tier produced ads instead
-          // of misreporting the failure as an unsupported planner request.
-          clearPreviousAiFilters();
-          aiCapabilityOnlyRef.current = true;
-          setAds([]);
-          setAdsMeta({});
-          setAvailableNetworks([]);
-          setHasMore(false);
-          setLoadingMore(false);
-          setNoDataMessage(null);
-          setAiQuickFilterId(null);
-          setAiCapabilityMessage(searchFailureMessage);
-          setError(null);
-          showToast(searchFailureMessage, 'error', 8000, 'bottom', 'ai-search');
+          // that controller message as the explanation instead of misreporting
+          // the failure as an unsupported planner request.
+          showUnappliedPrompt(searchFailureMessage);
           return;
         } else if (firstExecutableCandidate) {
           // A valid subject/filter had no results. Commit that supported tier so
@@ -3043,35 +3039,13 @@ const App = () => {
           matchedMapped = firstExecutableCandidate.mapped;
           matchedPlanning = firstExecutableCandidate.planning;
         } else if (hasPlanningUnsupported) {
-          const message = formatPlanningUnsupportedMessage(unsupportedOnlyItems);
-          // No Common Ads Search call was made, so show a capability state rather
-          // than the generic empty-search copy or a stale result list.
-          clearPreviousAiFilters();
-          aiCapabilityOnlyRef.current = true;
-          setAds([]);
-          setAdsMeta({});
-          setAvailableNetworks([]);
-          setHasMore(false);
-          setLoadingMore(false);
-          setNoDataMessage(null);
-          setAiQuickFilterId(null);
-          setAiCapabilityMessage(message);
-          setError(null);
-          showToast(message, "notice", 8000, "bottom", "ai-search");
+          // No Common Ads Search call was made for this prompt, so the reason is
+          // shown while the unfiltered library is loaded instead.
+          showUnappliedPrompt(formatPlanningUnsupportedMessage(unsupportedOnlyItems));
           return;
         } else if (unmappedItems.length > 0) {
           const fields = [...new Set(unmappedItems.map((item) => item.field).filter(Boolean))];
-          const message = `AI could not apply these requested filters: ${fields.join(', ')}.`;
-          clearPreviousAiFilters();
-          aiCapabilityOnlyRef.current = true;
-          setAds([]);
-          setAdsMeta({});
-          setHasMore(false);
-          setNoDataMessage(null);
-          setAiQuickFilterId(null);
-          setAiCapabilityMessage(message);
-          setError(null);
-          showToast(message, 'error', 8000, 'bottom', 'ai-search');
+          showUnappliedPrompt(`AI could not apply these requested filters: ${fields.join(', ')}.`);
           return;
         } else if (plannedTiers.some(({ planning }) => planning && Object.keys(planning).length > 0)) {
           // A DS-planned prompt with no executable subject/filter must not
@@ -3084,18 +3058,7 @@ const App = () => {
               ? 'AI could not apply the requested topic or advertiser. Please try again.'
               : 'AI could not identify a searchable subject or supported filter in that request.'),
           ).trim();
-          clearPreviousAiFilters();
-          aiCapabilityOnlyRef.current = true;
-          setAds([]);
-          setAdsMeta({});
-          setAvailableNetworks([]);
-          setHasMore(false);
-          setLoadingMore(false);
-          setNoDataMessage(null);
-          setAiQuickFilterId(null);
-          setAiCapabilityMessage(message);
-          setError(null);
-          showToast(message, 'notice', 8000, 'bottom', 'ai-search');
+          showUnappliedPrompt(message);
           return;
         } else {
           // Older DS responses without planning metadata retain the legacy
@@ -3124,7 +3087,7 @@ const App = () => {
         if (runId !== aiRunIdRef.current) return;
         const nextTier = findNextExecutablePlanningTier(plannedTiers, currentTierIndex);
         if (!nextTier) {
-          showToast('No broader AI interpretation is available for this search.', 'notice', 3000, 'bottom', 'ai-search');
+          showToast('No broader AI interpretation is available for this search.', 'notice', 3000, 'below-filters', 'ai-search');
           return;
         }
 
@@ -3140,11 +3103,11 @@ const App = () => {
           refId,
           topPlanning,
         );
-        showToast('Broadened your search while keeping your AI prompt.', 'success', 3000, 'bottom', 'ai-search');
+        showToast('Broadened your search while keeping your AI prompt.', 'success', 3000, 'below-filters', 'ai-search');
       };
 
       if (matchedIndex > 0) {
-        showToast("Broadened your search to find results", "success", 3000, "bottom", "ai-search");
+        showToast("Broadened your search to find results", "success", 3000, "below-filters", "ai-search");
       }
       const selectedTierMeta = getPlanningTier(selectedPlanning, matchedIndex);
       if (selectedTierMeta?.changed_subject || selectedTierMeta?.added_inferences?.length) {
@@ -3157,7 +3120,7 @@ const App = () => {
             : 'AI broadened the search to find relevant results.',
           'notice',
           7000,
-          'bottom',
+          'below-filters',
           'ai-search',
         );
       }
@@ -3167,7 +3130,7 @@ const App = () => {
           formatPlanningUnsupportedMessage(selectedUnsupported),
           "notice",
           8000,
-          "bottom",
+          "below-filters",
           "ai-search",
         );
       }
@@ -3207,25 +3170,14 @@ const App = () => {
       // Do not leave the previous AI result on screen after a planner/API
       // failure. Keep the failed prompt visible for this session; the cleanup
       // marker prevents it from being restored beside the Ads Library later.
-      clearPreviousAiFilters();
-      aiCapabilityOnlyRef.current = true;
-      setAds([]);
-      setAdsMeta({});
-      setAvailableNetworks([]);
-      setHasMore(false);
-      setLoadingMore(false);
-      setNoDataMessage(null);
-      setAiQuickFilterId(null);
-      setAiCapabilityMessage(msg);
-      setError(null);
-      showToast(msg, "error", 3000, "bottom", "ai-search");
+      showUnappliedPrompt(msg);
     } finally {
       if (runId === aiRunIdRef.current) {
         setAiSearchLoading(false);
         aiAbortRef.current = null;
       }
     }
-  }, [clearAiSearchDisplay, guestGuard, dispatch, dismissAiToast, getPlanScopedAiNetworks, resetAiSearchState, sdui, showToast]);
+  }, [clearAiSearchDisplay, guestGuard, dispatch, dismissAiToast, getPlanScopedAiNetworks, resetAiSearchState, restoreAiOwnedPlatforms, sdui, showToast]);
 
   // Explicitly turning the AI toggle OFF abandons the AI search: clear the
   // AI-applied query + filters so nothing lingers on screen or gets restored on
@@ -3532,7 +3484,7 @@ const App = () => {
       trackEvent('ExportAds', {
         network: isAllActive ? 'All' : (exportPlatforms.length === 1 ? exportPlatforms[0] : exportPlatforms.join(',')),
       });
-      const result = await fetchAdsForExport({ ...sdui.filterValues, activePlatforms: exportPlatforms, activePlatform, searchQuery: ui.searchQuery, searchIn: ui.searchIn, exactSearch: ui.exactSearch, selCategories: sdui.selCategories, selCountries: sdui.selCountries, sortBy: sdui.sortBy });
+      const result = await fetchAdsForExport({ ...sdui.filterValues, activePlatforms: exportPlatforms, activePlatform, searchQuery: ui.searchQuery, searchTerms: resolveSearchTerms(ui.searchList, ui.searchQuery, ui.searchIn), searchIn: ui.searchIn, exactSearch: ui.exactSearch, selCategories: sdui.selCategories, selCountries: sdui.selCountries, sortBy: sdui.sortBy });
       trackProductEvent('feature_completed', { entry_point: 'dashboard', feature_name: 'ad_export', filter_count_bucket: getFilterCountBucket(sdui.filterValues), ...getNetworkContext(isAllActive ? [] : exportPlatforms), request_context: 'export', search_mode: 'standard', search_type: String(ui.searchIn || 'keyword').toLowerCase() });
       // Also report under the shared 'ad_action' event (action_name: export_ads) —
       // same event other ad-card/detail actions (ad_analytics, show_original, ...)
@@ -3685,6 +3637,7 @@ const App = () => {
         searchIn={ui.searchIn}
         setSearchIn={guestSetSearchIn}
         searchQuery={ui.searchQuery}
+        searchTerms={resolveSearchTerms(ui.searchList, ui.searchQuery, ui.searchIn)}
         setSearchQuery={guestSetSearchQuery}
         exactSearch={ui.exactSearch}
         setExactSearch={guestSetExactSearch}
@@ -3924,6 +3877,8 @@ const App = () => {
             onAiQuickFilterChange={setAiQuickFilterId}
             onAiQuickFilterApply={handleAiQuickFilterApply}
             aiCapabilityMessage={aiCapabilityMessage}
+            aiToast={toast.show && toast.position === 'below-filters' && !adDetailModalOpen && !selectedAdForAnalytics ? toast : null}
+            onAiToastDismiss={dismissAiToast}
             aiSearchSummary={aiSearchSummary}
             aiSearchNote={aiSearchNote}
             onAiSearchPlanContextDismiss={dismissAiSearchPlanContext}
@@ -3932,6 +3887,7 @@ const App = () => {
             onAiSuggestionsDismiss={clearAiSearchDisplay}
             onBroadenSearch={ui.aiPrompt?.trim() ? () => aiBroadenSearchRef.current?.() : undefined}
             searchQuery={ui.searchQuery}
+            searchTerms={resolveSearchTerms(ui.searchList, ui.searchQuery, ui.searchIn)}
             searchIn={ui.searchIn}
             exactSearch={ui.exactSearch}
             activeTab={ui.activeTab}
@@ -3977,6 +3933,7 @@ const App = () => {
               }
               if (sdui.clearAll) sdui.clearAll();
               dispatch(setSearchQuery(""));
+              dispatch(setSearchList(null));
             }}
             onPlatformRestricted={() => showUpgradeOrLoginPrompt("Please login to switch platforms")}
             onToggleSidebar={() => dispatch(setSidebarOpen(!ui.isSidebarOpen))}
@@ -4197,7 +4154,7 @@ const App = () => {
       {/* Toast Notification — hidden (not dismissed) while an ad detail/analytics
           modal covers the page, so it doesn't render on top of the modal; state is
           untouched, so it reappears automatically once the modal closes. */}
-      {toast.show && !adDetailModalOpen && !selectedAdForAnalytics && (
+      {toast.show && toast.position !== 'below-filters' && !adDetailModalOpen && !selectedAdForAnalytics && (
         <div
           className={`fixed left-1/2 -translate-x-1/2 z-[600] max-w-[calc(100vw-2rem)] px-5 py-3 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 ${
             toast.position === 'bottom'

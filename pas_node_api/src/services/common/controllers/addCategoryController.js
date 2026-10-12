@@ -777,11 +777,14 @@ const PLATFORM_CONFIG = {
     textField:    'ad_text',
     titleField:   'ad_title',
     ownerField:   'post_owner',
+    // TikTok docs have no `ad_type` field. Every TikTok ad is VIDEO, so `defaultType`
+    // supplies the type and the creative is the video cover.
     ocrField:     'image_ocr',
     newsFeedField:'newsfeed_description',
     typeField:    'ad_type',
-    imageNasField:'new_nas_image_url',
-    thumbField:   'thumbnail',
+    defaultType:  'VIDEO',
+    imageNasField:'video_cover',
+    thumbField:   'video_cover',
   },
 };
 
@@ -869,7 +872,7 @@ function normalizeDescriptionHit(hit, cfg, platform, pageField) {
     row.destination_page_text = destinationPageText;
   }
 
-  const adType = readSourceField(src, cfg.typeField) || '';
+  const adType = readSourceField(src, cfg.typeField) || cfg.defaultType || '';
   if (platform === 'native') row.native_creative_type = readSourceField(src, cfg.typeField) ?? null;
   const nasValue = readSourceField(src, cfg.imageNasField) || '';
   const origValue = cfg.imageOrigField ? (readSourceField(src, cfg.imageOrigField) || '') : '';

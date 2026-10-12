@@ -93,6 +93,9 @@ async function searchAllNetworks(req, res) {
   // controllers already share the numeric [end, start] timestamp contract.
   // Normalize once at the common boundary so every network receives the same
   // posted-date filter without duplicating date parsing in each controller.
+  // Network builders now implement the upstream multi-search contract directly:
+  // keyword and advertiser arrays must remain arrays so each builder can apply
+  // its own bounded any-of/exact matching rules.
   const body = normalizePostedDateFilter(req.body || {});
   const requestedOrderColumn = String(body.order_column || '').trim().toLowerCase();
   if (requestedOrderColumn === 'days_running' || requestedOrderColumn === 'running_days') {

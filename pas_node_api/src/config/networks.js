@@ -201,7 +201,7 @@ module.exports = {
       },
       elastic: {
         enabled: toBool(netVal(netCfg.instagram?.elastic, 'enabled', 'IG_ELASTIC_ENABLED', false)),
-        index:   netVal(netCfg.instagram?.elastic, 'index', 'IG_ES_INDEX', 'search_mix'),
+        index:   netVal(netCfg.instagram?.elastic, 'index', 'IG_ES_INDEX', 'instagram_search_mix'),
         node:    netVal(netCfg.instagram?.elastic, 'node',     'IG_ELASTIC_NODE',     config.databases.elastic.node,               true),
         auth: {
           username: netVal(netCfg.instagram?.elastic, 'username', 'IG_ELASTIC_USERNAME', config.databases.elastic.auth.username, true),

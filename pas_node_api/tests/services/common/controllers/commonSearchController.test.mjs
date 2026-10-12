@@ -216,6 +216,27 @@ describe("commonSearchController > searchAllNetworks", () => {
     expect(forwardedBody).not.toHaveProperty("datePreset");
   });
 
+  it("forwards AI keyword and advertiser lists unchanged to network builders", async () => {
+    registryReturns({ facebook: svc("fb"), tiktok: svc("tt"), google: svc("google") });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: {
+        network: ["facebook", "tiktok", "google"],
+        keyword: ["flipkart", " amazon ", "canon"],
+        advertiser: ["Nike", "Adidas"],
+      },
+      query: {},
+    }, res);
+
+    expect(searchAds.facebook.mock.calls[0][0].body.keyword)
+      .toEqual(["flipkart", " amazon ", "canon"]);
+    expect(searchAds.tiktok.mock.calls[0][0].body.advertiser)
+      .toEqual(["Nike", "Adidas"]);
+    expect(searchAds.google.mock.calls[0][0].body.keyword)
+      .toEqual(["flipkart", " amazon ", "canon"]);
+  });
+
   it("does not suggest TikTok from an unfiltered discovery query for posted-date searches", async () => {
     registryReturns({ facebook: svc("fb"), tiktok: svc("tt") });
     searchAds.tiktok.mockResolvedValue({ code: 200, data: [{ id: 2 }], total: 1 });

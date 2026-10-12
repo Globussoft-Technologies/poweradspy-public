@@ -1953,3 +1953,85 @@ describe("addCategoryController > SQL dual-write wiring", () => {
     expect(res.body.ai_meta_sql.sql_status).toBe("error");
   });
 });
+
+// TikTok docs key on a keyword `ad_id`. Most docs carry the 19-digit TikTok id as a string
+// (above Number.MAX_SAFE_INTEGER); legacy docs carry the numeric sql_id. Lookups must match
+// the string form, and the creative is `video_cover` (see docs/erd/tiktok.md).
+describe("addCategoryController > TikTok docs (live-shaped ES doc)", () => {
+  const TT_DOC = {
+    _id: "tt-doc-7337683789543505922",
+    _source: {
+      ad_id: "7337683789543505922",
+      sql_id: 87,
+      ad_title: "Trial offer",
+      ad_text: "Try it free",
+      post_owner: "Acme",
+      video_cover: "https://p16-sign.tiktokcdn.com/cover.jpeg",
+      video_url: "https://v16.tiktokcdn.com/video.mp4",
+    },
+  };
+
+  // Minimal stand-in for ES term/terms/range/exists/bool evaluation. A field the doc does
+  // not carry matches nothing, as in real ES. Keyword ranges compare as strings.
+  function compare(value, bound) {
+    return typeof value === "string" ? value > String(bound) : value > bound;
+  }
+  function matchesClause(src, clause) {
+    if (!clause || typeof clause !== "object") return true;
+    if (clause.term) return Object.entries(clause.term).every(([f, v]) => src[f] !== undefined && String(src[f]) === String(v));
+    if (clause.terms) return Object.entries(clause.terms).every(([f, vs]) => src[f] !== undefined && vs.map(String).includes(String(src[f])));
+    if (clause.range) return Object.entries(clause.range).every(([f, r]) => src[f] !== undefined && (r.gt === undefined || compare(src[f], r.gt)));
+    if (clause.exists) return src[clause.exists.field] !== undefined;
+    if (clause.bool) {
+      const must = [].concat(clause.bool.filter || [], clause.bool.must || []);
+      if (!must.every((c) => matchesClause(src, c))) return false;
+      if (clause.bool.should && !clause.bool.should.some((c) => matchesClause(src, c))) return false;
+      return true;
+    }
+    return true; // displayable-media clauses beyond these shapes are not modelled
+  }
+
+  function esOver(docs) {
+    return vi.fn(async (params) => {
+      const hits = docs.filter((d) => matchesClause(d._source, params.body.query));
+      return { hits: { hits } };
+    });
+  }
+
+  it("getDescriptionDetails pages TikTok ads on ad_id with the video cover as thumbnail", async () => {
+    const esSearch = esOver([TT_DOC]);
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch }));
+    const res = mkRes();
+    await getDescriptionDetails({ query: { platform: "tiktok", exVal: 0, limit: 50 }, body: {} }, res);
+    expect(esSearch.mock.calls[0][0].body.sort).toEqual([{ ad_id: "asc" }]);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({
+      id: "7337683789543505922",
+      ad_title: "Trial offer",
+      ad_text: "Try it free",
+      post_owner_name: "Acme",
+      thumbnail: "https://p16-sign.tiktokcdn.com/cover.jpeg",
+    });
+  });
+
+  it("insertAiMeta finds a TikTok doc by its string ad_id and writes ai_meta onto it", async () => {
+    const update = vi.fn(async () => {});
+    serviceRegistry.getService.mockImplementation((name) => (name === "tiktok"
+      ? mkService({ esSearch: esOver([TT_DOC]), esUpdate: update })
+      : null));
+    const res = mkRes();
+    await insertAiMeta({ body: { ad_id: "7337683789543505922", network: "tiktok", ai_meta: VALID_AI_META } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update.mock.calls[0][0]).toMatchObject({ id: "tt-doc-7337683789543505922" });
+  });
+
+  it("getAdCategory reads a TikTok doc back by its string ad_id", async () => {
+    serviceRegistry.getService.mockReturnValue(mkService({ esSearch: esOver([TT_DOC]) }));
+    const res = mkRes();
+    await getAdCategory({ query: { platform: "tiktok", ad_id: "7337683789543505922" } }, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ad_id).toBe("7337683789543505922");
+  });
+});

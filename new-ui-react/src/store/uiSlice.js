@@ -17,6 +17,9 @@ const uiSlice = createSlice({
     isSidebarOpen: true,
     // Search
     searchQuery: '',
+    // Keyword/advertiser list from AI Search ({ searchIn, query, terms }), kept
+    // beside searchQuery so the request can send it as an array.
+    searchList: null,
     aiPrompt: '',
     searchIn: 'keyword',
     exactSearch: false,
@@ -44,6 +47,9 @@ const uiSlice = createSlice({
     },
     setSearchQuery: (state, action) => {
       state.searchQuery = action.payload;
+    },
+    setSearchList: (state, action) => {
+      state.searchList = action.payload;
     },
     setAiPrompt: (state, action) => {
       state.aiPrompt = action.payload;
@@ -76,6 +82,7 @@ export const {
   setShowSavedAdsPage,
   setSidebarOpen,
   setSearchQuery,
+  setSearchList,
   setAiPrompt,
   setSearchIn,
   setExactSearch,

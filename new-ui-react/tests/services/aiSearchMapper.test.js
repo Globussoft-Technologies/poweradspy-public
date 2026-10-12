@@ -46,6 +46,25 @@ describe('aiSearchMapper', () => {
     expect(mapped.unmappedDetails).toEqual([]);
   });
 
+  it('accepts the scalar all-network scope and expands it for safety checks', () => {
+    const mapped = mapArgsToFilters({ network: 'all' }, {
+      navbar: [{
+        filters: [{
+          _id: 'platform_selector',
+          type: 'icon_toggle',
+          options: [{ label: 'Facebook', value: 'facebook' }],
+        }],
+      }],
+    });
+
+    expect(mapped.networkScope).toBe('all');
+    expect(mapped.activePlatforms).toEqual([
+      'facebook', 'instagram', 'youtube', 'google', 'gdn', 'native',
+      'linkedin', 'reddit', 'quora', 'pinterest', 'tiktok', 'admob', 'chatgptads',
+    ]);
+    expect(mapped.unmappedDetails).toEqual([]);
+  });
+
   it('does not trust an unknown network value as a platform', () => {
     const mapped = mapArgsToFilters({
       network: ['facebook', 'not-a-pas-network'],
