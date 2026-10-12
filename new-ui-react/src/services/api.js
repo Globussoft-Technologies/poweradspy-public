@@ -2563,7 +2563,15 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     market_platform:          toActivityLabels(payload.market_platform, filters.filterOptionLabels?.marketing_platform_filter),
     funnel:                   toActivityLabels(payload.funnel,          filters.filterOptionLabels?.funnel_filter),
     affiliate:                toActivityLabels(payload.affiliate,       filters.filterOptionLabels?.affiliate_network_filter),
-    source:                   toActivityLabels(payload.source,          filters.filterOptionLabels?.source_filter),
+    // Traffic Source "All" is dropped from the search payload (it means "no
+    // filter"), but the user did pick it — log it as ['All'].
+    source:                   (() => {
+                                const picked = filters.source ?? filters.source_filter;
+                                const list = Array.isArray(picked) ? picked : (picked != null && picked !== '' ? [picked] : []);
+                                const pickedAll = list.some((s) => String(s).trim().toLowerCase() === 'all');
+                                if (pickedAll && (payload.source == null || payload.source === 'NA')) return ['All'];
+                                return toActivityLabels(payload.source, filters.filterOptionLabels?.source_filter);
+                              })(),
     // AdMob "Sub Network" (GDN, Meta Audience Network, …) — stored as filter.sub_network.
     sub_network:              toActivityLabels(payload.sub_network ?? 'NA', {
                                 ...filters.filterOptionLabels?.admob_network_filter,

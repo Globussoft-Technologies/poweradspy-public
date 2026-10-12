@@ -320,11 +320,19 @@ const PillItem = ({ text }) => {
   const [expanded, setExpanded] = useState(false);
   const lines = text.split('\n');
   const isMultiLine = lines.length > 1;
-  const isLong = text.length > 80;
+  // Show "show more" only when the text really overflows the collapsed
+  // 3-line box — a character count showed it on pills that already fit.
+  const textRef = useRef(null);
+  const [isLong, setIsLong] = useState(false);
+  useEffect(() => {
+    const el = textRef.current;
+    if (!el || expanded) return;
+    setIsLong(el.scrollHeight > PILL_COLLAPSE_LINES * 18 + 1);
+  }, [text, expanded]);
 
   return (
     <div style={{ background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: "4px", padding: "2px 8px", fontSize: "11px", lineHeight: "1.6", color: "#374151", wordBreak: "break-word", maxWidth: "100%" }}>
-      <span style={{
+      <span ref={textRef} style={{
         display: "block",
         maxHeight: (!isLong || expanded) ? "none" : `${PILL_COLLAPSE_LINES * 18}px`,
         overflow: "hidden",

@@ -102,6 +102,19 @@ function toAiFilterList(val) {
   return arr.length > 0 ? arr : 'NA';
 }
 
+// 'FEED' → 'Feed', ['TOP', 'BOTTOM'] → ['Top', 'Bottom'] for the activity log.
+// 'NA' / empty values pass through unchanged.
+function toTitleCase(val) {
+  const one = (v) => {
+    const s = String(v).trim();
+    if (!s || s === 'NA') return v;
+    return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  };
+  if (Array.isArray(val)) return val.map(one);
+  if (val === undefined || val === null || val === '' || val === 'NA') return val;
+  return one(val);
+}
+
 // AdMob Poster Intelligence rank-by value → label shown in the sidebar.
 const POSTER_INTELLIGENCE_LABELS = {
   lead_score:                'Top Ranked',
@@ -147,7 +160,7 @@ function buildGetAdsInsertData(data, network) {
     'filter.countries':      data.country,
     'filter.languages':      data.lang,
     'filter.call_to_actions': data.call_to_action,
-    'filter.ad_positions':   data.ad_position_filter,
+    'filter.ad_positions':   toTitleCase(data.ad_position_filter),
     'filter.gender':         data.gender,
     'filter.lower_age':      data.lower_age,
     'filter.upper_age':      data.upper_age,
@@ -196,7 +209,7 @@ function buildGetAdsInsertData(data, network) {
   base['filter.sub_network'] = data.sub_network;
   // Ad Sub Position (TOP / BOTTOM) for every network — the Google and All
   // branches below set the same field from the same value.
-  base['filter.ad_subPositions'] = data.ad_sub_position;
+  base['filter.ad_subPositions'] = toTitleCase(data.ad_sub_position);
   // Image Size ('1080*159,1080*167' → array) for every network — the GDN and
   // All branches below set the same field the same way.
   base['filter.image_size'] = data.size && data.size !== 'NA'
@@ -283,7 +296,7 @@ function buildGetAdsInsertData(data, network) {
       'user.email':              data.user_email,
       target_keywords:           data.target_keywords,
       'filter.ad_type':          data.type_filter,
-      'filter.ad_subPositions':  data.ad_sub_position,
+      'filter.ad_subPositions':  toTitleCase(data.ad_sub_position),
       'dashboard.likes_sort':    data.likes_sort,
       'dashboard.comments_sort': data.comments_sort,
       'dashboard.shares_sort':   data.shares_sort,
@@ -462,7 +475,7 @@ function buildGetAdsInsertData(data, network) {
       'filter.native_network':          data.nativeNetwork && data.nativeNetwork !== 'NA'
         ? (Array.isArray(data.nativeNetwork) ? data.nativeNetwork : [data.nativeNetwork])
         : 'NA',
-      'filter.ad_subPositions':         data.ad_sub_position,
+      'filter.ad_subPositions':         toTitleCase(data.ad_sub_position),
       'filter.budget':                  data.budget,
       'filter.ctr':                     data.ctr,
     });
@@ -722,8 +735,8 @@ async function userActivity(req, elastic, logger) {
           'filter.ad_type':             data.type_filter,
           'filter.languages':           data.lang,
           'filter.call_to_actions':     data.call_to_action,
-          'filter.ad_positions':        data.ad_position,
-          'filter.ad_subPositions':     data.ad_sub_position,
+          'filter.ad_positions':        toTitleCase(data.ad_position),
+          'filter.ad_subPositions':     toTitleCase(data.ad_sub_position),
           'filter.gender':              data.gender,
           'filter.lower_age':           data.lower_age,
           'filter.upper_age':           data.upper_age,
