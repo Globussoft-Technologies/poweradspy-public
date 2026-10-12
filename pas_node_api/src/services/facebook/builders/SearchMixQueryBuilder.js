@@ -807,6 +807,9 @@ class SearchMixQueryBuilder {
     if (this._sortField === 'facebook_ad.popularity.current') {
       buckets.filter.push({ exists: { field: 'facebook_ad.popularity.current' } });
     }
+    if (this._sortField === 'facebook_ad.impression') {
+      buckets.filter.push({ exists: { field: 'facebook_ad.impression' } });
+    }
 
     // must_not handling (notCountry + adDetailId exclusion)
     const nc = this._getNotCountryClause();

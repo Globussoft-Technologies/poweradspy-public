@@ -2061,6 +2061,8 @@ const App = () => {
           // The tabs the user selected (plan-permitted), before filter scopes
           // narrow them to searchPlatforms — user activity logs these.
           selectedPlatforms: permittedPlatforms,
+          // The AI search prompt the user typed — logged in user activity only.
+          aiPrompt: ui.aiPrompt,
           _aiSearchExecution: aiSearchExecutionRef.current,
           ...(_projCtx || {}),
         };

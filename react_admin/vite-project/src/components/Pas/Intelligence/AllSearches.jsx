@@ -72,6 +72,8 @@ const ACTIVITY_TYPES = [
   { key: "filters", label: "Filters" },
   { key: "other_activity", label: "Other Activity" },
   { key: "sorting_filters", label: "Sorting Filters" },
+  // Searches run from the AI prompt box (dashboard.ai_search).
+  { key: "ai_search", label: "✨ AI Search" },
 ];
 
 // ── Autocomplete dropdown input ───────────────────────────────────────────────
@@ -348,6 +350,40 @@ const PillItem = ({ text }) => {
       {isLong && expanded && (
         <button onClick={() => setExpanded(false)} style={{ background: "none", border: "none", color: "#6b7280", fontSize: "11px", cursor: "pointer", padding: "0", display: "block", marginTop: "1px" }}>
           show less
+        </button>
+      )}
+    </div>
+  );
+};
+
+// AI PROMPT column: the prompt in quotes, collapsed to 3 lines with
+// "show more / show less" only when it actually overflows.
+const AI_PROMPT_COLLAPSE_PX = 3 * 17; // 12px font × 1.4 line-height ≈ 17px per line
+const AiPromptCell = ({ text, forceExpand = false }) => {
+  const [expanded, setExpanded] = useState(false);
+  const textRef = useRef(null);
+  const [isLong, setIsLong] = useState(false);
+  useEffect(() => {
+    const el = textRef.current;
+    if (!el || expanded) return;
+    setIsLong(el.scrollHeight > AI_PROMPT_COLLAPSE_PX + 1);
+  }, [text, expanded]);
+  const collapsed = isLong && !expanded && !forceExpand;
+
+  return (
+    <div style={{ border: "1px solid #e9d5ff", borderRadius: "6px", padding: "6px 8px", background: "white" }}>
+      <div
+        ref={textRef}
+        style={{ fontSize: "12px", color: "#111827", lineHeight: "1.4", wordBreak: "break-word", maxHeight: collapsed ? `${AI_PROMPT_COLLAPSE_PX}px` : "none", overflow: "hidden" }}
+      >
+        "{text}"
+      </div>
+      {isLong && !forceExpand && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          style={{ background: "none", border: "none", color: expanded ? "#6b7280" : "#7c3aed", fontSize: "11px", fontWeight: expanded ? 400 : 600, cursor: "pointer", padding: 0, marginTop: "2px", display: "block" }}
+        >
+          {expanded ? "show less" : "show more"}
         </button>
       )}
     </div>
@@ -982,6 +1018,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
     const showKeyword = showAllActivityTypes || applied.activityTypes?.includes('keyword');
     const showAdvertiser = showAllActivityTypes || applied.activityTypes?.includes('advertiser');
     const showDomain = showAllActivityTypes || applied.activityTypes?.includes('domain');
+    const showAiPrompt = showAllActivityTypes || applied.activityTypes?.includes('ai_search');
 
     return rows.map((row, i) => {
       const { initials, color } = getAvatarProps(row.email);
@@ -1005,6 +1042,13 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               </span>
             </div>
           </td>
+          {showAiPrompt && (
+            <td style={{ padding: "10px 12px", minWidth: "200px", maxWidth: "260px", verticalAlign: "top" }}>
+              {row.ai_prompt
+                ? <AiPromptCell text={row.ai_prompt} forceExpand={forceExpand} />
+                : <span style={{ color: "#9ca3af" }}>—</span>}
+            </td>
+          )}
           {showKeyword && (
             <td style={{ padding: "10px 12px", overflow: "hidden" }}>
               <span style={{ display: "inline-block", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", background: "#e0e7ff", color: "#4338ca", padding: "2px 8px", borderRadius: "4px", fontSize: "12px" }}>
@@ -1056,7 +1100,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
               </button>
             ) : <span style={{ color: "#9ca3af" }}>—</span>}
           </td>
-          <td style={{ padding: "10px 12px" }}>
+          <td style={{ padding: "10px 12px", width: "160px", maxWidth: "180px" }}>
             {row.filters_applied?.length > 0
               ? <FilterPillsCell pills={row.filters_applied} />
               : <span style={{ color: "#9ca3af" }}>—</span>}
@@ -1311,17 +1355,29 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
       <div style={{ background: "white", borderRadius: "10px", border: "1px solid #e5e7eb", overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", tableLayout: "auto", fontSize: "13px", borderCollapse: "collapse" }}>
+            {/* Built from the same visible-column flags as the headers below, so
+                each width stays on its own column when KEYWORD / AI PROMPT /
+                ADVERTISER / DOMAIN are hidden or shown. */}
             <colgroup>
-              <col style={{ minWidth: "100px" }} />
-              <col style={{ minWidth: "260px" }} />
-              <col style={{ minWidth: "100px" }} />
-              <col style={{ minWidth: "100px" }} />
-              <col style={{ minWidth: "90px" }} />
-              <col style={{ minWidth: forceExpand ? "600px" : "200px" }} />
-              <col style={{ width: "110px", minWidth: "110px", maxWidth: "110px" }} />
-              <col style={{ minWidth: "120px" }} />
-              <col style={{ minWidth: "280px" }} />
-              <col style={{ minWidth: "160px" }} />
+              {(() => {
+                const showAllActivityTypes = applied.activityTypes?.length === 0;
+                const cols = [
+                  { key: "timestamp", style: { minWidth: "100px" } },
+                  { key: "user", style: { minWidth: "260px" } },
+                ];
+                if (showAllActivityTypes || applied.activityTypes?.includes('ai_search'))  cols.push({ key: "ai_prompt", style: { minWidth: "200px" } });
+                if (showAllActivityTypes || applied.activityTypes?.includes('keyword'))    cols.push({ key: "keyword", style: { minWidth: "100px" } });
+                if (showAllActivityTypes || applied.activityTypes?.includes('advertiser')) cols.push({ key: "advertiser", style: { minWidth: "100px" } });
+                if (showAllActivityTypes || applied.activityTypes?.includes('domain'))     cols.push({ key: "domain", style: { minWidth: "90px" } });
+                cols.push(
+                  { key: "platform", style: { minWidth: forceExpand ? "600px" : "200px" } },
+                  { key: "ad_count", style: { width: "110px", minWidth: "110px", maxWidth: "110px" } },
+                  { key: "keyword_status", style: { minWidth: "120px" } },
+                  { key: "filters", style: { width: "160px", minWidth: "160px" } },
+                  { key: "other", style: { minWidth: "160px" } },
+                );
+                return cols.map((c) => <col key={c.key} style={c.style} />);
+              })()}
             </colgroup>
             <thead>
               <tr style={{ borderBottom: "1px solid #e5e7eb" }}>
@@ -1330,8 +1386,10 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                   const showKeyword = showAllActivityTypes || applied.activityTypes?.includes('keyword');
                   const showAdvertiser = showAllActivityTypes || applied.activityTypes?.includes('advertiser');
                   const showDomain = showAllActivityTypes || applied.activityTypes?.includes('domain');
+                  const showAiPrompt = showAllActivityTypes || applied.activityTypes?.includes('ai_search');
 
                   const headers = ["TIMESTAMP", "USER"];
+                  if (showAiPrompt) headers.push("AI PROMPT");
                   if (showKeyword) headers.push("KEYWORD");
                   if (showAdvertiser) headers.push("ADVERTISER");
                   if (showDomain) headers.push("DOMAIN");

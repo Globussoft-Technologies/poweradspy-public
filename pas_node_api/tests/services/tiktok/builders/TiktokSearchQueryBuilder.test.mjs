@@ -68,6 +68,12 @@ describe("TiktokSearchQueryBuilder > build() empty query", () => {
     delete process.env.NODE_ENV;
     expect(b.build().body.profile).toBe(true);
   });
+  it("impression sort excludes documents without impression", () => {
+    const out = b.setSortField("impression").build();
+    expect(out.body.query.bool.filter).toContainEqual({
+      exists: { field: "impression" },
+    });
+  });
 });
 
 describe("TiktokSearchQueryBuilder > clause generators", () => {

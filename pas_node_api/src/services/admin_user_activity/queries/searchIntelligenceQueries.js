@@ -2,7 +2,7 @@
 
 const networks = require('../../../config/networks');
 const databaseManager = require('../../../database/DatabaseManager');
-const { formatTimestampString, convertToUnixSeconds, getTimestampField, AI_FILTER_USED_CLAUSES } = require('../helpers/searchIntelligenceHelpers');
+const { formatTimestampString, convertToUnixSeconds, getTimestampField, AI_FILTER_USED_CLAUSES, ACTIVITY_FILTER_EXTRA_CLAUSES } = require('../helpers/searchIntelligenceHelpers');
 const { withLimit, isEsUnderStress } = require('../../common/helpers/esConcurrency');
 
 // Shares its per-network budget with keywordAdNotificationController.js's count() calls
@@ -448,6 +448,7 @@ function buildAllSearchesQuery(params) {
       { exists: { field: 'filter.marketing_platform' } },
       { exists: { field: 'filter.sub_network' } },
       { exists: { field: 'filter.source_app' } },
+      { exists: { field: 'dashboard.ai_search' } },
       { exists: { field: 'filter.ad_subPositions' } },
       { exists: { field: 'filter.image_size' } },
       { exists: { field: 'dashboard.poster_intelligence' } },
@@ -549,7 +550,10 @@ function buildAllSearchesQuery(params) {
           { exists: { field: 'filter.ctr' } },
           { exists: { field: 'filter.budget' } },
           ...AI_FILTER_USED_CLAUSES,
+          ...ACTIVITY_FILTER_EXTRA_CLAUSES,
         ], minimum_should_match: 1 } });
+      } else if (type === 'ai_search') {
+        shouldClauses.push({ exists: { field: 'dashboard.ai_search' } });
       } else if (type === 'other_activity') {
         shouldClauses.push({ bool: { should: [
           { exists: { field: 'dashboard.exportsAds' } },

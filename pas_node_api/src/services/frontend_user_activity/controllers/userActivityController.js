@@ -1,6 +1,7 @@
 'use strict';
 
 const { detectCountry, getLocation, getClientIp } = require('../../../utils/geoip');
+const databaseManager = require('../../../database/DatabaseManager');
 
 const MARKET_PLATFORM_MAP = {
   'demdex.net':     'Adobe Audience Manager',
@@ -206,6 +207,11 @@ function buildGetAdsInsertData(data, network) {
   base['dashboard.quick_filter'] = data.quick_filter;
   // "AI analysed only" toggle.
   // AdMob "Sub Network" filter (e.g. ['GDN', 'Meta Audience Network']).
+  // AI search: the prompt as typed in the "Describe what you're looking for"
+  // box, plus a flag so AI-search records are easy to filter.
+  const aiPrompt = typeof data.ai_prompt === 'string' ? data.ai_prompt.trim() : '';
+  base['dashboard.ai_prompt'] = aiPrompt && aiPrompt !== 'NA' ? aiPrompt : 'NA';
+  base['dashboard.ai_search'] = aiPrompt && aiPrompt !== 'NA' ? 'true' : 'NA';
   base['filter.sub_network'] = data.sub_network;
   // Ad Sub Position (TOP / BOTTOM) for every network — the Google and All
   // branches below set the same field from the same value.
@@ -512,6 +518,72 @@ const FILTER_FIELDS_BY_NETWORK = {
   All:       ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','celeb','object','logo','affiliate','ecommerce','funnel','source','market_platform','type','type_filter','adcategory','subCategory','likes','comments','shares','popularity','impressions','view','views','adBudget','verified','meta_ads_lib_filter','size','nativeNetwork','ad_sub_position','budget','ctr'],
 };
 
+// ── AI prompt searches → MongoDB ─────────────────────────────────────────────
+// One document per AI search in the user-activity MongoDB (config:
+// networks.user_activity.database.mongo → pasdev_competitor in dev).
+// Kept for one year: a TTL index on created_at (created by the API on the
+// first save) lets MongoDB delete documents older than 365 days.
+const AI_PROMPT_COLLECTION = 'ai_prompt_searches';
+const AI_PROMPT_TTL_SECONDS = 365 * 24 * 60 * 60;
+let aiPromptTtlIndexReady = false;
+
+async function ensureAiPromptTtlIndex(collection) {
+  if (aiPromptTtlIndexReady) return;
+  try {
+    // No-op if the index already exists with the same options.
+    await collection.createIndex(
+      { created_at: 1 },
+      { name: 'created_at_ttl_1y', expireAfterSeconds: AI_PROMPT_TTL_SECONDS },
+    );
+    aiPromptTtlIndexReady = true;
+  } catch (err) {
+    console.warn('[userActivityController] Failed to create AI prompt TTL index:', err.message);
+  }
+}
+
+// Activity-doc keys that are stored as top-level fields (or not at all),
+// so they are left out of filters_applied.
+const AI_PROMPT_META_KEYS = new Set([
+  'user.id', 'user.email', 'user.SubscriptionType', 'user.userSubscriptionType',
+  'user.current_country', 'network', 'dateTime', 'date',
+  'adsCountOnSerach', 'ads_count_reason', 'search_error_detail', 'filterType',
+  'dashboard.ai_search', 'dashboard.ai_prompt',
+]);
+
+// 'dashboard.ai_intent' → 'ai_intent', 'filter.countries' → 'countries':
+// dotted keys are awkward to query in MongoDB.
+function toAiPromptFilterKey(key) {
+  return key.replace(/^(dashboard|filter|search|search_by|sort_by|lander)\./, '').replace(/\./g, '_');
+}
+
+async function saveAiPromptSearch(doc, meta) {
+  try {
+    const mongo = databaseManager.getMongo('user_activity');
+    if (!mongo) return;
+    const filtersApplied = {};
+    for (const [key, value] of Object.entries(doc)) {
+      if (AI_PROMPT_META_KEYS.has(key)) continue;
+      filtersApplied[toAiPromptFilterKey(key)] = value;
+    }
+    const collection = mongo.collection(AI_PROMPT_COLLECTION);
+    await ensureAiPromptTtlIndex(collection);
+    await collection.insertOne({
+      user_id:          doc['user.id'] ?? null,
+      email:            meta.email ?? null,
+      country:          meta.country ?? null,
+      prompt:           doc['dashboard.ai_prompt'],
+      network:          doc.network ?? null,
+      filters_applied:  filtersApplied,
+      filter_type:      doc.filterType ?? null,
+      ads_count:        Number(doc.adsCountOnSerach) || 0,
+      ads_count_reason: doc.ads_count_reason ?? null,
+      created_at:       new Date(),
+    });
+  } catch (err) {
+    console.warn('[userActivityController] Failed to save AI prompt search to MongoDB:', err.message);
+  }
+}
+
 async function indexActivity(elastic, doc) {
   return elastic.index({
     index: 'user_activities',
@@ -624,6 +696,11 @@ async function userActivity(req, elastic, logger) {
       if (filterType) insertData.filterType = filterType;
       const cleaned = filterNA(insertData);
       if (Object.keys(cleaned).length > 0) await indexWithMeta(cleaned);
+      // AI searches are also kept in MongoDB for a year (fire-and-forget —
+      // a Mongo failure never affects the ES activity or the response).
+      if (cleaned['dashboard.ai_search'] === 'true') {
+        saveAiPromptSearch(cleaned, { email: userEmail, country: userCurrentCountry });
+      }
 
     } else if (method === 'ExportAds') {
       await indexWithMeta(filterNA({

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import AdGrid, { formatDatePresetLabel, resolveSortChipLabel, resolveSortDirectionLabel } from "../../src/components/ads/AdGrid";
+import AdGrid, {
+  formatDatePresetLabel,
+  formatDatePresetRangeLabel,
+  resolveSortChipLabel,
+  resolveSortDirectionLabel,
+} from "../../src/components/ads/AdGrid";
 import { getDashboardAdNavigation } from "../../src/utils/dashboardAdNavigation";
 
 describe("getDashboardAdNavigation", () => {
@@ -99,5 +104,23 @@ describe("formatDatePresetLabel", () => {
 
   it("keeps unknown preset-shaped values readable", () => {
     expect(formatDatePresetLabel("last_45_days")).toBe("Last 45 Days");
+  });
+});
+
+describe("formatDatePresetRangeLabel", () => {
+  const now = new Date(2026, 8, 24, 12, 0, 0);
+
+  it("matches the manual calendar chip for an AI last-30-days preset", () => {
+    expect(formatDatePresetRangeLabel("seen_btn_sort", "last_30_days", now))
+      .toBe("Ad Seen: 26/08/2026 - 24/09/2026");
+  });
+
+  it("accepts the natural-language preset alias", () => {
+    expect(formatDatePresetRangeLabel("seen_btn_sort", "last thirty days", now))
+      .toBe("Ad Seen: 26/08/2026 - 24/09/2026");
+  });
+
+  it("leaves unknown values for the existing fallback label", () => {
+    expect(formatDatePresetRangeLabel("seen_btn_sort", "last_45_days", now)).toBeNull();
   });
 });

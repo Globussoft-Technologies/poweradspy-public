@@ -273,8 +273,42 @@ async function searchAllNetworks(req, res) {
   // network round-trips (whose ads were filtered out of the results anyway) and
   // keeps "Total Ads" aligned with what's actually shown.
   const _POPULARITY_NETWORKS = new Set(['facebook', 'instagram', 'linkedin', 'tiktok']);
+  // Impression counts are available on the same four network indexes. Other
+  // network parsers either ignore impression sorting or expose a different
+  // metric, so they must not contribute rows to an impression-sorted search.
+  const _IMPRESSION_NETWORKS = new Set(['facebook', 'instagram', 'linkedin', 'tiktok']);
+  // Running-days data is exposed by every current search controller. AdMob
+  // handles this value through its Poster Intelligence sort when selected;
+  // the remaining networks use their regular days_running/duration field.
+  const _RUNNING_DAYS_NETWORKS = new Set([
+    'facebook', 'instagram', 'youtube', 'gdn', 'native', 'linkedin',
+    'reddit', 'quora', 'pinterest', 'google', 'tiktok', 'admob', 'chatgptads',
+  ]);
+  const _orderColumn = String(_body.order_column || '').trim().toLowerCase();
+  const _sortBy = String(_body.sortBy || '').trim().toLowerCase();
   const _popularitySortActive =
-    _body.popularity_sort === 'popularity_sort' || _body.sortBy === 'Popularity';
+    _body.popularity_sort === 'popularity_sort' ||
+    _orderColumn === 'popularity' ||
+    _orderColumn === 'popularity_score' ||
+    _sortBy === 'popularity';
+  const _impressionSortActive =
+    _body.impression_sort === 'impression_sort' ||
+    _orderColumn === 'impression' ||
+    _orderColumn === 'impressions' ||
+    _sortBy === 'impression' ||
+    _sortBy === 'impressions';
+  const _runningDaysSortActive =
+    _body.running_longest_sort === 'running_longest_sort' ||
+    _orderColumn === 'days_running' ||
+    _sortBy === 'running_longest' ||
+    _sortBy === 'longest_running' ||
+    _sortBy === 'running_days' ||
+    _sortBy === '-running_days' ||
+    _sortBy === 'ad_running_days';
+  const _domainSortActive =
+    _body.domain_sort === 'domain_sort' ||
+    _orderColumn === 'domain_date' ||
+    _sortBy.includes('domain');
 
   const isUserRequested  = (net) => reqNetworks === 'all' || reqNetworks.includes(net);
   const isCustomPlan = req.planAccess?.isCustomPlan === true;
@@ -290,6 +324,9 @@ async function searchAllNetworks(req, res) {
     (!sduiApplicable || sduiApplicable.includes(net)) &&
     (!_budgetFilterActive || _AD_BUDGET_NETWORKS.has(net)) &&
     (!_popularitySortActive || _POPULARITY_NETWORKS.has(net)) &&
+    (!_impressionSortActive || _IMPRESSION_NETWORKS.has(net)) &&
+    (!_runningDaysSortActive || _RUNNING_DAYS_NETWORKS.has(net)) &&
+    (!_domainSortActive || DOMAIN_DATE_NETWORKS.has(net)) &&
     (!_dateFilterActive || _dateFilterNetworks.has(net)) &&
     isUserRequested(net);
 
@@ -381,9 +418,9 @@ async function searchAllNetworks(req, res) {
   // global sort (e.g. a Facebook ad from 2022 appears before an Instagram ad
   // from 2025). Re-sort here to honour the user's chosen sort order.
   //
-  // IMPORTANT — only re-sort when MULTIPLE networks contributed data. A single
-  // network's results are already sorted by ES; running a second sort here
-  // wasted CPU on every single-network search.
+  // IMPORTANT — keep the normal single-network path untouched. Metric sorts
+  // are the exception because they also need to remove rows whose selected
+  // metric disappeared during SQL hydration.
   let data = merged;
   const b = body;
   const admobPosterSortActive = (() => {
@@ -405,7 +442,10 @@ async function searchAllNetworks(req, res) {
   // network should keep its own native order. A second global re-sort here
   // would flatten that network-local ordering and make the AdMob-only ranking
   // appear to affect other platforms.
-  if (merged.length > 1 && requestedArrays.length > 1 && !admobPosterSortActive) {
+  const metricSortRequested =
+    _popularitySortActive ||
+    _impressionSortActive;
+  if (merged.length > 0 && (requestedArrays.length > 1 || metricSortRequested) && !admobPosterSortActive) {
 
     // Determine sort field from the request flags the frontend sends.
     // Default (and "newest") sorts by last_seen — mirrors what every individual
@@ -420,10 +460,13 @@ async function searchAllNetworks(req, res) {
     else if (b.impression_sort      === 'impression_sort')      sortField = 'impression';
     else if (b.popularity_sort      === 'popularity_sort')      sortField = 'popularity';
     else if (b.adBudget_sort        === 'adBudget_sort')        sortField = 'ad_budget';
-    else if (b.domain_sort          === 'domain_sort' || b.order_column === 'domain_date') sortField = 'domain_registration_date';
+    else if (_domainSortActive)                                  sortField = 'domain_registration_date';
     else if (b.newest_sort          === 'newest_sort')          sortField = 'last_seen';
-    else if (b.sortBy === 'Impression')   sortField = 'impression';
-    else if (b.sortBy === 'Popularity')   sortField = 'popularity';
+    else if (['impression', 'impressions'].includes(String(b.order_column || '').toLowerCase())) sortField = 'impression';
+    else if (['popularity', 'popularity_score'].includes(String(b.order_column || '').toLowerCase())) sortField = 'popularity';
+    else if (_runningDaysSortActive)                             sortField = 'days_running';
+    else if (_sortBy === 'impression' || _sortBy === 'impressions') sortField = 'impression';
+    else if (_sortBy === 'popularity' || _sortBy === 'popularity_score') sortField = 'popularity';
     else if (b.sortBy === 'LastSeen')     sortField = 'last_seen';
     else if (b.sortBy === 'Newest')       sortField = 'last_seen';
     else if (b.sortBy === 'days_running') sortField = 'days_running';
@@ -431,21 +474,32 @@ async function searchAllNetworks(req, res) {
     const isDateField = sortField === 'post_date' || sortField === 'last_seen' ||
       sortField === 'first_seen' || sortField === 'domain_registration_date';
     const isPopularity = sortField === 'popularity';
+    const isImpression = sortField === 'impression';
+
+    const getMetricValue = (ad, field) => {
+      let value = ad[field];
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+          try { value = JSON.parse(trimmed); } catch (_) { /* keep the raw value */ }
+        }
+      }
+      if (value != null && typeof value === 'object') {
+        value = value.current ?? value.max ?? value.score ?? value.value;
+      }
+      return value;
+    };
 
     // Schwartzian transform — compute the numeric sort key once per ad
     // instead of recomputing it inside the comparator (2N×log N times).
     // For 220 items the comparator is invoked ~3.3k times; pulling toNum
     // out turns ~6.6k calls into 220.
-    // When sorting by popularity, keep only ads that actually have a popularity
-    // score. The per-network ES queries already enforce this for networks that
-    // support popularity (an `exists` filter), but in multi-network "All" mode
-    // networks with no popularity concept (YouTube, GDN, Google, …) still
-    // contribute ads that would otherwise tail the list with n=0. Drop them so
-    // the result is purely scored ads, highest first.
-    const sortable = isPopularity
+    // Metric sorts must not return rows with no value for the selected metric.
+    // The per-network exists filters handle pagination; this merge-level check
+    // remains necessary for defensive handling of legacy/network responses.
+    const sortable = (isPopularity || isImpression)
       ? merged.filter((ad) => {
-          let v = ad.popularity;
-          if (v != null && typeof v === 'object') v = v.current ?? v.max;
+          const v = getMetricValue(ad, sortField);
           return v != null && v !== '' && !isNaN(Number(v));
         })
       : merged;
@@ -453,11 +507,10 @@ async function searchAllNetworks(req, res) {
     const decorated = new Array(sortable.length);
     for (let i = 0; i < sortable.length; i++) {
       const ad = sortable[i];
-      let v = ad[sortField];
+      let v = (isPopularity || isImpression) ? getMetricValue(ad, sortField) : ad[sortField];
       if (v == null && sortField === 'domain_registration_date') v = ad.domain_registered_date;
       let n = 0;
       if (v != null && v !== '') {
-        if (isPopularity && typeof v === 'object') v = v.current ?? v.max ?? 0;
         if (v instanceof Date) n = v.getTime();
         else if (typeof v === 'number') n = v < 1e10 ? v * 1000 : v;
         else if (isDateField) {

@@ -4,7 +4,7 @@ const {
   getAggs, getTotal, resolveTimeWindow, getAllUserEmails, fetchAllTermsBuckets,
   resolveUserIds: helperResolveUserIds, getCache, setCache,
   detectOtherActivity, parseFilterPills, parsePagination,
-  AI_FILTER_LABEL_MAP, AI_FILTER_USED_CLAUSES, aiFieldUsedClause,
+  AI_FILTER_LABEL_MAP, AI_FILTER_USED_CLAUSES, ACTIVITY_FILTER_EXTRA_CLAUSES, aiFieldUsedClause,
 } = require('../helpers/searchIntelligenceHelpers');
 const { buildAllSearchesQuery } = require('../queries/searchIntelligenceQueries');
 
@@ -172,6 +172,8 @@ async function getAllSearches(req, elastic, logger) {
         ads_count:       adsCount,
         filters_applied: [...new Set(filterPills)],
         other_activity,
+        // AI search prompt ("AI PROMPT" column) — null for a normal search.
+        ai_prompt:       s['dashboard.ai_prompt'] && s['dashboard.ai_prompt'] !== 'NA' ? s['dashboard.ai_prompt'] : null,
       };
     });
 
@@ -378,6 +380,7 @@ async function getSummaryStats(req, elastic, logger) {
         { exists: { field: 'filter.marketing_platform' } },
         { exists: { field: 'filter.sub_network'        } },
         { exists: { field: 'filter.source_app'         } },
+        { exists: { field: 'dashboard.ai_search'       } },
         { exists: { field: 'filter.ad_subPositions'    } },
         { exists: { field: 'filter.image_size'         } },
         { exists: { field: 'dashboard.poster_intelligence' } },
@@ -447,7 +450,10 @@ async function getSummaryStats(req, elastic, logger) {
           { exists: { field: 'filter.ctr' } },
           { exists: { field: 'filter.budget' } },
           ...AI_FILTER_USED_CLAUSES,
+          ...ACTIVITY_FILTER_EXTRA_CLAUSES,
         ], minimum_should_match: 1 } });
+      } else if (activity_type === 'ai_search') {
+        filters.push({ exists: { field: 'dashboard.ai_search' } });
       } else if (activity_type === 'other_activity') {
         filters.push({ bool: { should: [
           { exists: { field: 'dashboard.exportsAds' } },
@@ -507,6 +513,9 @@ async function getSummaryStats(req, elastic, logger) {
       query: { bool: { filter: filters } },
       aggs: {
         other_types: { terms: { field: 'filterType.keyword',  size: 20, order: { _count: 'desc' } } },
+        // Distinct network values across ALL matching docs (values can be
+        // comma-separated lists like "facebook,instagram" — split below).
+        network_values: { terms: { field: 'network.keyword', size: 1000 } },
         sort_by:     { terms: { field: 'filter.sort_by.keyword', size: 20, order: { _count: 'desc' } } },
         keywords_agg: { filter: { exists: { field: 'search.keyword' } }, aggs: { count: { cardinality: { field: 'search.keyword.keyword' } } } },
         advertisers_agg: { filter: { exists: { field: 'search.advertiser' } }, aggs: { count: { cardinality: { field: 'search.advertiser.keyword' } } } },
@@ -636,34 +645,17 @@ async function getSummaryStats(req, elastic, logger) {
     const total  = getTotal(result);
     const aggs   = getAggs(result);
 
-    // Fetch all docs to extract unique platforms (network field can be comma-separated)
-    const allDocsBody = {
-      query: { bool: { filter: filters } },
-      _source: ['network'],
-    };
-
+    // Unique platforms from the network_values aggregation (network can be
+    // comma-separated). Previously this paged through the docs and stopped at
+    // 10,000, so on large ranges (e.g. Last 90 days) recent platforms such as
+    // ChatGPT were missed; the aggregation covers every matching doc.
     const platformsSet = new Set();
-    let allDocsFetched = 0;
-    let fetchSize = 1000;
-
-    while (allDocsFetched < total && allDocsFetched < 10000) {
-      const docsResult = await elastic.search({
-        index: 'user_activities',
-        body: { ...allDocsBody, from: allDocsFetched, size: fetchSize },
+    (aggs.network_values?.buckets ?? []).forEach((b) => {
+      String(b.key ?? '').split(',').forEach((p) => {
+        const platform = p.trim().toLowerCase();
+        if (platform) platformsSet.add(platform);
       });
-      const hits = docsResult?.hits?.hits ?? docsResult?.body?.hits?.hits ?? [];
-      if (hits.length === 0) break;
-      hits.forEach((h) => {
-        const network = h._source?.network ?? null;
-        if (network) {
-          String(network).split(',').forEach((p) => {
-            const platform = p.trim().toLowerCase();
-            if (platform) platformsSet.add(platform);
-          });
-        }
-      });
-      allDocsFetched += hits.length;
-    }
+    });
 
     const otherTypesAgg = (aggs.other_types?.buckets ?? []).map((b) => b.key).filter(Boolean);
     const sortByAgg = (aggs.sort_by?.buckets ?? []).map((b) => b.key).filter(Boolean);

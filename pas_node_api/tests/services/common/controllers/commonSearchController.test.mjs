@@ -264,6 +264,81 @@ describe("commonSearchController > searchAllNetworks", () => {
     expect(admobSearchAds).not.toHaveBeenCalled();
   });
 
+  it("limits impression and popularity sorts to networks that expose the metric", async () => {
+    const map = {};
+    for (const n of NETWORKS) map[n] = svc(n);
+    registryReturns(map);
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: {
+        network: "all",
+        order_column: "impression",
+        order_by: "desc",
+        seen_btn_sort: [200, 100],
+      },
+      query: {},
+    }, res);
+
+    for (const n of ["facebook", "instagram", "linkedin", "tiktok"]) {
+      expect(searchAds[n]).toHaveBeenCalled();
+    }
+    for (const n of ["youtube", "gdn", "native", "reddit", "quora", "pinterest", "google"]) {
+      expect(searchAds[n]).not.toHaveBeenCalled();
+    }
+
+    for (const n of NETWORKS) searchAds[n].mockClear();
+    await searchAllNetworks({
+      body: {
+        network: "all",
+        order_column: "popularity",
+        order_by: "desc",
+        seen_btn_sort: [200, 100],
+      },
+      query: {},
+    }, res);
+
+    for (const n of ["facebook", "instagram", "linkedin", "tiktok"]) {
+      expect(searchAds[n]).toHaveBeenCalled();
+    }
+    for (const n of ["youtube", "gdn", "native", "reddit", "quora", "pinterest", "google"]) {
+      expect(searchAds[n]).not.toHaveBeenCalled();
+    }
+  });
+
+  it("keeps canonical running-day sorting and excludes unsupported domain-sort networks", async () => {
+    const map = {};
+    for (const n of NETWORKS) map[n] = svc(n);
+    registryReturns({ ...map, admob: svc("admob") });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: { network: "all", order_column: "days_running", order_by: "desc" },
+      query: {},
+    }, res);
+
+    for (const n of NETWORKS) expect(searchAds[n]).toHaveBeenCalled();
+    expect(admobSearchAds).toHaveBeenCalled();
+
+    for (const n of NETWORKS) searchAds[n].mockClear();
+    admobSearchAds.mockClear();
+    await searchAllNetworks({
+      body: {
+        network: "all",
+        order_column: "domain_date",
+        order_by: "desc",
+        post_date_btn_sort: [200, 100],
+      },
+      query: {},
+    }, res);
+
+    for (const n of ["facebook", "instagram", "youtube", "gdn", "linkedin", "native", "reddit", "quora", "pinterest", "google"]) {
+      expect(searchAds[n]).toHaveBeenCalled();
+    }
+    expect(searchAds.tiktok).not.toHaveBeenCalled();
+    expect(admobSearchAds).not.toHaveBeenCalled();
+  });
+
   it("planAccess.allowedPlatforms restricts networks", async () => {
     registryReturns({ facebook: svc("fb"), instagram: svc("ig") });
     searchAds.facebook.mockResolvedValue({ code: 200, data: [{ id: 1 }], total: 1 });
@@ -440,6 +515,8 @@ describe("commonSearchController > searchAllNetworks", () => {
       [{ last_seen_sort: "LastSeen_sort" }, "last_seen"],
       [{ sortBy: "Impression" }, "impression"],
       [{ sortBy: "Popularity" }, "popularity"],
+      [{ order_column: "days_running", order_by: "desc" }, "days_running"],
+      [{ order_column: "domain_date", order_by: "desc" }, "domain_registration_date"],
       [{ sortBy: "LastSeen" }, "last_seen"],
       [{ sortBy: "Newest" }, "last_seen"],
       [{ sortBy: "days_running" }, "days_running"],
@@ -476,6 +553,67 @@ describe("commonSearchController > searchAllNetworks", () => {
     const res = mockRes();
     await searchAllNetworks({ body: { popularity_sort: "popularity_sort" }, query: {} }, res);
     expect(res.json.mock.calls[0][0].data[0].id).toBe(2);
+  });
+
+  it("metric sorts exclude rows without the selected field", async () => {
+    registryReturns({ facebook: svc("fb"), instagram: svc("ig") });
+    searchAds.facebook.mockResolvedValue({
+      code: 200,
+      data: [{ id: 1, impression: null }, { id: 2, impression: 20 }],
+      total: 2,
+    });
+    searchAds.instagram.mockResolvedValue({
+      code: 200,
+      data: [{ id: 3, impression: 10 }],
+      total: 1,
+    });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: { order_column: "impression", order_by: "desc" },
+      query: {},
+    }, res);
+
+    expect(res.json.mock.calls[0][0].data.map((ad) => ad.id)).toEqual([2, 3]);
+  });
+
+  it("metric sort removes a missing metric from a single-network page", async () => {
+    registryReturns({ facebook: svc("fb") });
+    searchAds.facebook.mockResolvedValue({
+      code: 200,
+      data: [{ id: 1, impression: null }],
+      total: 1,
+    });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: { network: ["facebook"], order_column: "impression", order_by: "desc" },
+      query: {},
+    }, res);
+
+    expect(res.json.mock.calls[0][0].data).toEqual([]);
+  });
+
+  it("metric sorts accept JSON-encoded popularity values and exclude missing values", async () => {
+    registryReturns({ facebook: svc("fb"), instagram: svc("ig") });
+    searchAds.facebook.mockResolvedValue({
+      code: 200,
+      data: [{ id: 1, popularity: null }, { id: 2, popularity: '{"current":5}' }],
+      total: 2,
+    });
+    searchAds.instagram.mockResolvedValue({
+      code: 200,
+      data: [{ id: 3, popularity: { current: 10 } }],
+      total: 1,
+    });
+    const res = mockRes();
+
+    await searchAllNetworks({
+      body: { order_column: "popularity", order_by: "desc" },
+      query: {},
+    }, res);
+
+    expect(res.json.mock.calls[0][0].data.map((ad) => ad.id)).toEqual([3, 2]);
   });
 
   it("merged sort: Date value coerced via getTime", async () => {

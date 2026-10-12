@@ -175,6 +175,12 @@ const Header = ({
     const hasActiveAiPrompt = Boolean(aiPrompt?.trim());
     const hasCommittedNormalSearch = Boolean(searchQuery?.trim()) && !hasActiveAiPrompt;
     if (hasCommittedNormalSearch) return false;
+    // Deep link (?keyword= / ?advertiser= / ?domain=, e.g. a push notification's
+    // "Open"): App.jsx runs that normal search on mount, so don't start in AI mode.
+    try {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get("keyword") || p.get("advertiser") || p.get("domain")) return false;
+    } catch { /* ignore */ }
     try { return sessionStorage.getItem("ai_search_mode") !== "0"; } catch { return true; }
   });
   useEffect(() => {

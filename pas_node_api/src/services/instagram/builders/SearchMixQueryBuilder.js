@@ -800,6 +800,9 @@ class SearchMixQueryBuilder {
     if (this._sortField === 'instagram_ad.popularity.current') {
       buckets.filter.push({ exists: { field: 'instagram_ad.popularity.current' } });
     }
+    if (this._sortField === 'instagram_ad.impression') {
+      buckets.filter.push({ exists: { field: 'instagram_ad.impression' } });
+    }
 
     const nc = this._getNotCountryClause();
     if (nc) buckets.must_not.push(nc);

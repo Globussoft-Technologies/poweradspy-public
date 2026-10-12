@@ -52,12 +52,27 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   if (event.action === 'close') return; // "Close" action button — just dismiss, no navigation
   const link = (event.notification.data && event.notification.data.link) || '/';
+  // Backend sends a relative link (/?keyword=...) — resolve it so it can be compared
+  // with client.url (always absolute) and navigated to.
+  const url = new URL(link, self.location.origin).href;
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (clientList) => {
       for (const client of clientList) {
-        if (client.url === link && 'focus' in client) return client.focus();
+        if (client.url === url && 'focus' in client) return client.focus();
       }
-      if (clients.openWindow) return clients.openWindow(link);
+      // Reuse an already-open PowerAdSpy tab: focus it and load the link there, so
+      // the page's deep-link handling (App.jsx) runs the search in that tab.
+      const appClient = clientList.find((c) => c.url.startsWith(self.location.origin) && 'navigate' in c);
+      if (appClient) {
+        try {
+          await appClient.focus();
+          const navigated = await appClient.navigate(url);
+          if (navigated) return navigated;
+        } catch (e) {
+          // Uncontrolled tab (navigate() rejects) — fall back to a new window below.
+        }
+      }
+      if (clients.openWindow) return clients.openWindow(url);
     })
   );
 });

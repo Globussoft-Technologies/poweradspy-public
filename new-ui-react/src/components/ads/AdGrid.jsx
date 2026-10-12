@@ -14,6 +14,7 @@ import { useInstalledMobile } from "../../hooks/useInstalledMobile";
 import OriginalPreview from "./OriginalPreview";
 import AdDetailModal from "./AdDetailModal";
 import AdFilterBar, { resolveActiveSortLabel, resolveSortPlanAccessId } from "./AdFilterBar";
+import { getQuickFilterRange } from "./AdDateDropdown";
 import AiQuickFilters from "./AiQuickFilters";
 import { AiSearchExplanation, AiSearchToast } from "./AiSearchNotices";
 import FilterChip from "../filters/FilterChip";
@@ -65,6 +66,51 @@ const DATE_PRESET_LABELS = {
   this_month: "This month",
   last_month: "Last month",
   this_year: "This year",
+};
+
+const DATE_PRESET_QUICK_FILTERS = {
+  today: "today",
+  yesterday: "yesterday",
+  last_7: "last_7",
+  last_7_days: "last_7",
+  last_seven_days: "last_7",
+  last_14: "last_14",
+  last_14_days: "last_14",
+  last_fourteen_days: "last_14",
+  last_30: "last_30",
+  last_30_days: "last_30",
+  last_thirty_days: "last_30",
+  last_90: "last_90",
+  last_90_days: "last_90",
+  last_ninety_days: "last_90",
+  this_month: "this_month",
+  last_month: "last_month",
+  this_year: "this_year",
+};
+
+const DATE_FILTER_LABELS = {
+  seen_btn_sort: "Ad Seen",
+  post_date_btn_sort: "Post Date",
+  first_seen_btn_sort: "First Seen",
+  domain_date_btn_sort: "Domain Reg.",
+};
+
+const formatCalendarDate = (date) => {
+  const dd = String(date.getDate()).padStart(2, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  return `${dd}/${mm}/${date.getFullYear()}`;
+};
+
+// AI Search keeps relative date presets as strings, while the calendar stores
+// the equivalent range as timestamps. Render preset strings as dates so both
+// entry points produce the same chip without changing the request payload.
+export const formatDatePresetRangeLabel = (filterKey, value, now = new Date()) => {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const quickFilter = DATE_PRESET_QUICK_FILTERS[normalized];
+  const range = quickFilter ? getQuickFilterRange(quickFilter, now) : null;
+  const label = DATE_FILTER_LABELS[filterKey];
+  if (!label || !range?.from || !range?.to) return null;
+  return `${label}: ${formatCalendarDate(range.from)} - ${formatCalendarDate(range.to)}`;
 };
 
 // AI Search may provide a relative date preset before the live SDUI date
@@ -323,12 +369,7 @@ const AdGrid = ({
         ? `${(total / 1_000).toFixed(1)}K`
         : `${total}`;
   }, [adsMeta]);
-  const DATE_FILTER_KEYS = {
-    seen_btn_sort: "Ad Seen",
-    post_date_btn_sort: "Post Date",
-    first_seen_btn_sort: "First Seen",
-    domain_date_btn_sort: "Domain Reg.",
-  };
+  const DATE_FILTER_KEYS = DATE_FILTER_LABELS;
 
   const RANGE_FILTER_KEYS = {
     likes: "Likes", like: "Likes", likes_range: "Likes", engagement_likes: "Likes",
@@ -605,9 +646,10 @@ const AdGrid = ({
         continue;
       }
       if (DATE_FILTER_KEYS[key] && typeof value === "string" && value.trim()) {
+        const presetRangeLabel = formatDatePresetRangeLabel(key, value);
         const configuredLabel = filterOptionLabels[key]?.[value];
         const presetLabel = configuredLabel || formatDatePresetLabel(value);
-        const label = `${DATE_FILTER_KEYS[key]}: ${presetLabel}`;
+        const label = presetRangeLabel || `${DATE_FILTER_KEYS[key]}: ${presetLabel}`;
         otherChips.push({ type: "chip", filterId: key, value: "__date_preset__", label });
         continue;
       }

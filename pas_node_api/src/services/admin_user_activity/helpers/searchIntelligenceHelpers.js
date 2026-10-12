@@ -162,23 +162,33 @@ function getFallbackNetworks() {
   return ELASTIC_FALLBACK_NETWORKS;
 }
 
+// Filter fields added to user activity in Oct 2026 (sidebar-named landing-page
+// filters, AdMob filters, Transparency). Shared with the hard-coded "filters"
+// activity lists in searchIntelligenceQueries.js / userActivitySearchController.js.
+const ACTIVITY_FILTER_EXTRA_FIELDS = [
+  'dashboard.transparency_ads',
+  'filter.affiliate_network', 'filter.ecommerce_platform', 'filter.funnel_type',
+  'filter.traffic_source', 'filter.marketing_platform',
+  'filter.sub_network', 'filter.source_app', 'filter.ad_subPositions', 'filter.image_size',
+  'dashboard.poster_intelligence', 'dashboard.top_ranked_range',
+  'dashboard.most_seen_range', 'dashboard.active_days_range',
+];
+const ACTIVITY_FILTER_EXTRA_CLAUSES = ACTIVITY_FILTER_EXTRA_FIELDS.map((field) => ({ exists: { field } }));
+
 // Field(s) that identify each activity_type. Single-field types resolve to a
 // plain `exists` filter; multi-field types are OR'd together via `should`.
 const ACTIVITY_TYPE_FIELDS = {
   keyword:    ['search.keyword'],
   advertiser: ['search.advertiser'],
   domain:     ['search.domain'],
+  // Searches run from the AI prompt box ("AI Search" button).
+  ai_search:  ['dashboard.ai_search'],
   filters: [
     'filter.country', 'filter.countries', 'filter.gender', 'filter.ad_type',
     'filter.ad_categories', 'filter.ad_subCategories', 'filter.status',
     'filter.sort_by', 'filter.platform', 'filter.native_network',
     'filter.ctr', 'filter.budget',
-    'dashboard.transparency_ads',
-    'filter.affiliate_network', 'filter.ecommerce_platform', 'filter.funnel_type',
-    'filter.traffic_source', 'filter.marketing_platform',
-    'filter.sub_network', 'filter.source_app', 'filter.ad_subPositions', 'filter.image_size',
-    'dashboard.poster_intelligence', 'dashboard.top_ranked_range',
-    'dashboard.most_seen_range', 'dashboard.active_days_range',
+    ...ACTIVITY_FILTER_EXTRA_FIELDS,
   ],
   other_activity: [
     'dashboard.exportsAds', 'favourite_ad_id', 'unfavourite_ad_id',
@@ -661,5 +671,6 @@ module.exports = {
   AI_FILTER_LABEL_MAP,
   QUICK_FILTER_LABEL_MAP,
   AI_FILTER_USED_CLAUSES,
+  ACTIVITY_FILTER_EXTRA_CLAUSES,
   aiFieldUsedClause,
 };

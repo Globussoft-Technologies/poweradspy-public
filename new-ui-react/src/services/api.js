@@ -2194,6 +2194,8 @@ async function trackUserActivity(payload, meta, info = {}) {
     google_transparency_subnetwork: payload.google_transparency_subnetwork ?? 'NA',
     // AdMob "Sub Network" — labels resolved in fetchAds' activityPayload.
     sub_network:          payload.sub_network          ?? 'NA',
+    // AI search prompt (set in fetchAds' activityPayload).
+    ai_prompt:            payload.ai_prompt            ?? 'NA',
     // Ad Sub Position (Google / AdMob) — previously only sent by the Google,
     // Pinterest and All blocks below, so an AdMob search dropped it.
     ad_sub_position:      payload.ad_sub_position      ?? 'NA',
@@ -2528,7 +2530,9 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   }
 
   // User activity is logged only on a fresh search (skip=0), not scroll pagination.
-  const shouldTrackActivity = !filters.skip || filters.skip === 0;
+  // AI search tier probes (_aiSearchExecution.probe) are not logged: only the
+  // final committed search, which loads the results, logs one record per prompt.
+  const shouldTrackActivity = (!filters.skip || filters.skip === 0) && aiExecution?.probe !== true;
   const activityPayload = (errorMessage) => ({
     ...payload,
     // AI filters / "AI analysed only" drop networks without AI-Meta (AdMob,
@@ -2561,6 +2565,9 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     // is still recorded.
     ai_category:              hasActiveFilterValue(filters.aiCategoryNames)    ? filters.aiCategoryNames    : payload.ai_category_id,
     ai_subcategory:           hasActiveFilterValue(filters.aiSubcategoryNames) ? filters.aiSubcategoryNames : payload.ai_subcategory_id,
+    // AI search prompt as typed ('NA' for a normal search) — stored as
+    // dashboard.ai_prompt + dashboard.ai_search: "true".
+    ai_prompt:                String(filters.aiPrompt ?? '').trim() || 'NA',
     // Landing-page filters: the log stores the sidebar labels (shopify → Shopify).
     ecommerce:                toActivityLabels(payload.ecommerce,       filters.filterOptionLabels?.ecommerce_platform_filter),
     market_platform:          toActivityLabels(payload.market_platform, filters.filterOptionLabels?.marketing_platform_filter),

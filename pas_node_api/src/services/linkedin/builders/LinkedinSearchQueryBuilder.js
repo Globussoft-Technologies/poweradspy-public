@@ -486,6 +486,9 @@ class LinkedinSearchQueryBuilder {
     if (this._sortField === 'popularity.current') {
       buckets.filter.push({ exists: { field: 'popularity.current' } });
     }
+    if (this._sortField === 'impression') {
+      buckets.filter.push({ exists: { field: 'impression' } });
+    }
 
     const nc = this._getNotCountryClause();
     if (nc) buckets.must_not.push(nc);

@@ -276,6 +276,9 @@ class TiktokSearchQueryBuilder {
     if (this._sortField === 'popularity') {
       buckets.filter.push({ exists: { field: 'popularity' } });
     }
+    if (this._sortField === 'impression') {
+      buckets.filter.push({ exists: { field: 'impression' } });
+    }
 
     const partBody = flatBool(buckets);
 
