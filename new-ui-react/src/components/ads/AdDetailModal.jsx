@@ -10,7 +10,6 @@ import {
   Share2,
   MessageCircle,
   ExternalLink,
-  BarChart3,
   Star,
   StarHalf,
   Clock,
@@ -124,7 +123,6 @@ import fnFgFunnel from "../../assets/funnels/fgfunnel.webp";
 import fnFlexi from "../../assets/funnels/flexi.png";
 import fnWebflow from "../../assets/funnels/webflow.png";
 import fnFacebookPixel from "../../assets/funnels/facebook_pixel.png";
-import "./ad-actions.css";
 
 const DM_MP_IMGS = {
   'agkn.com': mpAgkn, 'branch': mpBranch, 'conversionx.co': mpConversionx,
@@ -2093,10 +2091,8 @@ const AdDetailModal = ({
               );
             })()}
 
-            {/* Action buttons — a fixed grid (ad-actions.css): the row is the same
-                size and position for every ad. AI Recreate is not offered here
-                (it lives on the grid cards' image hover bar). */}
-            <div className={`ad-actions no-recreate pt-1 pwa:sticky pwa:bottom-0 pwa:z-10 pwa:-mx-5 pwa:px-5 pwa:pt-3 pwa:pb-[calc(12px+env(safe-area-inset-bottom))] pwa:border-t pwa:border-theme-border pwa:bg-theme-card`}>
+            {/* Action buttons — pinned to the bottom of the sheet in the installed phone app */}
+            <div className="flex gap-2 pt-1 pwa:sticky pwa:bottom-0 pwa:z-10 pwa:-mx-5 pwa:px-5 pwa:pt-3 pwa:pb-[calc(12px+env(safe-area-inset-bottom))] pwa:border-t pwa:border-theme-border pwa:bg-theme-card pwa:[&>*]:py-3 pwa:[&>*]:text-[13px]">
               <button
                 onClick={() => {
                   // Keep restricted features discoverable. The parent owns the
@@ -2121,11 +2117,15 @@ const AdDetailModal = ({
                   onAnalytics?.(ad);
                 }}
                 title={analyticsAllowed ? "Open Advanced Analytics" : "View plans to unlock Advanced Analytics"}
-                className="aa-btn aa-secondary"
+                className={`flex-1 py-2 rounded-lg text-[11px] font-bold transition-colors text-white ${
+                  analyticsAllowed
+                    ? "bg-[#335296] hover:opacity-80"
+                    : "bg-[#335296] cursor-pointer hover:opacity-80"
+                }`}
               >
-                <BarChart3 /><span>Analytics</span>
+                Analytics
               </button>
-              {hasOriginalUrl ? (
+              {hasOriginalUrl && (
                 <a
                   href={ad.adUrl}
                   target="_blank"
@@ -2135,24 +2135,34 @@ const AdDetailModal = ({
                     trackEvent('viewOriginal', { ad_id: ad.adId ?? ad.id, network });
                     trackAdAction('view_original', { entry_point: 'ad_detail_modal', feature_name: 'original_ad', network, network_scope: 'single', platform: network, request_context: 'ad_open' });
                   }}
-                  className="aa-btn aa-outline"
+                  className="px-4 py-2 rounded-lg text-[11px] font-bold transition-colors flex items-center gap-1.5"
+                  style={{
+                    backgroundColor: "var(--color-surface)",
+                    color: "var(--color-text-secondary)",
+                    border: "1px solid var(--color-border)",
+                  }}
                 >
-                  <span>View Original</span><ExternalLink />
+                  <ExternalLink size={12} /> View Original
                 </a>
-              ) : (
-                <span className="aa-btn aa-outline" aria-disabled="true" title="No original link for this ad">
-                  <span>View Original</span><ExternalLink />
-                </span>
               )}
-              <div className="relative group/copy aa-wrap">
+              <div className="relative group/copy">
                 <button
                   onClick={handleCopyLink}
                   disabled={copyLoading}
-                  aria-label="Copy ad link"
-                  className="aa-btn aa-outline aa-icon"
-                  style={{ opacity: copyLoading ? 0.6 : 1, cursor: copyLoading ? "wait" : "pointer" }}
+                  className="px-3 py-2 rounded-xl text-[11px] font-bold transition-colors flex items-center gap-1"
+                  style={{
+                    backgroundColor: "var(--color-surface)",
+                    color: "var(--color-text-secondary)",
+                    border: "1px solid var(--color-border)",
+                    opacity: copyLoading ? 0.6 : 1,
+                    cursor: copyLoading ? "wait" : "pointer",
+                  }}
                 >
-                  {copied ? <Check className="text-green-400" /> : <Copy />}
+                  {copied ? (
+                    <Check size={12} className="text-green-400" />
+                  ) : (
+                    <Copy size={12} />
+                  )}
                 </button>
                 {/* Tooltip */}
                 <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-[#1a1a1a] text-white text-[10px] font-bold rounded-lg shadow-xl opacity-0 group-hover/copy:opacity-100 transition-all duration-200 pointer-events-none z-50 whitespace-nowrap border border-white/10">

@@ -179,3 +179,8 @@
 .ms-view{background:rgba(24,22,40,.85);color:var(--ps-btn-text)}
 /* Theme switch: colour transitions on surfaces only (no flash, no layout motion). */
 .myspace-page,.ms-card,.ms-drawer,.ms-pill,.ms-toolbar .ms-search,.ms-sort{transition:background-color .15s,border-color .15s,color .15s}
+
+/* Drawer: "Copy prompt" is an icon-only button. */
+.ms-ref-line .ms-copy-icon{width:30px;height:30px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;gap:0}
+.ms-ref-line .ms-copy-icon:hover{background:var(--ps-surface-3)}
+.ms-ref-line .ms-copy-icon svg{width:15px;height:15px}
