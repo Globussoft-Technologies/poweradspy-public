@@ -13,6 +13,7 @@
 
 const databaseManager = require('../../../database/DatabaseManager');
 const { resolveMediaUrl } = require('../../../insertion/helpers/nasClient');
+const logger = require('../../../logger');
 
 function firstHit(results) {
   return results?.hits?.hits?.[0] || results?.body?.hits?.hits?.[0] || null;
@@ -166,11 +167,65 @@ async function resolveReddit(adId) {
   };
 }
 
+/**
+ * Every other network: reuse that network's own single-ad lookup
+ * (<network>/controllers/getAdsByAdvertiserController — the same one the
+ * frontend's "View original ad" uses) and pick the creative with the same
+ * field precedence the ad card uses (api.js mapAdToCard thumbnail):
+ * video_cover → image_video_url → image_url_original → image_url.
+ * No per-network field guessing, so new networks work as soon as they have
+ * that controller.
+ */
+const GENERIC_NETWORKS = ['google', 'gdn', 'pinterest', 'linkedin', 'youtube', 'quora', 'tiktok', 'native', 'admob'];
+const VIDEO_EXT = /\.(mp4|webm|mov|m3u8|avi|mkv)(\?|#|$)/i;
+
+function pickCreativeUrl(row) {
+  if (!row || row.preview_unavailable === true) return null;
+  const candidates = [row.video_cover, row.image_video_url, row.image_url_original, row.image_url, row.new_nas_image_url, row.thumbnail];
+  for (const c of candidates) {
+    if (typeof c !== 'string' || !c.trim()) continue;
+    if (c.includes('DefaultImage')) continue;      // backend's "no creative" marker
+    if (VIDEO_EXT.test(c)) continue;               // a video file can't be recreated as an image
+    return c.trim();
+  }
+  return null;
+}
+
+async function resolveGeneric(network, adId) {
+  let handler;
+  try {
+    ({ getAdsByAdvertiser: handler } = require(`../../${network}/controllers/getAdsByAdvertiserController`));
+  } catch {
+    return { ok: false, reason: `network "${network}" is not yet supported by AI Recreate` };
+  }
+  const conns = databaseManager.getConnections(network) || {};
+  const db = { sql: conns.sql || null, mongo: conns.mongo || null, elastic: conns.elastic || null };
+  const log = logger.createChild(`imagegen-resolve-${network}`);
+
+  const result = await handler({ body: { ad_id: String(adId), network, take: 1, skip: 0 }, query: {}, params: {}, user: {} }, db, log);
+  const row = Array.isArray(result?.data) ? result.data[0] : (result?.data?.ads?.[0] || null);
+  if (!row) return { ok: false, reason: 'ad not found' };
+  if (String(row.type || '').toUpperCase() === 'VIDEO' && !row.video_cover) return { ok: false, reason: 'ad has no usable image' };
+
+  const imageUrl = pickCreativeUrl(row);
+  if (!imageUrl) return { ok: false, reason: 'ad has no usable image' };
+  return {
+    ok: true,
+    imageUrl,
+    allImageUrls: [imageUrl, ...parseCarouselUrls(row.ad_image_video || row.carousel_media)],
+    title: row.ad_title || row.title || '',
+    text: row.ad_text || row.text || '',
+    advertiser: row.post_owner || row.post_owner_name || row.advertiser || '',
+    runningDays: Number(row.days_running) > 0 ? Number(row.days_running) : null,
+  };
+}
+
 const RESOLVERS = {
   facebook: (adId) => resolveFacebookLike('facebook', 'facebook_ad.id', 'facebook_ad.type', 'facebook_ad_variants', adId),
   instagram: (adId) => resolveFacebookLike('instagram', 'instagram_ad.id', 'instagram_ad.type', 'instagram_ad_variants', adId),
   chatgptads: (adId) => resolveChatgptads(adId),
   reddit: (adId) => resolveReddit(adId),
+  ...Object.fromEntries(GENERIC_NETWORKS.map((net) => [net, (adId) => resolveGeneric(net, adId)])),
 };
 
 /**
@@ -192,7 +247,13 @@ async function resolveAdCreative(network, adId, opts = {}) {
   const resolver = RESOLVERS[String(network || '').toLowerCase()];
   if (!resolver) return { ok: false, reason: `network "${network}" is not yet supported by AI Recreate` };
   try {
-    const result = await resolver(adId);
+    let result = await resolver(adId);
+    // A dedicated resolver that can't find an image (older ad without a NAS
+    // copy in ES, etc.) falls back to the network's own single-ad lookup.
+    if (!result.ok && !GENERIC_NETWORKS.includes(String(network).toLowerCase())) {
+      const fallback = await resolveGeneric(String(network).toLowerCase(), adId).catch(() => null);
+      if (fallback?.ok) result = fallback;
+    }
     if (!result.ok) return result;
     const allImageUrls = [...new Set((result.allImageUrls || [result.imageUrl]).map(resolveMediaUrl))];
     let imageUrl = resolveMediaUrl(result.imageUrl);

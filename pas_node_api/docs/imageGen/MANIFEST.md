@@ -182,14 +182,18 @@ needed, those were already correct.
 
 ## 8. Open items for whoever continues this
 
-1. **`adResolver.js` covers facebook, instagram, chatgptads, reddit.** Reddit
-   (added 2026-10-13) reads the creative from SQL with Reddit's own
-   `AD_DETAIL_SELECT/JOINS` and prefers the ES `new_nas_image_url` copy — the
-   same precedence as `reddit/controllers/getAdsByAdvertiserController.js`;
-   video ads are refused ("ad has no usable image"). Every other network
-   (google, gdn, pinterest, linkedin, youtube, quora, tiktok, native, admob)
-   still needs its own case — until then Recreate on those ads fails with
-   `network "<x>" is not yet supported by AI Recreate`.
+1. **`adResolver.js` covers every network** (2026-10-13). Dedicated resolvers:
+   facebook, instagram, chatgptads, reddit. All others (google incl. Transparency,
+   gdn, pinterest, linkedin, youtube, quora, tiktok, native, admob) go through
+   `resolveGeneric`: it calls that network's own single-ad lookup
+   (`<network>/controllers/getAdsByAdvertiserController` — the one "View original
+   ad" uses) and picks the creative with the ad card's field order
+   (`video_cover → image_video_url → image_url_original → image_url`, skipping
+   `DefaultImage` and video files). A dedicated resolver that finds no image falls
+   back to the generic path too (older FB/IG ads without a NAS copy in ES).
+   Verified on dev data: google, gdn, pinterest, linkedin, youtube, quora, native,
+   admob, reddit, facebook, instagram. **tiktok not verifiable locally** (its ES
+   isn't reachable from dev) — check on staging.
 2. **Frontend IS now built** (see §9) but never visually exercised in a running
    browser — no browser was available in this environment. Open the app and
    click through the real flow before considering this screen set done.
