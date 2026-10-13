@@ -22,3 +22,8 @@
 .mc-recreate{width:32px;height:32px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(24,22,40,.72);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(8px);transition:background-color .15s}
 .mc-recreate:hover:not(:disabled){background:rgba(24,22,40,.9)}
 .mc-recreate:disabled{opacity:.45;cursor:not-allowed}
+
+/* Grid card footer chip (always visible on image ads; space reserved on others). */
+.mc-recreate-chip{height:28px;padding:0 10px;border-radius:14px;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;background:var(--ps-accent-soft);color:var(--ps-accent);border:1px solid var(--ps-accent-border);cursor:pointer;transition:border-color .15s}
+.mc-recreate-chip:hover:not(:disabled){border-color:var(--ps-accent)}
+.mc-recreate-chip:disabled{opacity:.5;cursor:not-allowed}

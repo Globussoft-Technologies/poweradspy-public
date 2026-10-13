@@ -121,7 +121,7 @@ same one `chatgptads` uses — `imageGen` is **not** an ad network).
 
 1. `POST /recreate` `{network, ad_id, aspect_ratio, prompt?, watermark?}` →
    validate → resolve the ad's real creative URL server-side (`adResolver.js`,
-   covers facebook/instagram/chatgptads today, see §8) → atomically reserve credit
+   covers facebook/instagram/chatgptads/reddit today, see §8) → atomically reserve credit
    (insufficient → `402 no_credits`, screen 3f) → call Ad Studio → store the job
    doc → `202 {job_id, status:'queued'|'running', balance}` (screen 3c fires
    immediately).
@@ -182,11 +182,14 @@ needed, those were already correct.
 
 ## 8. Open items for whoever continues this
 
-1. **`adResolver.js` only covers facebook, instagram, chatgptads.** Every other
-   network (google, gdn, pinterest, linkedin, reddit, youtube, quora, tiktok,
-   native, admob) needs its own case added — same shape, different ES
-   index/field names. Not done this round; scope was the Ad Studio integration +
-   credits + jobs + MySpace backend, not an exhaustive network audit.
+1. **`adResolver.js` covers facebook, instagram, chatgptads, reddit.** Reddit
+   (added 2026-10-13) reads the creative from SQL with Reddit's own
+   `AD_DETAIL_SELECT/JOINS` and prefers the ES `new_nas_image_url` copy — the
+   same precedence as `reddit/controllers/getAdsByAdvertiserController.js`;
+   video ads are refused ("ad has no usable image"). Every other network
+   (google, gdn, pinterest, linkedin, youtube, quora, tiktok, native, admob)
+   still needs its own case — until then Recreate on those ads fails with
+   `network "<x>" is not yet supported by AI Recreate`.
 2. **Frontend IS now built** (see §9) but never visually exercised in a running
    browser — no browser was available in this environment. Open the app and
    click through the real flow before considering this screen set done.

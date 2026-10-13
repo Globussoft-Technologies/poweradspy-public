@@ -1048,31 +1048,6 @@ const MasonryCard = ({
               {cornerBadgeLabel}
             </span>
 
-            {/* AI Recreate — image creatives incl. image carousels (whichever slide
-                is showing). Lives in this hover bar, not the footer, so every card
-                keeps the same footer height. */}
-            {onRecreate && !isVideo && !cardShowsVideo && (adTypeLower === "image" || hasCarousel) && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (guest?.isRestricted || guest?.isPublicLanding) {
-                    guest?.showGuestWarning?.("Please login to use AI Recreate");
-                    return;
-                  }
-                  if (noCreditsAvailable) return;
-                  onRecreate(hasCarousel
-                    ? { ...ad, thumbnail: currentImg, carouselImages, carouselIndex: activeIndex }
-                    : ad);
-                }}
-                disabled={noCreditsAvailable}
-                title={noCreditsAvailable ? "No credits left" : "Recreate · 1 credit"}
-                aria-label={noCreditsAvailable ? "No credits left" : "Recreate · 1 credit"}
-                className="mc-recreate"
-              >
-                <Sparkle size={14} fill="currentColor" />
-              </button>
-            )}
-
             {/* Save / unsave */}
             <button
               onClick={(e) => {
@@ -1479,6 +1454,37 @@ const MasonryCard = ({
               );
             })()}
             <div className="flex items-center gap-2">
+              {/* AI Recreate — image creatives incl. image carousels (whichever slide
+                  is showing). Rendered for every card while AI Recreate is on and
+                  hidden with visibility (not removed) on other ad types, so every
+                  card footer keeps the same height. */}
+              {onRecreate && (() => {
+                const recreatable = !isVideo && !cardShowsVideo && (adTypeLower === "image" || hasCarousel);
+                return (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (guest?.isRestricted || guest?.isPublicLanding) {
+                        guest?.showGuestWarning?.("Please login to use AI Recreate");
+                        return;
+                      }
+                      if (noCreditsAvailable) return;
+                      onRecreate(hasCarousel
+                        ? { ...ad, thumbnail: currentImg, carouselImages, carouselIndex: activeIndex }
+                        : ad);
+                    }}
+                    disabled={noCreditsAvailable || !recreatable}
+                    tabIndex={recreatable ? 0 : -1}
+                    aria-hidden={!recreatable}
+                    title={noCreditsAvailable ? "No credits left" : "Recreate · 1 credit"}
+                    className="mc-recreate-chip"
+                    style={recreatable ? undefined : { visibility: "hidden" }}
+                  >
+                    <Sparkle size={12} fill="currentColor" />
+                    Recreate
+                  </button>
+                );
+              })()}
               <button
                 onClick={(e) => {
                   e.stopPropagation();

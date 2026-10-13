@@ -44,7 +44,6 @@ import { COUNTRY_NAMES, NAME_TO_ISO } from "../../utils/countries";
 import { ctaHref, parseAdCtas } from "../../utils/cta";
 import { classifyError, trackAdAction, trackProductEvent, getCallToActionEventName } from "../../utils/googleAnalytics";
 import { useTheme } from "../../hooks/useTheme";
-import { useImageGenCredits } from "../../hooks/useImageGenCredits";
 import { resolveAnalyticsFilterValueLabel } from "../../hooks/useSDUI";
 
 import fbIcon from "../../assets/fb.png";
@@ -286,7 +285,6 @@ const AdDetailModal = ({
   isFavourite,
   onToggleFavourite,
   onAnalytics,
-  onRecreate,
   analyticsAllowed = true,
   onPrev,
   onNext,
@@ -303,8 +301,6 @@ const AdDetailModal = ({
 }) => {
   const theme = useTheme()?.theme ?? "light";
   const isLightTheme = theme === "light";
-  const { balance: imageGenBalance } = useImageGenCredits();
-  const recreateNoCreditsAvailable = typeof imageGenBalance === 'number' && imageGenBalance <= 0;
   const [isExpanded, setIsExpanded] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [advTooltipPos, setAdvTooltipPos] = useState(null);
@@ -2098,10 +2094,9 @@ const AdDetailModal = ({
             })()}
 
             {/* Action buttons — a fixed grid (ad-actions.css): the row is the same
-                size and position for image, video and carousel ads. Recreate stays
-                in the row (disabled + tooltip) when this ad can't be recreated;
-                it's left out only when AI Recreate is off for the user. */}
-            <div className={`ad-actions ${onRecreate ? "" : "no-recreate"} pt-1 pwa:sticky pwa:bottom-0 pwa:z-10 pwa:-mx-5 pwa:px-5 pwa:pt-3 pwa:pb-[calc(12px+env(safe-area-inset-bottom))] pwa:border-t pwa:border-theme-border pwa:bg-theme-card`}>
+                size and position for every ad. AI Recreate is not offered here
+                (it lives on the grid cards' image hover bar). */}
+            <div className={`ad-actions no-recreate pt-1 pwa:sticky pwa:bottom-0 pwa:z-10 pwa:-mx-5 pwa:px-5 pwa:pt-3 pwa:pb-[calc(12px+env(safe-area-inset-bottom))] pwa:border-t pwa:border-theme-border pwa:bg-theme-card`}>
               <button
                 onClick={() => {
                   // Keep restricted features discoverable. The parent owns the
@@ -2130,29 +2125,6 @@ const AdDetailModal = ({
               >
                 <BarChart3 /><span>Analytics</span>
               </button>
-              {onRecreate && (() => {
-                // AI Recreate applies to static image creatives only.
-                const recreatable = adTypeLower === "image" && !isVideo;
-                const tip = !recreatable
-                  ? "Recreate is available for image ads"
-                  : recreateNoCreditsAvailable ? "No credits left" : "Recreate · 1 credit";
-                // Wrapper carries the tooltip — a disabled button doesn't show one in every browser.
-                return (
-                  <span className="aa-wrap" title={tip}>
-                    <button
-                      onClick={() => {
-                        if (guest?.showGuestWarning("Please login to use AI Recreate")) return;
-                        onRecreate(ad);
-                      }}
-                      disabled={!recreatable || recreateNoCreditsAvailable}
-                      aria-label={tip}
-                      className="aa-btn aa-primary"
-                    >
-                      <Sparkles /><span>Recreate</span>
-                    </button>
-                  </span>
-                );
-              })()}
               {hasOriginalUrl ? (
                 <a
                   href={ad.adUrl}

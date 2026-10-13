@@ -964,15 +964,14 @@ const RecreateModal = ({ isOpen, ad, onClose, onShowToast, onViewMySpace, onUpgr
                 />
               </div>
 
-              {!prompt.trim() && (
-                <div className="rcp-sugg">
-                  {QUICK_PROMPTS.map((q) => (
-                    <button key={q.label} onClick={() => appendQuickPrompt(q.text)} className="rcp-sg">
-                      <Plus size={11} className="rcp-i" /> {q.label}
-                    </button>
-                  ))}
-                </div>
-              )}
+              {/* Always shown — each chip appends to whatever the user has typed. */}
+              <div className="rcp-sugg">
+                {QUICK_PROMPTS.map((q) => (
+                  <button key={q.label} onClick={() => appendQuickPrompt(q.text)} className="rcp-sg">
+                    <Plus size={11} className="rcp-i" /> {q.label}
+                  </button>
+                ))}
+              </div>
 
               <div className="rcp-fld relative">
                 <label className="rcp-fll">Aspect ratio</label>

@@ -6,7 +6,7 @@
  * client-supplied image URL (a malicious/incorrect URL could otherwise be sent
  * straight to the paid Ad Studio API).
  *
- * Covers facebook, instagram, chatgptads this round (the networks with a
+ * Covers facebook, instagram, chatgptads, reddit this round (the networks with a
  * confirmed ES field shape from this session's work). Adding another network is
  * one more case in RESOLVERS below — same shape, different index/field names.
  */
@@ -123,10 +123,54 @@ async function resolveChatgptads(adId) {
   };
 }
 
+/**
+ * Reddit keeps the creative in SQL (reddit_ad_variants.image_url), with a
+ * NAS copy in ES (new_nas_image_url) that the rest of the app prefers — same
+ * source/precedence as reddit/controllers/getAdsByAdvertiserController.js,
+ * reusing its exact SELECT/JOINs so the fields can't drift.
+ */
+async function resolveReddit(adId) {
+  const { AD_DETAIL_SELECT, AD_DETAIL_JOINS } = require('../../reddit/controllers/adSearchController');
+  const sql = databaseManager.getSQL('reddit');
+  if (!sql) return { ok: false, reason: 'reddit database is not configured' };
+  const id = Number(adId);
+  if (!Number.isFinite(id)) return { ok: false, reason: 'ad not found' };
+
+  const result = await sql.query(`SELECT ${AD_DETAIL_SELECT} ${AD_DETAIL_JOINS} WHERE reddit_ad.id = ? LIMIT 1`, [id]);
+  const rows = Array.isArray(result?.[0]) ? result[0] : result;
+  const row = rows?.[0];
+  if (!row) return { ok: false, reason: 'ad not found' };
+  if (String(row.type || '').toUpperCase() === 'VIDEO') return { ok: false, reason: 'ad has no usable image' };
+
+  let imageUrl = row.image_video_url || row.image_url_original || null;
+  const es = databaseManager.getElastic('reddit');
+  if (es?.client) {
+    try {
+      const hit = firstHit(await es.search({
+        index: es.indexName,
+        body: { query: { bool: { filter: { term: { 'reddit_ad.id': id } } } } },
+      }));
+      if (hit?._source?.new_nas_image_url) imageUrl = hit._source.new_nas_image_url;
+    } catch { /* SQL image is still usable */ }
+  }
+  if (!imageUrl) return { ok: false, reason: 'ad has no usable image' };
+
+  return {
+    ok: true,
+    imageUrl,
+    allImageUrls: [imageUrl, ...parseCarouselUrls(row.ad_image_video)],
+    title: row.ad_title || '',
+    text: row.ad_text || '',
+    advertiser: row.post_owner || '',
+    runningDays: Number(row.days_running) > 0 ? Number(row.days_running) : null,
+  };
+}
+
 const RESOLVERS = {
   facebook: (adId) => resolveFacebookLike('facebook', 'facebook_ad.id', 'facebook_ad.type', 'facebook_ad_variants', adId),
   instagram: (adId) => resolveFacebookLike('instagram', 'instagram_ad.id', 'instagram_ad.type', 'instagram_ad_variants', adId),
   chatgptads: (adId) => resolveChatgptads(adId),
+  reddit: (adId) => resolveReddit(adId),
 };
 
 /**
