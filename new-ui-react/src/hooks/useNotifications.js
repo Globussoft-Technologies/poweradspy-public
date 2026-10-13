@@ -18,6 +18,13 @@ const SHOWN_NOTIFICATIONS_KEY = 'shown_notifications'; // localStorage key for d
 export function useNotifications() {
   const { user } = useAuth();
   const [notifications, setNotifications] = useState([]);
+  // Local "All" view — the backend only ever returns unread (is_view=0) items,
+  // so this accumulates everything seen this session (read + unread) purely
+  // client-side, letting the bell's All/Unread tabs be genuinely different
+  // instead of two tabs showing the same list. Capped so it can't grow forever
+  // in a long-lived tab.
+  const [allNotifications, setAllNotifications] = useState([]);
+  const ALL_CAP = 100;
   const [unreadCount, setUnreadCount] = useState(0);
   const [newNotifications, setNewNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -67,6 +74,16 @@ export function useNotifications() {
       setNotifications(allNotifs);
       setUnreadCount(allNotifs.length);
 
+      // Merge into the local "All" accumulator — upsert by id, keep an
+      // already-read item's read:true (a freshly (re)fetched id is always
+      // unread by definition, since the server only returns unread rows).
+      setAllNotifications((prev) => {
+        const prevById = new Map(prev.map((n) => [n.id, n]));
+        const merged = allNotifs.map((n) => ({ ...n, read: prevById.get(n.id)?.read ?? false }));
+        const rest = prev.filter((n) => !allNotifs.some((fresh) => fresh.id === n.id));
+        return [...merged, ...rest].slice(0, ALL_CAP);
+      });
+
       // Toast dedup: only notifications we have NOT toasted before are "fresh".
       // This stops the popup from re-firing every poll / on reload, WITHOUT
       // hiding them from the bell.
@@ -88,6 +105,7 @@ export function useNotifications() {
   useEffect(() => {
     if (!user) {
       setNotifications([]);
+      setAllNotifications([]);
       setUnreadCount(0);
       // Clear localStorage when user logs out
       localStorage.removeItem(SHOWN_NOTIFICATIONS_KEY);
@@ -116,20 +134,21 @@ export function useNotifications() {
   const markAllRead = useCallback(async () => {
     if (notifications.length === 0) return;
     const ids = notifications.map((n) => n.id);
+    setNotifications([]);
+    setUnreadCount(0);
+    setAllNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)));
     const ok = await markNotificationsRead(ids);
-    if (ok) {
-      setNotifications([]);
-      setUnreadCount(0);
-    }
-  }, [notifications]);
+    if (!ok) poll();
+  }, [notifications, poll]);
 
   const markRead = useCallback(async (ids) => {
     const ok = await markNotificationsRead(ids);
     if (ok) {
       setNotifications((prev) => prev.filter((n) => !ids.includes(n.id)));
       setUnreadCount((prev) => Math.max(0, prev - ids.length));
+      setAllNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)));
     }
   }, []);
 
-  return { notifications, unreadCount, newNotifications, loading, markAllRead, markRead, refresh: poll };
+  return { notifications, allNotifications, unreadCount, newNotifications, loading, markAllRead, markRead, refresh: poll };
 }

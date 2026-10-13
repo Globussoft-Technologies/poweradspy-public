@@ -78,6 +78,18 @@ const persistConfig = {
     // The dashboard-level Show Original mode was replaced by AI-only results.
     // Do not rehydrate a stale preview that users can no longer toggle off.
     'previewMode',
+    // MySpace/Credits are reached via their own URLs (/my-space,
+    // /profile/credits), which the url->state sync effect in App.jsx already
+    // restores correctly on load — persisting these booleans too added nothing
+    // and was the direct enabler of a routing bug (a stale showMySpacePage from
+    // an earlier session/tab outliving an explicit navigate('/') elsewhere in
+    // App.jsx, since the state->URL effect would then force-navigate back to
+    // /my-space). showSavedAdsPage/activePage are left as-is — not implicated
+    // in that bug once every call site clears all three flags together
+    // (App.jsx's exitSpecialPages()), and already had other code depending on
+    // their current persisted behavior.
+    'showMySpacePage',
+    'showCreditsPage',
     // 'isAIAnalysisModalOpen',
     // 'isCampaignModalOpen',
     // 'isAnalyticsModalOpen',

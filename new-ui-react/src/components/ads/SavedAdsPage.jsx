@@ -69,6 +69,7 @@ const SavedAdsPage = ({
   onToggleFavourite,
   onUnHideAd,
   onHideAdvertiser,
+  onRecreate,
   onAnalyticsAd,
   onSearch,
   closeDetailSignal,
@@ -572,6 +573,7 @@ const SavedAdsPage = ({
                     }}
                     onClick={(ad) => setSelectedAd(ad)}
                     onSearch={onSearch}
+                    onRecreate={onRecreate}
                     showCopyLink
                   />
                 </div>
@@ -586,6 +588,7 @@ const SavedAdsPage = ({
         sduiConfig={sdui?.config}
         onClose={() => setSelectedAd(null)}
         isFavourite={selectedAd ? favouriteAdIds.has(Number(selectedAd.adId || selectedAd.id)) : false}
+        onRecreate={onRecreate}
         isHidden={activeTab === "hidden"}
         isAdvertiserHidden={selectedAd ? selectedAd.hideType === 1 : false}
         onUnHideAd={async (ad) => {

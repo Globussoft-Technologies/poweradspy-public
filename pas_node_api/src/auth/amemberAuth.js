@@ -291,6 +291,102 @@ function computeExpiryDate(subscriptions) {
   return subscriptions[maxKey] || null;
 }
 
+/**
+ * Read-only: this user's aMember invoices (for the Billing tab's invoice
+ * history), newest first. Same `_nested[]=invoices` call fetchCustomPlanPlatforms
+ * already uses to read platform options — reused here for the invoice list
+ * itself instead of just its items' custom options. Never writes anything.
+ * Returns [] on any failure (Billing tab shows "No invoices" rather than an
+ * error for what's a non-critical section of the page).
+ */
+async function fetchAmemberInvoices(userId) {
+  const apiUrl = config.amember.apiUrl;
+  const apiKey = config.amember.apiKey;
+  if (!apiUrl || !apiKey || !userId) return [];
+  try {
+    const url = `${apiUrl}users?_key=${apiKey}&_filter[user_id]=${userId}&_nested[]=invoices`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`aMember users API returned ${res.status}`);
+    const data = await res.json();
+    const invoices = data?.[0]?.nested?.invoices;
+    if (!Array.isArray(invoices)) return [];
+    return [...invoices].reverse();
+  } catch (err) {
+    log.warn('Failed to fetch aMember invoices', { userId, error: err.message });
+    return [];
+  }
+}
+
+/**
+ * Read-only: one user's aMember access records + invoices in a single call —
+ * what AI Recreate credits use to work out the active plan, trial state,
+ * recurring state and term end (imageGen/helpers/creditPlan.js), and which
+ * top-up packs were bought (imageGen/helpers/topups.js). Access records are the
+ * truth for "what does this user have right now" (admin grants have no invoice
+ * at all); invoices add recurring/trial details. Returns null on any failure so
+ * callers keep their last known state instead of zeroing anyone's credits.
+ */
+async function fetchAmemberSubscription(userId, { timeoutMs = 4000 } = {}) {
+  const apiUrl = config.amember.apiUrl;
+  const apiKey = config.amember.apiKey;
+  if (!apiUrl || !apiKey || !userId) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const params = new URLSearchParams({ _key: apiKey, '_filter[user_id]': String(userId) });
+    params.append('_nested[]', 'invoices');
+    params.append('_nested[]', 'access');
+    const res = await fetch(`${apiUrl}users?${params.toString()}`, { signal: controller.signal });
+    if (!res.ok) throw new Error(`aMember users API returned ${res.status}`);
+    const record = extractAmemberUserRecord(await res.json());
+    if (!record || Number(record.user_id) !== Number(userId)) return null;
+    return {
+      access: Array.isArray(record.nested?.access) ? record.nested.access : [],
+      invoices: Array.isArray(record.nested?.invoices) ? record.nested.invoices : [],
+    };
+  } catch (err) {
+    log.warn('Failed to fetch aMember subscription', {
+      userId, error: err?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : err.message,
+    });
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Read-only: one user's aMember payment and refund records (top-up crediting
+ * needs proof the invoice was actually PAID, and must reverse credits when it is
+ * refunded / charged back — see imageGen/helpers/topups.js). Returns
+ * { payments, refunds } or null on any failure, so the caller credits/reverses
+ * nothing rather than acting on partial data.
+ */
+async function fetchAmemberPaymentsAndRefunds(userId, { timeoutMs = 4000 } = {}) {
+  const apiUrl = config.amember.apiUrl;
+  const apiKey = config.amember.apiKey;
+  if (!apiUrl || !apiKey || !userId) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const list = async (endpoint) => {
+    const params = new URLSearchParams({ _key: apiKey, '_filter[user_id]': String(userId), _count: '500' });
+    const res = await fetch(`${apiUrl}${endpoint}?${params.toString()}`, { signal: controller.signal });
+    if (!res.ok) throw new Error(`aMember ${endpoint} API returned ${res.status}`);
+    const data = await res.json();
+    return Object.values(data || {}).filter((row) => row && typeof row === 'object' && String(row.user_id) === String(userId));
+  };
+  try {
+    const [payments, refunds] = await Promise.all([list('invoice-payments'), list('invoice-refunds')]);
+    return { payments, refunds };
+  } catch (err) {
+    log.warn('Failed to fetch aMember payments/refunds', {
+      userId, error: err?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : err.message,
+    });
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── GET /loginpage/:encodedUsername ──────────────────────
 router.get('/loginpage/:encodedUsername', async (req, res) => {
   try {
@@ -336,6 +432,17 @@ router.get('/loginpage/:encodedUsername', async (req, res) => {
       if (!amUser?.user_id || Number(amUser.user_id) === Number(userId)) {
         added = amUser?.added || amUser?.created_at || amUser?.createdAt || null;
       }
+    }
+
+    // Step 2b: AI Recreate credit top-up packs are aMember products too, but they
+    // are NOT plans. Left in, a top-up's (newer, higher) product ID would win
+    // computeSubscriptionType's max-ID pick, or trip the unknown/custom-plan
+    // path below and zero out platform access. Drop them before any plan logic.
+    const topupProductIds = new Set(
+      (config.imageGen?.topup?.packs || []).map((p) => Number(p.amemberProductId)).filter(Boolean)
+    );
+    for (const productId of Object.keys(subscriptions)) {
+      if (topupProductIds.has(Number(productId))) delete subscriptions[productId];
     }
 
     // Step 3: Handle free plan — if has plan 20 + other plans, remove 20 (mirrors PHP)
@@ -455,4 +562,12 @@ router.get('/logout', (req, res) => {
   return res.redirect(amemberLogout);
 });
 
+// Exposed as named exports (in addition to the default router export) so other
+// services can reuse the SAME read-only aMember lookup instead of duplicating
+// it — e.g. the profile service's Account/Billing tabs. aMember is never
+// written to from this app; every consumer of these must stay read-only too.
 module.exports = router;
+module.exports.fetchAmemberUser = fetchAmemberUser;
+module.exports.fetchAmemberInvoices = fetchAmemberInvoices;
+module.exports.fetchAmemberSubscription = fetchAmemberSubscription;
+module.exports.fetchAmemberPaymentsAndRefunds = fetchAmemberPaymentsAndRefunds;

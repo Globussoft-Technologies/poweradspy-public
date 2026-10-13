@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LayoutGrid, Library, Hash, TrendingUp, Menu, Bookmark, X } from "lucide-react";
+import { LayoutGrid, Library, Hash, TrendingUp, Menu, Bookmark, X, Image as ImageIcon } from "lucide-react";
 import NavItem from "../shared/NavItem";
 import SectionLabel from "../shared/SectionLabel";
 import SidebarDivider from "../shared/SidebarDivider";
@@ -48,6 +48,9 @@ const Sidebar = ({
   allowedPlatforms,
   showSavedAdsPage = false,
   onShowSavedAdsPage,
+  showMySpacePage = false,
+  showProfilePage = false,
+  onShowMySpacePage,
   onOpenKeywordsExplorer,
   searchIn = "keyword",
   onClearFilters,
@@ -304,7 +307,7 @@ const Sidebar = ({
             <NavItem
               icon={<Library size={isOpen ? 16 : 18} />}
               label={t("ads_library")}
-              active={activePage === "ads" && !showSavedAdsPage}
+              active={activePage === "ads" && !showSavedAdsPage && !showMySpacePage && !showProfilePage}
               onClick={() => onPageChange?.("ads")}
               collapsed={!isOpen}
             />
@@ -353,10 +356,21 @@ const Sidebar = ({
                 collapsed={!isOpen}
               />
             )}
+            {/* onShowMySpacePage is only passed when the user has AI Recreate access */}
+            {isLoggedIn && onShowMySpacePage && (
+              <NavItem
+                icon={<ImageIcon size={isOpen ? 16 : 18} />}
+                label="MySpace"
+                active={showMySpacePage}
+                onClick={() => onShowMySpacePage?.()}
+                collapsed={!isOpen}
+                badge="New"
+              />
+            )}
           </div>
 
           {/* Only show filters on Ads Library page */}
-          {activePage === "ads" && !showSavedAdsPage && isOpen && (
+          {activePage === "ads" && !showSavedAdsPage && !showMySpacePage && !showProfilePage && isOpen && (
             <div className="flex flex-col flex-1 min-h-0">
               <div className="pwa:hidden">
                 <SidebarDivider />

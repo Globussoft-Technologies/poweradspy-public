@@ -23,10 +23,13 @@ import {
   Sparkles,
   Loader2,
   ArrowUpRight,
+  Sparkle,
   Plus,
   Search,
+  UserRoundCog,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "react-router-dom";
 import { createDashboardShare, buildSearchPayload, trackEvent } from "../../services/api";
 import AutocompleteFilter from "../filters/AutocompleteFilter";
 import { useTheme, THEMES } from "../../hooks/useTheme";
@@ -38,8 +41,11 @@ import whatsappLogo from "../../assets/whatsapp.png";
 import PlatformTab from "../shared/PlatformTab";
 import AdFilterBar from "../ads/AdFilterBar";
 import { useNotifications } from "../../hooks/useNotifications";
+import { useImageGenNotifications } from "../../hooks/useImageGenNotifications";
 import { getNetworkContext, trackAdAction } from "../../utils/googleAnalytics";
 import NotificationPopup from "./NotificationPopup";
+import CreditsDropdown from "./CreditsDropdown";
+import { useImageGenCredits } from "../../hooks/useImageGenCredits";
 import { PLATFORMS } from "../../constants";
 import { AnimatedThemeToggler } from "../ui/animated-theme-toggler";
 import {
@@ -142,6 +148,11 @@ const Header = ({
   guest,
   showOnlyFavourites = false,
   onShowFavourites,
+  onShowProfilePage,
+  onShowMySpacePage,
+  onOpenMySpaceImage,
+  onRecreateFromNotification,
+  onUpgradeClick,
   onSearch,
   onAiSearch,
   onExitAiSearch,
@@ -158,6 +169,7 @@ const Header = ({
   onSearchDropdownOpenChange,
 }) => {
   const { config } = sdui;
+  const location = useLocation();
   const { user, logout } = useAuth();
   const { theme = "light" } = useTheme() || {};
   const { t, i18n } = useTranslation();
@@ -311,9 +323,30 @@ const Header = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Notifications
-  const { notifications, unreadCount, newNotifications, markAllRead } = useNotifications();
+  const { notifications, allNotifications, unreadCount, newNotifications, markAllRead } = useNotifications();
+  // AI Recreate job-completion notifications — a separate feed, merged into
+  // the same bell UI (badge count + list) without touching the keyword/
+  // advertiser/domain system above.
+  const {
+    items: imageGenNotifs,
+    unreadCount: imageGenUnreadCount,
+    newItems: newImageGenNotifs,
+    loadMore: loadMoreImageGenNotifs,
+    hasMore: hasMoreImageGenNotifs,
+    loadingMore: loadingMoreImageGenNotifs,
+    markRead: markImageGenRead,
+    markAllRead: markImageGenAllRead,
+  } = useImageGenNotifications();
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef(null);
+  const notifButtonRef = useRef(null);
+
+  // AI Recreate credits (screen 2's header dropdown)
+  const [creditsOpen, setCreditsOpen] = useState(false);
+  const creditsButtonRef = useRef(null);
+  // imageGenEnabled = config imageGen.enabled + allowedUserIds for this user;
+  // false hides the credits pill and the Profile menu item entirely.
+  const { balance: imageGenBalance, enabled: imageGenEnabled } = useImageGenCredits();
   // Report open/close to the parent so it can shrink the crawl-status banner's width
   // while the notifications dropdown is open — the dropdown sits to the left of the bell
   // and the banner is centered further left still, so at full width they can overlap.
@@ -405,6 +438,14 @@ const Header = ({
   }, [newNotifications]);
 
   useEffect(() => {
+    if (!newImageGenNotifs.length) return undefined;
+    const latest = newImageGenNotifs[0];
+    setAutoToast({ id: Date.now(), kind: 'imagegen', notification: latest });
+    const timer = setTimeout(() => setAutoToast(null), 6000);
+    return () => clearTimeout(timer);
+  }, [newImageGenNotifs]);
+
+  useEffect(() => {
     const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFsChange);
     return () => document.removeEventListener("fullscreenchange", onFsChange);
@@ -426,15 +467,10 @@ const Header = ({
     document.documentElement.lang = i18n.language.split("-")[0];
   }, [i18n.language]);
 
-  // Close notification popup on click outside
+  // Close credits popup on route change (e.g. "Go to MySpace" inside it navigates away)
   useEffect(() => {
-    if (!notifOpen) return;
-    const handler = (e) => {
-      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [notifOpen]);
+    setCreditsOpen(false);
+  }, [location.pathname]);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -1355,24 +1391,83 @@ const Header = ({
         {!isLanding && !isGuestMode && !guest?.isGuest && (
           <div className="relative hidden sm:block pwa:block" ref={notifRef}>
             <button
+              ref={notifButtonRef}
               id="notification-bell"
               onClick={() => setNotifOpen((prev) => !prev)}
-              className="pwa-action relative sm:w-7 sm:h-7 2xl:w-9 2xl:h-9 flex items-center justify-center rounded-lg text-white/70 hover:text-white hover:bg-theme-text/[0.08] transition-all"
+              // np-bell = bell design (notification-popup.css); pwa-action = installed-app sizing (index.css).
+              className="np-bell pwa-action"
+              aria-expanded={notifOpen}
+              aria-haspopup="dialog"
               title="Notifications"
             >
               <Bell size={18} />
-              {unreadCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 flex items-center justify-center text-[9px] font-bold text-white bg-red-500 rounded-full px-1 leading-none animate-bounce" style={{ animationDuration: '2s', animationIterationCount: 3 }}>
-                  {unreadCount > 9 ? '9+' : unreadCount}
+              {(unreadCount + imageGenUnreadCount) > 0 && (
+                <span className="np-badge">
+                  {(unreadCount + imageGenUnreadCount) > 9 ? '9+' : (unreadCount + imageGenUnreadCount)}
                 </span>
               )}
             </button>
             {notifOpen && (
               <NotificationPopup
                 notifications={notifications}
-                onMarkAllRead={() => { markAllRead(); setNotifOpen(false); }}
+                allNotifications={allNotifications}
+                anchorRef={notifButtonRef}
+                onMarkAllRead={() => { markAllRead(); markImageGenAllRead(); }}
                 onNotificationClick={handleNotificationClick}
                 onClose={() => setNotifOpen(false)}
+                imageGenNotifications={imageGenNotifs}
+                onLoadMore={loadMoreImageGenNotifs}
+                hasMore={hasMoreImageGenNotifs}
+                loadingMore={loadingMoreImageGenNotifs}
+                onImageGenNotificationClick={(notif) => {
+                  markImageGenRead([notif.id]);
+                  onOpenMySpaceImage?.(notif.data?.image_id || notif.job_id);
+                  setNotifOpen(false);
+                }}
+                onImageGenTryAgain={(notif) => {
+                  markImageGenRead([notif.id]);
+                  const data = notif.data || {};
+                  onRecreateFromNotification?.({
+                    id: data.ad_id, adId: data.ad_id, network: data.network,
+                    advertiser: data.advertiser, thumbnail: data.advertiser_avatar,
+                    recreateDefaults: {
+                      aspectRatio: data.aspect_ratio, prompt: data.retry?.prompt,
+                      brandWebsite: data.retry?.brand_website,
+                      productImageUrl: data.retry?.product_image_url,
+                      productImage: data.retry?.product_image,
+                      extraImageUrls: data.retry?.extra_image_urls || [],
+                    },
+                  });
+                  setNotifOpen(false);
+                }}
+              />
+            )}
+          </div>
+        )}
+
+        {/* AI Recreate credits indicator — logged-in users with AI Recreate access only (screen 2) */}
+        {imageGenEnabled && !isLanding && !isGuestMode && !guest?.isGuest && (
+          <div className="relative hidden sm:block pwa:block">
+            <button
+              ref={creditsButtonRef}
+              onClick={() => setCreditsOpen((prev) => !prev)}
+              className="flex items-center gap-1.5 h-7 2xl:h-9 pl-2.5 pr-2 rounded-full border transition-opacity hover:opacity-85"
+              style={{ backgroundColor: 'var(--ps-accent-soft)', borderColor: 'var(--ps-accent-border)', color: 'var(--ps-accent)' }}
+              title="Credits"
+            >
+              <Sparkle size={13} className="shrink-0" fill="currentColor" />
+              <span className="text-[11px] font-bold whitespace-nowrap">
+                {typeof imageGenBalance === 'number' ? imageGenBalance : '—'} credits
+              </span>
+              <ChevronDown size={11} className={`shrink-0 transition-transform ${creditsOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {creditsOpen && (
+              <CreditsDropdown
+                anchorRef={creditsButtonRef}
+                onClose={() => setCreditsOpen(false)}
+                onViewAll={() => onShowProfilePage?.('credits')}
+                onViewMySpace={() => { onShowMySpacePage?.(); setCreditsOpen(false); }}
+                onUpgrade={() => { onUpgradeClick?.(); setCreditsOpen(false); }}
               />
             )}
           </div>
@@ -1477,6 +1572,17 @@ const Header = ({
                 <User size={14} className="group-hover:scale-110 transition-transform" />
                 <span className="group-hover:translate-x-1 transition-transform">{t("account")}</span>
               </a>
+            )}
+
+            {/* Profile (logged-in users with AI Recreate access only) */}
+            {imageGenEnabled && !isLanding && !isGuestMode && (
+              <button
+                onClick={() => onShowProfilePage?.('credits')}
+                className="group w-full flex items-center gap-2 px-3 py-2 text-xs text-theme-text hover:bg-[#6b99ff]/10 hover:text-[#6b99ff] transition-all duration-300"
+              >
+                <UserRoundCog size={14} className="group-hover:scale-110 transition-transform" />
+                <span className="group-hover:translate-x-1 transition-transform">Profile</span>
+              </button>
             )}
 
             {/* Switch to Classic Dashboard (Logged-in only) */}
@@ -1588,15 +1694,9 @@ const Header = ({
         </div>
         {/* Auto Toast Popup */}
         {autoToast && (
-          <div className="absolute top-full right-4 mt-4 bg-theme-card border-l-4 border-[#6b99ff] rounded-lg shadow-xl px-4 py-3 min-w-[250px] z-[70] animate-slide-in-right flex items-start gap-3 cursor-pointer" onClick={() => setNotifOpen(true)}>
-            <div className="w-8 h-8 rounded-full bg-[#6b99ff]/10 flex items-center justify-center shrink-0 mt-0.5">
-              <Bell size={14} className="text-[#6b99ff] animate-ring" />
-            </div>
-            <div>
-              <p className="text-xs font-bold text-theme-text">New Ads Found!</p>
-              <p className="text-[10px] text-theme-text-muted mt-0.5">
-                Ads scraped for {autoToast.type === 1 ? "advertiser" : autoToast.type === 2 ? "domain" : "keyword"} <span className="font-semibold text-theme-text">"{autoToast.keyword}"</span>
-              </p>
+          <div className="absolute top-full right-4 mt-4 bg-theme-card border-l-4 border-[#6b99ff] rounded-lg shadow-xl px-4 py-3 min-w-[250px] z-[70] animate-slide-in-right flex items-start gap-3 cursor-pointer" onClick={() => { if (autoToast.kind === 'imagegen') { const notif = autoToast.notification; markImageGenRead([notif.id]); onOpenMySpaceImage?.(notif.data?.image_id || notif.job_id); setAutoToast(null); } else setNotifOpen(true); }}>
+            {autoToast.kind === 'imagegen' && autoToast.notification?.data?.image_url ? <img src={autoToast.notification.data.image_url} alt="" loading="lazy" decoding="async" className="w-8 h-10 rounded-md object-cover shrink-0"/> : <div className="w-8 h-8 rounded-full bg-[#6b99ff]/10 flex items-center justify-center shrink-0 mt-0.5"><Bell size={14} className="text-[#6b99ff] animate-ring" /></div>}
+            <div>{autoToast.kind === 'imagegen' ? <><p className="text-xs font-bold text-theme-text">Your recreated ad is ready</p><p className="text-[10px] text-theme-text-muted mt-0.5">Your ad for <span className="font-semibold text-theme-text">{autoToast.notification?.data?.advertiser || 'your source ad'}</span> is ready · <span className="text-[#4b3fd0] font-bold">View</span></p></> : <><p className="text-xs font-bold text-theme-text">New Ads Found!</p><p className="text-[10px] text-theme-text-muted mt-0.5">Ads scraped for {autoToast.type === 1 ? "advertiser" : autoToast.type === 2 ? "domain" : "keyword"} <span className="font-semibold text-theme-text">"{autoToast.keyword}"</span></p></>}
             </div>
             <button onClick={(e) => { e.stopPropagation(); setAutoToast(null); }} className="absolute top-2 right-2 text-theme-text-muted hover:text-theme-text">
               <X size={12} />

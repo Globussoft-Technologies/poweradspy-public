@@ -21,6 +21,7 @@ const dbManager = require('../../../database/DatabaseManager');
 const logger = require('../../../logger');
 const config = require('../../../config');
 const firebaseService = require('../../FirebaseService');
+const profileRepo = require('../../profile/repository');
 const { PLATFORM_FIELD_MAPPINGS } = require('../helpers/platformSearchFields');
 const { withLimit, isEsUnderStress } = require('../helpers/esConcurrency');
 
@@ -484,6 +485,13 @@ async function lookupFcmToken(userId) {
 async function sendFirstAdPushSafe(source, doc, user, net, today) {
   if (config.keywordSearch?.notify?.firstAdPushEnabled === false) return;
   try {
+    // Profile › Notifications' "Keyword search results" toggle (default on) —
+    // gates this push only, not the in-app 20-ad-threshold bell above (that
+    // dedup/threshold logic is out of scope for this gate — too easy to break
+    // by touching it for a feature that's really about the push channel).
+    const enabled = await profileRepo.isNotificationEnabled(user.userId, 'keyword_search_results').catch(() => true);
+    if (!enabled) return;
+
     const fcmToken = await lookupFcmToken(user.userId);
     if (!fcmToken) return; // no token on file yet — retried automatically next tick
 

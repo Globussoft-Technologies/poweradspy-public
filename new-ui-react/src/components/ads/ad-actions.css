@@ -1,0 +1,24 @@
+/* Ad detail modal action row — a fixed grid, so the row is the same size and
+   position for every ad (image, video, carousel). Colours are theme tokens
+   (src/styles/ps-tokens.css); no neon violet in either theme. */
+.ad-actions{display:grid;grid-template-columns:1fr 1fr 1fr 40px;gap:8px}
+.ad-actions.no-recreate{grid-template-columns:1fr 1fr 40px}
+.ad-actions .aa-btn{height:40px;min-width:0;border-radius:10px;font-size:13.5px;font-weight:600;line-height:1;display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;padding:0 10px;box-sizing:border-box;cursor:pointer;text-decoration:none;overflow:hidden;transition:background-color .15s,border-color .15s,color .15s}
+.ad-actions .aa-btn svg{width:15px;height:15px;flex:0 0 auto}
+.ad-actions .aa-btn>span{overflow:hidden;text-overflow:ellipsis}
+.ad-actions .aa-primary{background:var(--ps-btn);color:var(--ps-btn-text);border:0}
+.ad-actions .aa-primary:hover:not(:disabled){background:var(--ps-btn-hover)}
+.ad-actions .aa-primary:disabled{background:var(--ps-btn-disabled-bg);color:var(--ps-btn-disabled-text);cursor:not-allowed}
+.ad-actions .aa-secondary{background:var(--ps-accent-soft);color:var(--ps-accent);border:1px solid var(--ps-accent-border)}
+.ad-actions .aa-secondary:hover{border-color:var(--ps-accent)}
+.ad-actions .aa-outline{background:transparent;color:var(--ps-text-2);border:1px solid var(--ps-border-strong)}
+.ad-actions .aa-outline:hover:not([aria-disabled="true"]):not(:disabled){background:var(--ps-hover)}
+.ad-actions .aa-outline[aria-disabled="true"]{color:var(--ps-text-disabled);cursor:not-allowed}
+.ad-actions .aa-icon{width:40px;padding:0}
+.ad-actions .aa-wrap{display:flex;min-width:0}
+.ad-actions .aa-wrap>.aa-btn{flex:1}
+
+/* Grid card: Recreate as an image hover action (keeps every card footer the same height). */
+.mc-recreate{width:32px;height:32px;border-radius:6px;border:1px solid rgba(255,255,255,.15);background:rgba(24,22,40,.72);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(8px);transition:background-color .15s}
+.mc-recreate:hover:not(:disabled){background:rgba(24,22,40,.9)}
+.mc-recreate:disabled{opacity:.45;cursor:not-allowed}

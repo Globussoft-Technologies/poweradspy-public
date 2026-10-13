@@ -261,6 +261,7 @@ const AdGrid = ({
   favouriteAdIds = new Set(),
   onHideAd,
   onHideAdvertiser,
+  onRecreate,
   onToggleFavourite,
   onSearch,
   onOpenAdvertiserProfile,
@@ -273,6 +274,8 @@ const AdGrid = ({
   onToggleSidebar,
   theme,
   isLanding = false,
+  openAdRequest = null,
+  onOpenAdRequestConsumed,
   isHeaderScrolled,
   onScrollChange,
   previewMode,
@@ -972,6 +975,13 @@ const AdGrid = ({
     setSelectedAd(ad);
     onAdDetailOpen?.();
   }, [guest, onAdDetailOpen]);
+  const openedExternalAdRef = useRef(null);
+  useEffect(() => {
+    if (!openAdRequest?.ad || openedExternalAdRef.current === openAdRequest.key) return;
+    openedExternalAdRef.current = openAdRequest.key;
+    handleCardClick(openAdRequest.ad);
+    onOpenAdRequestConsumed?.(openAdRequest.key);
+  }, [openAdRequest, handleCardClick, onOpenAdRequestConsumed]);
   const [showAllChips, setShowAllChips] = useState(false);
 
   // Scroll to Top state
@@ -1785,6 +1795,7 @@ const AdGrid = ({
                   onClick={handleCardClick}
                   onHideAd={onHideAd}
                   onHideAdvertiser={onHideAdvertiser}
+                  onRecreate={onRecreate}
                   guest={guest}
                 />
               )
@@ -1845,6 +1856,7 @@ const AdGrid = ({
               : false
           }
           onToggleFavourite={onToggleFavourite}
+          onRecreate={onRecreate}
           onAnalytics={(ad) =>
             onAnalyticsAd?.(ad, {
               items: masonryItems,

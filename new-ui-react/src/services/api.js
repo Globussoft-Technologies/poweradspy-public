@@ -3939,6 +3939,374 @@ export const markNotificationsRead = async (ids = []) => {
   }
 };
 
+// ─── AI Recreate + MySpace + Credits (pas_node_api/src/services/imageGen) ─────
+
+/**
+ * Starts an AI Recreate job for an existing ad.
+ * @param {Object} params
+ * @param {string} params.network - e.g. 'facebook', 'instagram', 'chatgptads'
+ * @param {string|number} params.adId
+ * @param {string} params.aspectRatio - e.g. '1:1', '4:5', '9:16'
+ * @param {string} [params.prompt]
+ * @param {boolean} [params.watermark]
+ * @param {string} [params.productImageUrl] - from uploadImageGenProductImage()
+ * @param {string[]} [params.extraImageUrls] - up to 3 additional reference images
+ * @param {string} [params.brandWebsite]
+ * @returns {Promise<Object>} the response envelope; `data.job_id` on success,
+ *   `data.balance`/`cost` on a 402 (no_credits).
+ */
+export const recreateImage = async ({ network, adId, aspectRatio, prompt, watermark, productImageUrl, productImage, extraImageUrls, brandWebsite, sourceAdvertiser, sourceRunningDays, sourceImageUrl }) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/recreate`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getPASToken()}`,
+    },
+    body: JSON.stringify({
+      network,
+      ad_id: adId,
+      aspect_ratio: aspectRatio,
+      ...(prompt ? { prompt } : {}),
+      ...(watermark !== undefined ? { watermark } : {}),
+      ...(productImageUrl ? { product_image_url: productImageUrl } : {}),
+      ...(productImage ? { product_image: productImage } : {}),
+      ...(extraImageUrls?.length ? { extra_image_urls: extraImageUrls } : {}),
+      ...(brandWebsite ? { brand_website: brandWebsite } : {}),
+      ...(sourceAdvertiser ? { source_advertiser: sourceAdvertiser } : {}),
+      ...(Number.isFinite(Number(sourceRunningDays)) ? { source_running_days: Number(sourceRunningDays) } : {}),
+      ...(sourceImageUrl ? { source_image_url: sourceImageUrl } : {}),
+    }),
+  });
+  await checkFor401(res);
+  const json = await res.json().catch(() => ({}));
+  // Not using `res.ok` as the sole success check — 402 (no_credits) and 422
+  // (rejected) are meaningful responses the caller needs the body of, not a
+  // generic thrown error.
+  return { ...json, httpStatus: res.status };
+};
+
+/**
+ * Uploads a product image (or an extra reference image) for the Recreate modal.
+ * Multipart, not JSON — no Content-Type header so the browser sets the boundary.
+ * @param {File} file
+ * @returns {Promise<Object>} response envelope; `data.url` on success.
+ */
+export const uploadImageGenProductImage = async (file) => {
+  const formData = new FormData();
+  formData.append('image', file);
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+    body: formData,
+  });
+  await checkFor401(res);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.message || `uploadImageGenProductImage failed: ${res.status}`);
+  return json;
+};
+
+/**
+ * "Enhance" — rewrites a draft Recreate prompt via a real backend call (not a
+ * local trick). Throws with the backend's message on a 503 (not configured on
+ * this server) or 429 (cooldown) so the caller can show that exact reason.
+ */
+export const enhanceImageGenPrompt = async (prompt) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/recreate/enhance`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getPASToken()}`,
+    },
+    body: JSON.stringify({ prompt }),
+  });
+  await checkFor401(res);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.message || `enhanceImageGenPrompt failed: ${res.status}`);
+  return json;
+};
+
+/** Polls one Recreate job's status/result (screens 3c/3d/3e). */
+export const getImageGenJob = async (jobId) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/jobs/${encodeURIComponent(jobId)}`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getImageGenJob failed: ${res.status}`);
+  return res.json();
+};
+
+/** Removes a generated image from MySpace. Does not refund credits (see MANIFEST.md). */
+export const deleteImageGenJob = async (jobId) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/jobs/${encodeURIComponent(jobId)}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`deleteImageGenJob failed: ${res.status}`);
+  return res.json();
+};
+
+/**
+ * Queues NAS deletion for a Recreate reference image (product/extra) the user
+ * uploaded but then removed before ever submitting a generation with it. Fire
+ * and forget from the caller's side — the actual NAS delete happens later on
+ * the backend's own schedule (imageGenNasCleanupSweep.js).
+ * @param {string} url - the URL POST /upload returned
+ */
+export const deleteImageGenUpload = async (url) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/upload`, {
+    method: 'DELETE',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getPASToken()}`,
+    },
+    body: JSON.stringify({ url }),
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`deleteImageGenUpload failed: ${res.status}`);
+  return res.json();
+};
+
+/**
+ * MySpace gallery list (screens 5/7).
+ * @param {Object} [params]
+ * @param {string} [params.status] - comma-separated, e.g. 'succeeded'
+ * @param {string} [params.from] - ISO date, inclusive
+ * @param {string} [params.to] - ISO date, inclusive
+ * @param {number} [params.limit]
+ * @param {string} [params.cursor]
+ */
+export const listMySpace = async ({ status, from, to, q, sort, limit, cursor } = {}) => {
+  const qs = new URLSearchParams();
+  if (status) qs.set('status', status);
+  if (from) qs.set('from', from);
+  if (to) qs.set('to', to);
+  if (q) qs.set('q', q);
+  if (sort) qs.set('sort', sort);
+  if (limit) qs.set('limit', String(limit));
+  if (cursor) qs.set('cursor', cursor);
+  const query = qs.toString() ? `?${qs.toString()}` : '';
+
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/jobs${query}`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`listMySpace failed: ${res.status}`);
+  return res.json();
+};
+
+/** Credits balance + recent ledger (header dropdown — screen 2 — and Profile › Credits — screen 8). */
+export const getImageGenCredits = async (limit) => {
+  const query = limit ? `?limit=${encodeURIComponent(limit)}` : '';
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/credits${query}`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getImageGenCredits failed: ${res.status}`);
+  return res.json();
+};
+
+/** Whether this user gets the AI Recreate feature set at all
+ * (config imageGen.enabled + imageGen.allowedUserIds). */
+export const getImageGenAccess = async () => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/access`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getImageGenAccess failed: ${res.status}`);
+  return res.json();
+};
+
+/** Same shape as getImageGenCredits, but the backend re-reads aMember right now
+ * (credits any just-paid top-up). Call when the user returns from checkout. */
+export const syncImageGenCredits = async () => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/credits/sync`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`syncImageGenCredits failed: ${res.status}`);
+  return res.json();
+};
+
+/**
+ * Header bell notifications for Recreate jobs that reached succeeded/failed —
+ * separate from fetchNotifications() (that one is the existing keyword/
+ * advertiser/domain search-alert feed; this is AI Recreate only).
+ */
+export const getImageGenNotifications = async (options) => {
+  const normalized = typeof options === 'number' ? { limit: options } : (options || {});
+  const params = new URLSearchParams();
+  if (normalized.limit) params.set('limit', String(normalized.limit));
+  if (normalized.cursor) params.set('cursor', normalized.cursor);
+  if (normalized.filter) params.set('filter', normalized.filter);
+  const query = params.size ? `?${params}` : '';
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/notifications${query}`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getImageGenNotifications failed: ${res.status}`);
+  return res.json();
+};
+
+export const markImageGenNotificationsRead = async (ids) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/notifications/read`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getPASToken()}`,
+    },
+    body: JSON.stringify({ ids }),
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`markImageGenNotificationsRead failed: ${res.status}`);
+  return res.json();
+};
+
+/**
+ * Credit history for Profile › Credits (paginated, type-filterable).
+ * @param {{type?:string, page?:number, limit?:number}} [params]
+ */
+export const getImageGenCreditHistory = async ({ type = 'all', page = 1, limit = 8 } = {}) => {
+  const params = new URLSearchParams({ type, page: String(page), limit: String(limit) });
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/credits/history?${params}`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getImageGenCreditHistory failed: ${res.status}`);
+  return res.json();
+};
+
+/** Triggers a browser download of the credit-history CSV (auth via query token
+ * fetch+blob, same posture other download links in this app use for an
+ * Authorization-header-gated file — a plain <a href> can't send that header). */
+export const downloadImageGenCreditHistoryCsv = async (type = 'all') => {
+  const params = new URLSearchParams({ type });
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/credits/history.csv?${params}`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`downloadImageGenCreditHistoryCsv failed: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `credit-history-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+/** Downloads one generated image converted to png | jpeg | webp | svg (server-side, sharp). */
+export const downloadImageGenImage = async (jobId, format = 'png', baseName = null) => {
+  const params = new URLSearchParams({ format });
+  const res = await fetch(`${PAS_API_BASE}/api/v1/imageGen/jobs/${encodeURIComponent(jobId)}/download?${params}`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`downloadImageGenImage failed: ${res.status}`);
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const ext = format === 'jpeg' ? 'jpg' : format;
+  // Content-Disposition is only readable when CORS exposes it; fall back to the caller's name.
+  const filename = disposition.match(/filename="?([^";]+)"?/)?.[1] || `${baseName || `recreate-${jobId}`}.${ext}`;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+// ─── Profile: Account / Billing / Notifications tabs ───────────────────────
+
+export const getMyProfile = async () => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/profile/me`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getMyProfile failed: ${res.status}`);
+  return res.json();
+};
+
+/** @param {{name?:string, company?:string, phone?:string, timezone?:string, language?:string}} fields */
+export const updateMyProfile = async (fields) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/profile/me`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getPASToken()}`,
+    },
+    body: JSON.stringify(fields),
+  });
+  await checkFor401(res);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.message || `updateMyProfile failed: ${res.status}`);
+  return json;
+};
+
+export const uploadMyAvatar = async (file) => {
+  const formData = new FormData();
+  formData.append('image', file);
+  const res = await fetch(`${PAS_API_BASE}/api/v1/profile/me/avatar`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+    body: formData,
+  });
+  await checkFor401(res);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.message || `uploadMyAvatar failed: ${res.status}`);
+  return json;
+};
+
+export const removeMyAvatar = async () => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/profile/me/avatar`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`removeMyAvatar failed: ${res.status}`);
+  return res.json();
+};
+
+export const getMyBilling = async () => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/profile/billing`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getMyBilling failed: ${res.status}`);
+  return res.json();
+};
+
+export const getMyNotificationPreferences = async () => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/profile/notification-preferences`, {
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+  });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`getMyNotificationPreferences failed: ${res.status}`);
+  return res.json();
+};
+
+/** In-app/push only — this never touches email delivery.
+ * @param {Object} patch - { [prefKey]: boolean } */
+export const updateMyNotificationPreferences = async (patch) => {
+  const res = await fetch(`${PAS_API_BASE}/api/v1/profile/notification-preferences`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getPASToken()}`,
+    },
+    body: JSON.stringify(patch),
+  });
+  await checkFor401(res);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.message || `updateMyNotificationPreferences failed: ${res.status}`);
+  return json;
+};
+
 export default {
   fetchPlanAccess,
   fetchAds,
@@ -3954,4 +4322,23 @@ export default {
   fetchFreshTikTokVideoUrl,
   fetchNotifications,
   markNotificationsRead,
+  recreateImage,
+  uploadImageGenProductImage,
+  deleteImageGenUpload,
+  getImageGenCreditHistory,
+  downloadImageGenCreditHistoryCsv,
+  getMyProfile,
+  updateMyProfile,
+  uploadMyAvatar,
+  removeMyAvatar,
+  getMyBilling,
+  getMyNotificationPreferences,
+  updateMyNotificationPreferences,
+  enhanceImageGenPrompt,
+  getImageGenJob,
+  deleteImageGenJob,
+  listMySpace,
+  getImageGenCredits,
+  getImageGenNotifications,
+  markImageGenNotificationsRead,
 };

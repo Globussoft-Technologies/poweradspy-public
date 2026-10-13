@@ -22,6 +22,7 @@ import i18n from './i18n.js'
 import App from './App.jsx'
 import { ThemeProvider } from './hooks/useTheme.jsx'
 import { AuthProvider } from './hooks/useAuth.jsx'
+import { ImageGenCreditsProvider } from './hooks/useImageGenCredits.jsx'
 import { Provider } from 'react-redux'
 import { PersistGate } from 'redux-persist/integration/react'
 import { BrowserRouter } from 'react-router-dom'
@@ -29,6 +30,7 @@ import { I18nextProvider } from 'react-i18next'
 import { store, persistor } from './store/store.js'
 import { installAuthFetchInterceptor } from './utils/authFetchInterceptor.js'
 import './index.css'
+import './styles/ps-tokens.css'
 
 // Global safety net: any 401 from our backends → clear session + redirect to login.
 installAuthFetchInterceptor()
@@ -40,9 +42,11 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Provider store={store}>
           <PersistGate loading={null} persistor={persistor}>
             <AuthProvider>
-              <ThemeProvider>
-                <App />
-              </ThemeProvider>
+              <ImageGenCreditsProvider>
+                <ThemeProvider>
+                  <App />
+                </ThemeProvider>
+              </ImageGenCreditsProvider>
             </AuthProvider>
           </PersistGate>
         </Provider>

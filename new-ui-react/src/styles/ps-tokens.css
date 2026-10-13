@@ -1,0 +1,118 @@
+/*
+ * Theme tokens for MySpace, Notifications panel, Credits dropdown, Profile and
+ * the Recreate modal (docs: dark-mode-spec.md). Components use only these
+ * variables — no raw hex — so html.dark (toggled by useTheme) re-skins them all.
+ */
+:root {
+  /* surfaces */
+  --ps-bg:            #F7F7FA;
+  --ps-surface:       #FFFFFF;
+  --ps-surface-2:     #FAFAFC;
+  --ps-surface-3:     #F1F2F6;
+  --ps-hover:         #F7F7FA;
+  --ps-border:        #ECEDF2;
+  --ps-border-strong: #DFE1E8;
+  --ps-divider:       #F0F1F5;
+
+  /* text */
+  --ps-text:          #1C2030;
+  --ps-text-2:        #3A3F51;
+  --ps-text-muted:    #5B6172;
+  --ps-text-subtle:   #6B7183;
+  --ps-text-faint:    #7A8091;
+  --ps-text-disabled: #B3B7C3;
+
+  /* brand / accent */
+  --ps-accent:        #4B3FD0;
+  --ps-accent-strong: #5A4BDA;
+  --ps-accent-soft:   #F1EFFD;
+  --ps-accent-softer: #F7F5FF;
+  --ps-accent-border: #CFC8F7;
+  --ps-violet:        #8B5CF6;   /* secondary sparkle / credits dot */
+  --ps-btn:           #404A94;
+  --ps-btn-hover:     #363F85;
+  --ps-btn-text:      #FFFFFF;
+  --ps-btn-disabled-bg:   #DADDEE;
+  --ps-btn-disabled-text: #868CB3;
+  --ps-outline-accent-border: #C5CAE3;
+  --ps-track:         #ECEBF5;
+
+  /* status */
+  --ps-success:       #127A4A;
+  --ps-success-bg:    #E7F6EE;
+  --ps-danger:        #B4281A;
+  --ps-danger-icon:   #C4321E;
+  --ps-danger-bg:     #FDECEA;
+  --ps-danger-surface:#FFF8F7;
+  --ps-danger-border: #F6D5D0;
+  --ps-danger-dash:   #EDB4AB;
+  --ps-warn:          #9A5B00;
+  --ps-warn-bg:       #FFF7E8;
+  --ps-warn-border:   #F3D9A4;
+
+  /* always-dark media backdrop (behind images/video, both themes) */
+  --ps-media-bg:      #0A0A0A;
+
+  /* effects */
+  --ps-shadow-sm:  0 2px 12px rgba(24,28,60,.06);
+  --ps-shadow-md:  0 2px 12px rgba(24,28,60,.08);
+  --ps-shadow-pop: 0 18px 48px rgba(24,28,60,.18), 0 2px 6px rgba(24,28,60,.06);
+  --ps-shadow-img: 0 1px 2px rgba(24,28,60,.06), 0 8px 24px rgba(24,28,60,.10);
+  --ps-overlay:    rgba(20,16,48,.32);
+  --ps-shim-a:     #ECE9FA;
+  --ps-shim-b:     #F6F4FE;
+  --ps-focus-ring: 0 0 0 4px rgba(124,92,230,.12);
+}
+
+html.dark {
+  --ps-bg:            #0A0A0B;
+  --ps-surface:       #161618;
+  --ps-surface-2:     #1B1B1E;
+  --ps-surface-3:     #232327;
+  --ps-hover:         #1F1F23;
+  --ps-border:        rgba(255,255,255,.08);
+  --ps-border-strong: rgba(255,255,255,.14);
+  --ps-divider:       rgba(255,255,255,.06);
+
+  --ps-text:          #ECECF1;
+  --ps-text-2:        #CFCFD8;
+  --ps-text-muted:    #A3A3AE;
+  --ps-text-subtle:   #8E8E99;
+  --ps-text-faint:    #85858F;
+  --ps-text-disabled: #55555E;
+
+  --ps-accent:        #B4A8FF;
+  --ps-accent-strong: #8F80F0;
+  --ps-accent-soft:   rgba(143,128,240,.14);
+  --ps-accent-softer: rgba(143,128,240,.08);
+  --ps-accent-border: rgba(143,128,240,.35);
+  --ps-violet:        #A99BF5;
+  --ps-btn:           #5B57C9;
+  --ps-btn-hover:     #6763D6;
+  --ps-btn-text:      #FFFFFF;
+  --ps-btn-disabled-bg:   #2A2A31;
+  --ps-btn-disabled-text: #6E6E7A;
+  --ps-outline-accent-border: rgba(180,168,255,.30);
+  --ps-track:         rgba(255,255,255,.08);
+
+  --ps-success:       #6CC79A;
+  --ps-success-bg:    rgba(76,190,130,.12);
+  --ps-danger:        #F09B91;
+  --ps-danger-icon:   #EE8A7F;
+  --ps-danger-bg:     rgba(238,110,96,.14);
+  --ps-danger-surface:rgba(238,110,96,.06);
+  --ps-danger-border: rgba(238,110,96,.22);
+  --ps-danger-dash:   rgba(238,110,96,.35);
+  --ps-warn:          #E4B866;
+  --ps-warn-bg:       rgba(228,184,102,.10);
+  --ps-warn-border:   rgba(228,184,102,.28);
+
+  --ps-shadow-sm:  0 1px 0 rgba(255,255,255,.03) inset, 0 2px 10px rgba(0,0,0,.35);
+  --ps-shadow-md:  0 2px 14px rgba(0,0,0,.45);
+  --ps-shadow-pop: 0 18px 48px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.06);
+  --ps-shadow-img: 0 8px 28px rgba(0,0,0,.55);
+  --ps-overlay:    rgba(0,0,0,.6);
+  --ps-shim-a:     #1E1C2C;
+  --ps-shim-b:     #25223A;
+  --ps-focus-ring: 0 0 0 4px rgba(143,128,240,.18);
+}

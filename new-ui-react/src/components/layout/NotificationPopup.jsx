@@ -1,151 +1,69 @@
-import React from "react";
-import { Search, User, Globe, CheckCheck, Bell } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { AlertCircle, Bell, Globe, RefreshCw, Search, Sparkle, User } from "lucide-react";
+import { autoUpdate, flip, FloatingPortal, offset, shift, useDismiss, useFloating, useInteractions } from "@floating-ui/react";
+import "./notification-popup.css";
+import "../shared/floating-popover.css";
 
-/**
- * Map keyword request type (0=keyword, 1=advertiser, 2=domain) to a label + icon.
- */
-const TYPE_MAP = {
-  0: { label: "Keyword", icon: Search, color: "#185FA5" },
-  1: { label: "Advertiser", icon: User, color: "#a78bfa" },
-  2: { label: "Domain", icon: Globe, color: "#34d399" },
-};
+const TYPE_MAP = { 0: { label: "Keyword", icon: Search }, 1: { label: "Advertiser", icon: User }, 2: { label: "Domain", icon: Globe } };
 
-/**
- * Relative time string from a date.
- */
-function timeAgo(dateStr) {
-  if (!dateStr) return "";
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = Math.max(0, now - then);
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
+/** TODAY -> "Just now" / "12 min ago" / "3 h ago"; YESTERDAY -> "6:15 PM";
+ * EARLIER -> "Oct 10, 6:15 PM". The group header already says which day. */
+function relativeTime(value) {
+  const date = new Date(value);
+  const group = groupLabel(value);
+  if (group === "TODAY") {
+    const minutes = Math.floor(Math.max(0, Date.now() - date.getTime()) / 60000);
+    if (minutes < 1) return "Just now";
+    if (minutes < 60) return `${minutes} min ago`;
+    return `${Math.floor(minutes / 60)} h ago`;
+  }
+  if (group === "YESTERDAY") return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return date.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
+function groupLabel(value) { const date = new Date(value); const now = new Date(); const start = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); const days = Math.round((start(now) - start(date)) / 86400000); return days <= 0 ? "TODAY" : days === 1 ? "YESTERDAY" : "EARLIER"; }
+function groupItems(items) { const groups = []; items.forEach((item) => { const label = groupLabel(item.created_at); let group = groups.find((entry) => entry.label === label); if (!group) { group = { label, items: [] }; groups.push(group); } group.items.push(item); }); return groups; }
 
-/**
- * NotificationPopup — dropdown list of scraping notifications.
- */
-const NotificationPopup = ({ notifications, onMarkAllRead, onNotificationClick, onClose }) => {
-  return (
-    <div
-      className="group absolute right-0 top-full mt-2 w-80 pwa:fixed pwa:inset-x-2 pwa:w-auto z-[60] rounded-xl p-[2px] overflow-hidden shadow-2xl"
-      style={{ animation: "notifSlideIn 0.2s ease-out" }}
-    >
-      {/* Spinning neon gradient border — mirrors the ad-card hover treatment */}
-      <div className="absolute inset-[-100%] z-0 bg-[conic-gradient(from_0deg,transparent_0_180deg,#185FA5_240deg,#1e78c8_300deg,transparent_360deg)] opacity-0 group-hover:opacity-100 animate-[spin_3s_linear_infinite] transition-opacity duration-500 pointer-events-none" />
-      <div className="relative z-10 max-h-96 bg-theme-card border border-theme-border group-hover:border-transparent rounded-[10px] overflow-hidden transition-colors duration-300">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-theme-border">
-        <div className="flex items-center gap-2">
-          <Bell size={14} className="text-theme-text-muted" />
-          <span className="text-xs font-bold text-theme-text uppercase tracking-wider">
-            Notifications
-          </span>
-          {notifications.length > 0 && (
-            <span className="text-[10px] font-bold text-white bg-red-500 rounded-full px-1.5 py-0.5 leading-none">
-              {notifications.length}
-            </span>
-          )}
-        </div>
-        {notifications.length > 0 && (
-          <button
-            onClick={onMarkAllRead}
-            className="flex items-center gap-1 text-[10px] font-semibold text-[#185FA5] hover:text-[#134a80] transition-colors"
-          >
-            <CheckCheck size={12} />
-            Mark all read
-          </button>
-        )}
+function RecreateThumb({ notif }) {
+  const success = notif.status === "succeeded"; const primary = notif.data?.image_url; const fallback = notif.data?.advertiser_avatar; const [image, setImage] = useState(primary || fallback || null);
+  useEffect(() => setImage(primary || fallback || null), [primary, fallback]);
+  if (success && image) return <div className="np-th"><img src={image} alt="" loading="lazy" decoding="async" onError={() => setImage((current) => current !== fallback ? fallback || null : null)}/><span className="np-ai-tag"><Sparkle size={10} fill="currentColor"/></span></div>;
+  return <div className={`np-th ${success ? "sys" : "fail"}`}>{success ? <Sparkle size={20} fill="currentColor"/> : <AlertCircle size={20}/>}</div>;
+}
+function RecreateRow({ notif, onOpen, onTryAgain }) {
+  const success = notif.status === "succeeded"; const advertiser = notif.data?.advertiser || `${String(notif.data?.network || "Source").replace(/^./, (c) => c.toUpperCase())} ad`;
+  return <div className={`np-it ${!notif.read ? "unread" : ""}`} role="button" tabIndex={0} onClick={() => onOpen?.(notif)} onKeyDown={(event) => { if (["Enter", " "].includes(event.key)) { event.preventDefault(); onOpen?.(notif); } }}>
+    <RecreateThumb notif={notif}/>
+    <div className="np-body">
+      <div className="np-title">{success ? "Your ad is ready" : <>Generation failed <span className="np-pill">Credit refunded</span></>}</div>
+      <div className="np-subrow">
+        <div className="np-sub" title={advertiser}>{advertiser} · {relativeTime(notif.created_at)}</div>
+        {success ? null : <button className="np-action" onClick={(event) => { event.stopPropagation(); onTryAgain?.(notif); }}><RefreshCw size={12}/> Try again</button>}
       </div>
-
-      {/* Notification List */}
-      <div className="overflow-y-auto max-h-80 custom-scrollbar">
-        {notifications.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 px-4">
-            <div className="w-10 h-10 rounded-full bg-theme-text/[0.05] flex items-center justify-center mb-3">
-              <Bell size={18} className="text-theme-text-muted" />
-            </div>
-            <p className="text-xs text-theme-text-muted font-medium">
-              No new notifications
-            </p>
-            <p className="text-[10px] text-theme-text-muted/60 mt-1">
-              You'll be notified when new ads are scraped
-            </p>
-          </div>
-        ) : (
-          notifications.map((notif) => {
-            const typeInfo = TYPE_MAP[notif.type] || TYPE_MAP[0];
-            const Icon = typeInfo.icon;
-            return (
-              <div
-                key={notif.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => onNotificationClick?.(notif)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onNotificationClick?.(notif);
-                  }
-                }}
-                title={`Search "${notif.keyword}" on ${notif.network || "this network"}`}
-                className="flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-theme-text/[0.05] transition-colors border-b border-theme-border/50 last:border-b-0"
-              >
-                {/* Type icon */}
-                <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
-                  style={{ backgroundColor: `${typeInfo.color}15` }}
-                >
-                  <Icon size={14} style={{ color: typeInfo.color }} />
-                </div>
-
-                {/* Content */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-[11px] font-semibold text-theme-text leading-tight truncate">
-                    New ads found for{" "}
-                    <span style={{ color: typeInfo.color }}>
-                      "{notif.keyword}"
-                    </span>
-                  </p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span
-                      className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                      style={{
-                        color: typeInfo.color,
-                        backgroundColor: `${typeInfo.color}15`,
-                      }}
-                    >
-                      {typeInfo.label}
-                    </span>
-                    <span className="text-[9px] text-theme-text-muted">
-                      {timeAgo(notif.created_at)}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Unread indicator */}
-                <div className="w-2 h-2 rounded-full bg-[#185FA5] shrink-0 mt-2" />
-              </div>
-            );
-          })
-        )}
-      </div>
-      </div>
-
-      {/* Inline animation keyframe */}
-      <style>{`
-        @keyframes notifSlideIn {
-          from { opacity: 0; transform: translateY(-8px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
     </div>
-  );
-};
+    {!notif.read ? <span className="np-unread-dot"/> : null}
+  </div>;
+}
+function KeywordRow({ notif, onOpen }) { const info = TYPE_MAP[notif.type] || TYPE_MAP[0]; const Icon = info.icon; return <div className={`np-it ${!notif.read ? "unread" : ""}`} role="button" tabIndex={0} onClick={() => onOpen?.(notif)} onKeyDown={(event) => { if (["Enter", " "].includes(event.key)) onOpen?.(notif); }}><div className="np-th sys"><Icon size={20}/></div><div className="np-body"><div className="np-title">New ads found for “{notif.keyword}”</div><div className="np-sub">{info.label} · {relativeTime(notif.created_at)}</div></div>{!notif.read ? <span className="np-unread-dot"/> : null}</div>; }
 
-export default NotificationPopup;
+export default function NotificationPopup({ notifications, allNotifications = [], onMarkAllRead, onNotificationClick, onClose, imageGenNotifications = [], onImageGenNotificationClick, onImageGenTryAgain, anchorRef, onLoadMore, hasMore, loadingMore }) {
+  const [tab, setTab] = useState("all"); const unreadCount = notifications.length + imageGenNotifications.filter((item) => !item.read).length;
+  const { refs, floatingStyles, context, isPositioned, x, y } = useFloating({ open: true, onOpenChange: (open) => { if (!open) onClose?.(); }, placement: "bottom-end", strategy: "fixed", whileElementsMounted: autoUpdate, middleware: [offset(10), flip({ padding: 12 }), shift({ padding: 12 })] });
+  const dismiss = useDismiss(context, { outsidePress: true, escapeKey: true }); const { getFloatingProps } = useInteractions([dismiss]);
+  useEffect(() => { if (anchorRef?.current) refs.setReference(anchorRef.current); }, [anchorRef, refs]);
+  const positioned = typeof isPositioned === "boolean" ? isPositioned : x != null && y != null;
+  const all = useMemo(() => [...allNotifications.map((item) => ({ ...item, kind: "keyword" })), ...imageGenNotifications.map((item) => ({ ...item, kind: "imagegen" }))].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)), [allNotifications, imageGenNotifications]);
+  const unread = useMemo(() => [...notifications.map((item) => ({ ...item, kind: "keyword" })), ...imageGenNotifications.filter((item) => !item.read).map((item) => ({ ...item, kind: "imagegen" }))].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)), [notifications, imageGenNotifications]);
+  const source = tab === "unread" ? unread : all; const groups = useMemo(() => groupItems(source), [source]);
+  return <FloatingPortal>
+    <div ref={refs.setFloating} style={{ ...floatingStyles, visibility: positioned ? "visible" : "hidden" }} {...getFloatingProps({ className: "np" })}>
+      <div className={`np-motion floating-popover-motion ${positioned ? "is-positioned" : ""}`}>
+      <div className="np-h"><span>Notifications</span>{unreadCount > 0 ? <button onClick={onMarkAllRead}>Mark all as read</button> : null}</div>
+      <div className="np-tabs"><button className={`np-tab ${tab === "all" ? "on" : ""}`} onClick={() => setTab("all")}>All</button><button className={`np-tab ${tab === "unread" ? "on" : ""}`} onClick={() => setTab("unread")}>Unread{unreadCount ? ` · ${unreadCount}` : ""}</button></div>
+      <div className="np-list" onScroll={(event) => { const node = event.currentTarget; if (hasMore && !loadingMore && node.scrollHeight - node.scrollTop - node.clientHeight < 80) onLoadMore?.(); }}>
+        {source.length ? groups.map((group) => <React.Fragment key={group.label}><div className="np-grp">{group.label}</div>{group.items.map((notif) => notif.kind === "imagegen" ? <RecreateRow key={`ig_${notif.id}`} notif={notif} onOpen={onImageGenNotificationClick} onTryAgain={onImageGenTryAgain}/> : <KeywordRow key={notif.id} notif={notif} onOpen={onNotificationClick}/>)}</React.Fragment>) : <div className="np-empty"><Bell size={24}/><span>You're all caught up</span></div>}
+        {loadingMore ? <div className="np-more">Loading…</div> : null}
+      </div>
+      </div>
+    </div>
+  </FloatingPortal>;
+}

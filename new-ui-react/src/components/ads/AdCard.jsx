@@ -30,6 +30,7 @@ import {
   TrendingUp,
   MousePointerClick,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import StatPill from "../shared/StatPill";
 import {
@@ -110,6 +111,7 @@ const AdCard = ({
   onHideAdvertiser,
   onToggleFavourite,
   onAnalytics,
+  onRecreate,
 }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [showLightbox, setShowLightbox] = useState(false);
@@ -684,6 +686,20 @@ const AdCard = ({
                       border: "1px solid var(--color-border)",
                     }}
                   >
+                    {onRecreate && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowMenu(false);
+                          onRecreate(ad);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] hover:opacity-80 transition-colors"
+                        style={{ color: "var(--color-text-secondary)" }}
+                      >
+                        <Sparkles size={12} />
+                        Recreate
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();

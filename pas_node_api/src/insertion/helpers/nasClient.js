@@ -67,6 +67,7 @@ const NAS_KEY_PREFIX = {
   // the route prefix); the payload's own "network":"chatgpt" field is just descriptive
   // data on the ad row and must NOT be used here, or NAS keys would mismatch this map.
   chatgptads: 'gpt',
+  imagegen: 'imagegen',
 };
 
 // PHP $typeMap: upload type → NAS subfolder.
@@ -80,7 +81,17 @@ const TYPE_SUBFOLDER = {
   LANDERS: 'landers/',
   WHITEHAT: 'whiteHatAd/',
   BLACKHAT: 'blackHatAd/',
+  // AI Recreate — user-uploaded product images (src/services/imageGen). Not a
+  // crawled ad asset, but storeInNas() is network-agnostic (keyPrefix falls
+  // back to whatever `network` is passed, see below), so it's reused as-is.
+  PRODUCT: 'product/',
+  // Profile — user-uploaded avatar photo (src/services/profile).
+  AVATAR: 'avatar/',
 };
+
+// Upload types that get their own per-user NAS folder level (userId/<subfolder>/...)
+// instead of the crawler-pipeline shape — see storeInNas's `userSegment` below.
+const USER_SCOPED_TYPES = new Set(['PRODUCT', 'AVATAR']);
 
 /** YYYYMM for the upload key, in UTC (matches PHP date('Ym') intent for grouping). */
 function yearMonth() {
@@ -171,7 +182,18 @@ async function storeInNas(type, filePath, adId, network, keyBaseName, opts = {})
     const keyPrefix = NAS_KEY_PREFIX[network] || network;
     const fileExt = path.parse(filePath).ext.replace(/^\./, '').toLowerCase();
     const fileName = fileExt ? `${baseName}.${fileExt}` : baseName;
-    const key = `${keyPrefix}/${subfolder}${yearMonth()}/${baseName}`;
+    // USER_SCOPED_TYPES (AI Recreate's PRODUCT, Profile's AVATAR) group every
+    // user's own uploads under their own folder — e.g.
+    // imagegen/<userId>/product/<yearMonth>/<file> — so a user's images live
+    // together and are easy to locate/bulk-clean. `adId` is the userId for
+    // these call sites (see uploadController.js / profile's meController.js).
+    // Every other type/network keeps its existing key shape unchanged
+    // (crawler NAS layout must not shift).
+    const isUserScoped = USER_SCOPED_TYPES.has(folder);
+    const userSegment = isUserScoped && adId ? `${String(adId).replace(/[^A-Za-z0-9._-]/g, '')}/` : '';
+    const key = isUserScoped
+      ? `${keyPrefix}/${userSegment}${subfolder}${yearMonth()}/${baseName}`
+      : `${keyPrefix}/${subfolder}${yearMonth()}/${baseName}`;
     // Deterministic predicted path — the CDN serves /<bucket>/stream/<key>.<ext>, which is exactly
     // where every transport lands the file. Returned on defer so the ad references it immediately.
     const storedPath = `/${resolveBucket()}/stream/${key}.${fileExt}`;
@@ -263,6 +285,24 @@ function resolveMediaUrl(storedPath) {
 }
 
 /**
+ * Inverse of resolveMediaUrl() — recovers the relative STORED path from a
+ * servable URL this module itself produced (`joinUrl(mediaUrl, storedPath)`),
+ * so a caller that only persisted the resolved URL (e.g. imageGen's job docs)
+ * can still pass the right thing to deleteFromNas() later. Returns null for
+ * anything that isn't one of ours to resolve (no mediaUrl configured, or the
+ * URL doesn't start with it) — callers must treat null as "don't delete".
+ * @param {string} url
+ * @returns {string|null}
+ */
+function storedPathFromUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  const base = String(config.insertion.nas.mediaUrl || '').replace(/\/+$/, '');
+  if (!base || !url.startsWith(base)) return null;
+  const rest = url.slice(base.length);
+  return rest.startsWith('/') ? rest : `/${rest}`;
+}
+
+/**
  * Delete a previously-stored file from NAS, given its STORED path (the same
  * `/<bucket>/stream/<key>.<ext>` shape storeInNas() returns and that ends up in SQL/ES).
  *
@@ -315,4 +355,4 @@ async function deleteFromNas(storedPath, opts = {}) {
   }
 }
 
-module.exports = { storeInNas, resolveMediaUrl, resolveBucket, deleteFromNas, DEFAULT_IMAGE, TYPE_SUBFOLDER };
+module.exports = { storeInNas, resolveMediaUrl, storedPathFromUrl, resolveBucket, deleteFromNas, DEFAULT_IMAGE, TYPE_SUBFOLDER };

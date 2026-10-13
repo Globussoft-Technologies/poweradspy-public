@@ -248,7 +248,7 @@ const config = {
 
   cors: {
     origin: getVal(fileConfig.cors?.origin, 'CORS_ORIGIN'),
-    methods: fileConfig.cors?.methods || ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: fileConfig.cors?.methods || ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: fileConfig.cors?.allowedHeaders || ['Content-Type', 'Authorization', 'x-request-id'],
   },
 
@@ -503,6 +503,53 @@ const config = {
       if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
       return [];
     })(),
+  },
+
+  // AI Recreate + MySpace (image generation). Self-contained service, see
+  // src/services/imageGen/ and docs/imageGen/MANIFEST.md. defaultCredits is an
+  // explicit PLACEHOLDER flat grant — real per-plan credit allocation is deferred.
+  imageGen: {
+    enabled: getVal(fileConfig.imageGen?.enabled, 'IMAGEGEN_ENABLED', toBool) !== false,
+    // EXCLUSIVE allow-list (same contract as chatgptads.allowedUserIds): empty =
+    // everyone gets the feature (while enabled); non-empty = ONLY these user IDs
+    // see AI Recreate/MySpace/Profile/credits — everyone else gets no UI and 404s.
+    allowedUserIds: (() => {
+      const raw = getVal(fileConfig.imageGen?.allowedUserIds, 'IMAGEGEN_ALLOWED_USER_IDS');
+      if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+      if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+      return [];
+    })(),
+    adStudio: {
+      baseUrl: getVal(fileConfig.imageGen?.adStudio?.baseUrl, 'IMAGEGEN_ADSTUDIO_BASE_URL') || 'https://ace-adsgpt.poweradspy.ai',
+      timeoutMs: validatedInt(getVal(fileConfig.imageGen?.adStudio?.timeoutMs, 'IMAGEGEN_ADSTUDIO_TIMEOUT_MS'), 45000),
+      pollCacheTtlMs: validatedInt(getVal(fileConfig.imageGen?.adStudio?.pollCacheTtlMs, 'IMAGEGEN_POLL_CACHE_TTL_MS'), 3000),
+    },
+    aspectRatios: Array.isArray(fileConfig.imageGen?.aspectRatios) && fileConfig.imageGen.aspectRatios.length
+      ? fileConfig.imageGen.aspectRatios
+      : ['1:1', '3:2', '2:3', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'],
+    defaultModel: getVal(fileConfig.imageGen?.defaultModel, 'IMAGEGEN_DEFAULT_MODEL') || null,
+    watermarkDefault: getVal(fileConfig.imageGen?.watermarkDefault, 'IMAGEGEN_WATERMARK_DEFAULT', toBool) !== false,
+    creditCostPerGeneration: validatedInt(getVal(fileConfig.imageGen?.creditCostPerGeneration, 'IMAGEGEN_CREDIT_COST'), 1),
+    stuckJobTimeoutMinutes: validatedInt(getVal(fileConfig.imageGen?.stuckJobTimeoutMinutes, 'IMAGEGEN_STUCK_JOB_TIMEOUT_MIN'), 15),
+    // Per-plan credit allowance + top-up packs — config.json is the only source
+    // (see helpers/creditPlan.js and helpers/topups.js). Passed through as-is.
+    credits: fileConfig.imageGen?.credits || {},
+    // Data lifetime per collection (repository.js expireAt + TTL indexes).
+    retention: fileConfig.imageGen?.retention || {},
+    topup: fileConfig.imageGen?.topup || { enabled: false, packs: [] },
+    // Recreate's "Product image" upload (POST /api/v1/imageGen/upload) — matches the
+    // UI copy "JPG, PNG, WEBP up to 10MB".
+    productImageMaxUploadMb: validatedInt(getVal(fileConfig.imageGen?.productImageMaxUploadMb, 'IMAGEGEN_PRODUCT_IMAGE_MAX_MB'), 10),
+    // "Enhance" button (POST /recreate/enhance) — rewrites the user's draft prompt via a
+    // real Claude call. OFF/inert without an apiKey (falls back to ANTHROPIC_API_KEY if
+    // IMAGEGEN_ENHANCE_API_KEY isn't set); the controller 503s cleanly rather than faking
+    // a rewrite when no key is configured.
+    promptEnhancer: {
+      enabled: getVal(fileConfig.imageGen?.promptEnhancer?.enabled, 'IMAGEGEN_ENHANCE_ENABLED', toBool) !== false,
+      apiKey: getVal(fileConfig.imageGen?.promptEnhancer?.apiKey, 'IMAGEGEN_ENHANCE_API_KEY') || process.env.ANTHROPIC_API_KEY || '',
+      model: getVal(fileConfig.imageGen?.promptEnhancer?.model, 'IMAGEGEN_ENHANCE_MODEL') || 'claude-haiku-4-5-20251001',
+      timeoutMs: validatedInt(getVal(fileConfig.imageGen?.promptEnhancer?.timeoutMs, 'IMAGEGEN_ENHANCE_TIMEOUT_MS'), 15000),
+    },
   },
 
   // Keywords Explorer feature (dedicated page + single-keyword modal). Additive

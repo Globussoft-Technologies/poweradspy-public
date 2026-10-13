@@ -32,6 +32,7 @@ import {
   ShieldCheck,
   Bookmark,
   Sparkles,
+  Sparkle,
   Repeat,
   Globe,
 } from "lucide-react";
@@ -44,6 +45,7 @@ import {
 } from "../../services/api";
 import { downloadAdAsPdf } from "../../services/adPdf";
 import { useTheme } from "../../hooks/useTheme";
+import { useImageGenCredits } from "../../hooks/useImageGenCredits";
 import { resolveAnalyticsFilterValueLabel } from "../../hooks/useSDUI";
 import { iconColorClass } from "../../utils/iconColors";
 import { normalizeEcommercePlatformKey } from "../../utils/helper";
@@ -102,6 +104,7 @@ import fnFgFunnel from "../../assets/funnels/fgfunnel.webp";
 import fnFlexi from "../../assets/funnels/flexi.png";
 import fnWebflow from "../../assets/funnels/webflow.png";
 import fnFacebookPixel from "../../assets/funnels/facebook_pixel.png";
+import "./ad-actions.css";
 
 const MC_MP_IMGS = {
   "agkn.com": mpAgkn,
@@ -265,6 +268,7 @@ const MasonryCard = ({
   onOpenKeywordExplorer,
   onHideAd,
   onHideAdvertiser,
+  onRecreate,
   isHidden = false,
   isAdvertiserHidden = false,
   onUnhide,
@@ -327,6 +331,8 @@ const MasonryCard = ({
   const [copied, setCopied] = useState(false);
   const [copyLoading, setCopyLoading] = useState(false);
   const [showHideMenu, setShowHideMenu] = useState(false);
+  const { balance: imageGenBalance } = useImageGenCredits();
+  const noCreditsAvailable = typeof imageGenBalance === 'number' && imageGenBalance <= 0;
   const [hideMenuPos, setHideMenuPos] = useState({ top: 0, left: 0 });
   const hideButtonRef = useRef(null);
   const hideMenuRef = useRef(null);
@@ -1042,6 +1048,31 @@ const MasonryCard = ({
               {cornerBadgeLabel}
             </span>
 
+            {/* AI Recreate — image creatives incl. image carousels (whichever slide
+                is showing). Lives in this hover bar, not the footer, so every card
+                keeps the same footer height. */}
+            {onRecreate && !isVideo && !cardShowsVideo && (adTypeLower === "image" || hasCarousel) && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (guest?.isRestricted || guest?.isPublicLanding) {
+                    guest?.showGuestWarning?.("Please login to use AI Recreate");
+                    return;
+                  }
+                  if (noCreditsAvailable) return;
+                  onRecreate(hasCarousel
+                    ? { ...ad, thumbnail: currentImg, carouselImages, carouselIndex: activeIndex }
+                    : ad);
+                }}
+                disabled={noCreditsAvailable}
+                title={noCreditsAvailable ? "No credits left" : "Recreate · 1 credit"}
+                aria-label={noCreditsAvailable ? "No credits left" : "Recreate · 1 credit"}
+                className="mc-recreate"
+              >
+                <Sparkle size={14} fill="currentColor" />
+              </button>
+            )}
+
             {/* Save / unsave */}
             <button
               onClick={(e) => {
@@ -1447,16 +1478,18 @@ const MasonryCard = ({
                 </span>
               );
             })()}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onClick?.(ad);
-              }}
-              className="flex items-center gap-0.5 text-[11px] font-bold text-[#6b99ff] hover:opacity-80 transition-opacity"
-            >
-              View details
-              <ChevronRight size={12} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClick?.(ad);
+                }}
+                className="flex items-center gap-0.5 text-[11px] font-bold text-[#6b99ff] hover:opacity-80 transition-opacity"
+              >
+                View details
+                <ChevronRight size={12} />
+              </button>
+            </div>
           </div>
         </div>
       </div>

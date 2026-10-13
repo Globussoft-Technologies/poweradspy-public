@@ -13,6 +13,11 @@ const uiSlice = createSlice({
     // Page states
     activePage: 'ads',
     showSavedAdsPage: false,
+    showMySpacePage: false,
+    // /profile/<tab> — one page, several tabs (see profile-spec.md). Replaces
+    // the old standalone showCreditsPage/CreditsPage with a tab of this.
+    showProfilePage: false,
+    profileTab: 'credits',
     // Sidebar
     isSidebarOpen: true,
     // Search
@@ -41,6 +46,15 @@ const uiSlice = createSlice({
     },
     setShowSavedAdsPage: (state, action) => {
       state.showSavedAdsPage = action.payload;
+    },
+    setShowMySpacePage: (state, action) => {
+      state.showMySpacePage = action.payload;
+    },
+    setShowProfilePage: (state, action) => {
+      state.showProfilePage = action.payload;
+    },
+    setProfileTab: (state, action) => {
+      state.profileTab = action.payload;
     },
     setSidebarOpen: (state, action) => {
       state.isSidebarOpen = action.payload;
@@ -80,6 +94,9 @@ export const {
   closeModal,
   setActivePage,
   setShowSavedAdsPage,
+  setShowMySpacePage,
+  setShowProfilePage,
+  setProfileTab,
   setSidebarOpen,
   setSearchQuery,
   setSearchList,

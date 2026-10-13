@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LayoutGrid, Library, Hash, TrendingUp, Bookmark, SlidersHorizontal, MoreHorizontal, MessageCircle } from "lucide-react";
+import { LayoutGrid, Library, Hash, TrendingUp, Bookmark, SlidersHorizontal, MoreHorizontal, MessageCircle, Image as ImageIcon } from "lucide-react";
 
 /**
  * BottomNav — app-style navigation for the installed PWA on phones.
@@ -34,8 +34,11 @@ const TabButton =({ icon, label, active, onClick, badge }) => (
 const BottomNav = ({
   activePage = "ads",
   showSavedAdsPage = false,
+  showMySpacePage = false,
+  showProfilePage = false,
   onPageChange,
   onShowSavedAdsPage,
+  onShowMySpacePage,
   onOpenKeywordsExplorer,
   onOpenFilters,
   activeFilterCount = 0,
@@ -52,7 +55,7 @@ const BottomNav = ({
   const { t } = useTranslation();
   const [moreOpen, setMoreOpen] = useState(false);
 
-  const onAdsLibrary = activePage === "ads" && !showSavedAdsPage;
+  const onAdsLibrary = activePage === "ads" && !showSavedAdsPage && !showMySpacePage && !showProfilePage;
   const showSaved = isLoggedIn && (allowedPlatforms == null || allowedPlatforms.length > 0);
   // Always shown: it also holds "Chat with us" (Freshchat's floating launcher
   // is hidden in the installed app — see ChatbotWidget).
@@ -134,6 +137,20 @@ const BottomNav = ({
                 <span className="flex-1 text-left">{t("keywords_explorer")}</span>
               </button>
             )}
+            {/* onShowMySpacePage is only passed when the user has AI Recreate access */}
+            {onShowMySpacePage && (
+              <button
+                type="button"
+                onClick={() => { setMoreOpen(false); onShowMySpacePage(); }}
+                className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold ${
+                  showMySpacePage ? "text-[#3762c1]" : "text-theme-text"
+                }`}
+              >
+                <ImageIcon size={18} />
+                <span className="flex-1 text-left">MySpace</span>
+                <span className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30">New</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={openChat}
@@ -183,7 +200,7 @@ const BottomNav = ({
             <TabButton
               icon={<MoreHorizontal size={iconSize} />}
               label={t("more", "More")}
-              active={moreOpen || activePage === "intelligence" || activePage === "keywords-explorer"}
+              active={moreOpen || activePage === "intelligence" || activePage === "keywords-explorer" || showMySpacePage}
               onClick={() => setMoreOpen((open) => !open)}
             />
           )}

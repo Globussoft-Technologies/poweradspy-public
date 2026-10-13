@@ -63,7 +63,7 @@ import { Check, X, Loader2, Info } from "lucide-react";
 import { useSelector, useDispatch } from 'react-redux';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
-import { setActivePage, setShowSavedAdsPage, setSidebarOpen, setSearchQuery, setSearchList, setAiPrompt, setSearchIn, setExactSearch, setActiveTab, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
+import { setActivePage, setShowSavedAdsPage, setShowMySpacePage, setShowProfilePage, setProfileTab, setSidebarOpen, setSearchQuery, setSearchList, setAiPrompt, setSearchIn, setExactSearch, setActiveTab, setSpecificPlatforms, openModal, closeModal } from './store/uiSlice';
 import { resolveSearchTerms } from './utils/searchLists';
 import { AI_FAILED_PROMPT_RELOAD_KEY } from './store/store';
 import { useBrowserHistoryState, coalesceNextHistoryWrite } from './hooks/useBrowserHistoryState';
@@ -86,6 +86,11 @@ import AdvertiserProfileModal from "./components/modals/AdvertiserProfileModal.j
 import AllProjects from "./components/all-projects/AllProjects";
 // SharedAdView no longer used — /share routes now use dashboard UI via GuestProvider
 import SavedAdsPage from "./components/ads/SavedAdsPage";
+import MySpacePage from "./components/myspace/MySpacePage";
+import ProfilePage from "./components/profile/ProfilePage";
+import RecreateModal from "./components/modals/RecreateModal";
+import { useActiveRecreateJobs } from "./hooks/useActiveRecreateJobs";
+import { useImageGenCredits } from "./hooks/useImageGenCredits";
 import MarketTrends, { fetchMarketTrendsAccess } from "./components/MarketTrends";
 import LockedFeaturePreview from "./components/shared/LockedFeaturePreview";
 
@@ -231,7 +236,7 @@ const routeToken = getRouteToken();
 // Restricting to a known allowlist avoids an open-redirect: the value is read
 // back from sessionStorage after returning from the external aMember login, so
 // it must never be an attacker-controlled or cross-origin destination.
-const DEEP_LINK_SAFE_PATHS = new Set(['/projects', '/saved']);
+const DEEP_LINK_SAFE_PATHS = new Set(['/projects', '/saved', '/myspace', '/my-space']);
 const isSafeDeepLink = (p) =>
   typeof p === 'string' &&
   p.startsWith('/') &&
@@ -344,6 +349,10 @@ const App = () => {
     canUseCapability,
     canUseCapabilityOnNetwork,
   } = useAuth();
+  // AI Recreate feature set (Recreate, MySpace, Profile, credits) — config.json
+  // imageGen.enabled + imageGen.allowedUserIds, via GET /api/v1/imageGen/access.
+  // False → no Recreate buttons, no MySpace/Profile pages or nav entries.
+  const { enabled: imageGenEnabled, accessResolved: imageGenAccessResolved } = useImageGenCredits();
 
   // TEMPORARY UI-only gate, layered ONLY on top of the nav tab's visibility —
   // INTEL_ENV_ON / GOOGLE_INTEL_ON and the real plan/entitlement checks below
@@ -484,13 +493,36 @@ const App = () => {
     } else if (location.pathname === '/saved') {
       dispatch(setActivePage('ads'));
       dispatch(setShowSavedAdsPage(true));
+      dispatch(setShowMySpacePage(false));
+      dispatch(setShowProfilePage(false));
+    } else if (location.pathname === '/my-space' || location.pathname === '/myspace') {
+      dispatch(setActivePage('ads'));
+      dispatch(setShowSavedAdsPage(false));
+      dispatch(setShowMySpacePage(true));
+      dispatch(setShowProfilePage(false));
+    } else if (location.pathname.startsWith('/profile')) {
+      // /profile, /profile/account, /profile/billing, /profile/credits,
+      // /profile/notifications, /profile/team — one layout, tab = URL segment.
+      // Unknown/missing tab redirects to account (profile-spec.md §0).
+      const PROFILE_TABS = ['credits', 'notifications'];
+      const requested = location.pathname.split('/')[2];
+      const tab = PROFILE_TABS.includes(requested) ? requested : 'credits';
+      dispatch(setActivePage('ads'));
+      dispatch(setShowSavedAdsPage(false));
+      dispatch(setShowMySpacePage(false));
+      dispatch(setShowProfilePage(true));
+      dispatch(setProfileTab(tab));
     } else if (location.pathname === '/market-trends') {
       // Market Trends has its own URL so a reload stays on the page.
       dispatch(setActivePage('intelligence'));
       dispatch(setShowSavedAdsPage(false));
+      dispatch(setShowMySpacePage(false));
+      dispatch(setShowProfilePage(false));
     } else {
       dispatch(setActivePage('ads'));
       dispatch(setShowSavedAdsPage(false));
+      dispatch(setShowMySpacePage(false));
+      dispatch(setShowProfilePage(false));
     }
   }, [location.pathname, dispatch]);
 
@@ -505,17 +537,23 @@ const App = () => {
   // page from overriding the URL — which caused both a hard-loaded /projects to
   // bounce to '/', and a returning '/' session (activePage='projects' persisted)
   // to bounce to /projects.
-  const didInitialNavSyncRef = useRef(false);
+  //
+  // Pushes only when the page STATE actually changed since the last run. A bare
+  // "skip the first run" flag isn't enough: React.StrictMode re-runs mount
+  // effects, and that second run still sees the stale persisted page (Ads
+  // Library) before the url→state dispatch has rendered — so a reload of
+  // /myspace or /profile was being pushed back to '/'.
+  const navStateSigRef = useRef(null);
   const _VALID_NETWORKS = ["facebook","instagram","youtube","google","gdn","native","linkedin","reddit","quora","pinterest","tiktok","admob","chatgptads"];
   const _isAdAnalyticsUrl = (() => {
     const parts = location.pathname.split("/").filter(Boolean);
     return parts.length === 2 && _VALID_NETWORKS.includes(parts[0].toLowerCase()) && !!parts[1];
   })();
   useEffect(() => {
-    if (!didInitialNavSyncRef.current) {
-      didInitialNavSyncRef.current = true;
-      return;
-    }
+    const sig = [ui.activePage, ui.showSavedAdsPage, ui.showMySpacePage, ui.showProfilePage, ui.profileTab].join('|');
+    const prevSig = navStateSigRef.current;
+    navStateSigRef.current = sig;
+    if (prevSig === null || prevSig === sig) return;
     if (location.pathname.startsWith('/guest/') || location.pathname.startsWith('/share/')) return;
     if (_isAdAnalyticsUrl) return;
     if (location.pathname !== lastPathnameRef.current) {
@@ -530,10 +568,14 @@ const App = () => {
       navigate('/keywords-explorer');
     } else if (ui.showSavedAdsPage && location.pathname !== '/saved') {
       navigate('/saved');
-    } else if (ui.activePage === 'ads' && !ui.showSavedAdsPage && location.pathname !== '/') {
+    } else if (ui.showMySpacePage && location.pathname !== '/my-space' && location.pathname !== '/myspace') {
+      navigate('/myspace');
+    } else if (ui.showProfilePage && location.pathname !== `/profile/${ui.profileTab}`) {
+      navigate(`/profile/${ui.profileTab}`);
+    } else if (ui.activePage === 'ads' && !ui.showSavedAdsPage && !ui.showMySpacePage && !ui.showProfilePage && location.pathname !== '/') {
       navigate('/');
     }
-  }, [ui.activePage, ui.showSavedAdsPage, location.pathname, navigate]);
+  }, [ui.activePage, ui.showSavedAdsPage, ui.showMySpacePage, ui.showProfilePage, ui.profileTab, location.pathname, navigate]);
 
   // ── Application State ────────────────────────────────────────────────
   const [ads, setAds] = useState([]);
@@ -3390,7 +3432,7 @@ const App = () => {
     setCloseDetailSignal((n) => n + 1);
     sdui.setActivePlatforms(["google"]);
     dispatch(setSpecificPlatforms(["google"]));
-    dispatch(setShowSavedAdsPage(false));
+    exitSpecialPages();
     handleSearch(advertiserName, "advertiser");
     coalesceNextHistoryWrite();
     dispatch(setActivePage("ads"));
@@ -3600,18 +3642,95 @@ const App = () => {
     if (val === 'intelligence') {
       // Own URL so reload stays on Market Trends (URL-sync effect sets state).
       navigate('/market-trends');
-      dispatch(setShowSavedAdsPage(false));
+      exitSpecialPages();
       return;
     }
     if (location.pathname === '/market-trends') navigate('/');
     dispatch(setActivePage(val));
-    dispatch(setShowSavedAdsPage(false));
+    exitSpecialPages();
   };
+  // These three page flags are mutually exclusive, but were being cleared
+  // independently at different call sites — e.g. the generic nav handler only
+  // ever cleared showSavedAdsPage, so leaving MySpace via "Ads Library" (or any
+  // other nav action) left showMySpacePage stuck true, and the state→URL effect
+  // then force-navigated back to /my-space even after an explicit navigate('/').
+  // One shared helper, used everywhere a page is exited, removes that whole bug
+  // class instead of patching each call site to remember all three flags.
+  const exitSpecialPages = () => {
+    dispatch(setShowSavedAdsPage(false));
+    dispatch(setShowMySpacePage(false));
+    dispatch(setShowProfilePage(false));
+  };
+
   const handleToggleSavedAdsPage = () => {
     const next = !ui.showSavedAdsPage;
     dispatch(setActivePage('ads'));
-    dispatch(setShowSavedAdsPage(next));
+    exitSpecialPages();
+    if (next) dispatch(setShowSavedAdsPage(true));
   };
+
+  const handleToggleMySpacePage = () => {
+    const next = !ui.showMySpacePage;
+    dispatch(setActivePage('ads'));
+    exitSpecialPages();
+    if (next) dispatch(setShowMySpacePage(true));
+  };
+
+  const handleOpenMySpaceImage = (jobId) => {
+    if (!jobId) return;
+    // The route is the single source of truth here. The URL→state effect above
+    // adopts MySpace after navigation; dispatching the page flag first lets the
+    // state→URL effect race this navigation and create a second /myspace entry.
+    navigate(`/myspace?highlight=${encodeURIComponent(jobId)}`);
+  };
+
+  const handleShowProfilePage = (tab = 'credits') => {
+    dispatch(setActivePage('ads'));
+    exitSpecialPages();
+    dispatch(setProfileTab(tab));
+    dispatch(setShowProfilePage(true));
+  };
+
+  // AI Recreate modal — state owned here (parent), same shape as the other
+  // modals in this codebase (e.g. CampaignModal's isGenerating/strategy props).
+  const [recreateModalAd, setRecreateModalAd] = useState(null);
+  const [mySpaceRefreshVersion, setMySpaceRefreshVersion] = useState(0);
+  // Mounted once here (not inside RecreateModal) so a job's completion toast
+  // survives closing the modal and reopening it for a different ad — see
+  // useActiveRecreateJobs.jsx for why that matters.
+  const { trackJob: trackRecreateJob } = useActiveRecreateJobs({
+    onShowToast: showToast,
+    onViewMySpace: handleToggleMySpacePage,
+  });
+
+  // No AI Recreate access → /myspace and /profile don't exist for this user:
+  // send them home (replace, so Back doesn't bounce them into it again) and
+  // drop any open Recreate modal. Waits for the access answer so a user who
+  // DOES have access isn't kicked out on a hard reload.
+  useEffect(() => {
+    if (!imageGenAccessResolved || imageGenEnabled) return;
+    const p = location.pathname;
+    if (p === '/my-space' || p === '/myspace' || p.startsWith('/profile')) navigate('/', { replace: true });
+    setRecreateModalAd(null);
+  }, [imageGenAccessResolved, imageGenEnabled, location.pathname, navigate]);
+  const openRecreate = imageGenEnabled ? (ad) => setRecreateModalAd(ad) : undefined;
+  const showMySpaceIfEnabled = imageGenEnabled ? handleToggleMySpacePage : undefined;
+  const showProfileIfEnabled = imageGenEnabled ? handleShowProfilePage : undefined;
+  const [mySpaceOriginalAd, setMySpaceOriginalAd] = useState(null);
+  const handleOpenMySpaceOriginalAd = useCallback(async ({ network, adId, ad }) => {
+    if (!network || !adId) return;
+    try {
+      const exactAd = ad || (await fetchLandingAd(network, adId))?.ads?.[0];
+      if (!exactAd) throw new Error('Ad not found');
+      setLandingAd(null);
+      exitSpecialPages();
+      dispatch(setActivePage('ads'));
+      navigate('/');
+      setMySpaceOriginalAd({ key: `${network}:${adId}:${Date.now()}`, ad: exactAd });
+    } catch {
+      showToast('Could not open the original ad right now.', 'error');
+    }
+  }, [dispatch, navigate, showToast]);
 
   return (
     <div
@@ -3655,7 +3774,8 @@ const App = () => {
         onGenerateStrategy={handleGenerateCampaign}
         sdui={sdui}
         setActiveTab={(val) => dispatch(setActiveTab(val))}
-        activePage={ui.showSavedAdsPage ? "projects" : ui.activePage}
+        // Saved/MySpace/Profile have no use for the ads search bar — Header hides it for "projects".
+        activePage={(ui.showSavedAdsPage || ui.showMySpacePage || ui.showProfilePage) ? "projects" : ui.activePage}
         isLanding={!!landingAd}
         isScrolled={isHeaderScrolled}
         specificPlatforms={ui.specificPlatforms}
@@ -3675,6 +3795,11 @@ const App = () => {
         guest={guest}
         showOnlyFavourites={ui.showSavedAdsPage}
         onShowFavourites={() => dispatch(setShowSavedAdsPage(!ui.showSavedAdsPage))}
+        onShowProfilePage={showProfileIfEnabled}
+        onShowMySpacePage={showMySpaceIfEnabled}
+        onOpenMySpaceImage={handleOpenMySpaceImage}
+        onRecreateFromNotification={openRecreate}
+        onUpgradeClick={() => dispatch(openModal('isPricingModalOpen'))}
         activeTab={ui.activeTab}
       />
 
@@ -3712,6 +3837,9 @@ const App = () => {
           allowedPlatforms={adsAllowedPlatforms}
           showSavedAdsPage={ui.showSavedAdsPage}
           onShowSavedAdsPage={handleToggleSavedAdsPage}
+          showMySpacePage={ui.showMySpacePage}
+          showProfilePage={ui.showProfilePage}
+          onShowMySpacePage={showMySpaceIfEnabled}
           onOpenKeywordsExplorer={openKeywordsExplorerPage}
           searchIn={ui.searchIn}
         />
@@ -3772,7 +3900,7 @@ const App = () => {
                 coalesceNextHistoryWrite();
                 navigate('/');
                 dispatch(setActivePage('ads'));
-                dispatch(setShowSavedAdsPage(false));
+                exitSpecialPages();
                 // resetFilters: true — a Market Trends drill-through must not inherit
                 // whatever filters were left applied from an earlier, unrelated Ads
                 // Library session (date range, category, CTA, budget, …). Without this
@@ -3836,7 +3964,7 @@ const App = () => {
                 // Let the selected advertiser/platform state flush before the Ads
                 // Library mounts and issues its first request; otherwise the initial
                 // fetch can race the state update and briefly show an empty result.
-                dispatch(setShowSavedAdsPage(false));
+                exitSpecialPages();
                 coalesceNextHistoryWrite();
                 window.requestAnimationFrame(() => dispatch(setActivePage("ads")));
               }}
@@ -3872,10 +4000,11 @@ const App = () => {
             onToggleFavourite={handleToggleFavourite}
             onHideAd={handleHideAd}
             onHideAdvertiser={handleHideAdvertiser}
+            onRecreate={openRecreate}
             onUnHideAd={handleUnHideAd}
             onSearch={(query, type) => {
               handleSearch(query, type);
-              dispatch(setShowSavedAdsPage(false));
+              exitSpecialPages();
             }}
             onAnalyticsAd={(ad,navigationContext) => {
               if (!entitlements && !planAccess) return;
@@ -3885,6 +4014,28 @@ const App = () => {
             analyticsAllowed={hasAdAnalyticsAccess}
             closeDetailSignal={closeDetailSignal}
           />
+        ) : ui.showMySpacePage ? (
+          // Renders nothing while access is unknown / denied — the redirect
+          // effect above takes the user home if they don't have access.
+          imageGenEnabled ? (
+            <MySpacePage
+              onBrowseAds={() => { exitSpecialPages(); navigate('/'); }}
+              onRecreate={openRecreate}
+              onOpenOriginalAd={handleOpenMySpaceOriginalAd}
+              onShowToast={showToast}
+              refreshVersion={mySpaceRefreshVersion}
+            />
+          ) : null
+        ) : ui.showProfilePage ? (
+          imageGenEnabled ? (
+            <ProfilePage
+              tab={ui.profileTab}
+              onNavigateTab={(tab) => dispatch(setProfileTab(tab))}
+              onShowMySpacePage={showMySpaceIfEnabled}
+              onShowToast={showToast}
+              onUpgrade={() => dispatch(openModal('isPricingModalOpen'))}
+            />
+          ) : null
         ) : (
           <AdGrid
             ads={visibleAds}
@@ -3937,6 +4088,7 @@ const App = () => {
             favouriteAdIds={favouriteAdIds}
             onHideAd={handleHideAd}
             onHideAdvertiser={handleHideAdvertiser}
+            onRecreate={openRecreate}
             onToggleFavourite={handleToggleFavourite}
             error={error}
             onRetry={() => {
@@ -3957,6 +4109,8 @@ const App = () => {
             onToggleSidebar={() => dispatch(setSidebarOpen(!ui.isSidebarOpen))}
             guest={guest}
             isLanding={!!landingAd}
+            openAdRequest={mySpaceOriginalAd}
+            onOpenAdRequestConsumed={(key) => setMySpaceOriginalAd((current) => current?.key === key ? null : current)}
             isHeaderScrolled={isHeaderScrolled}
             onScrollChange={setIsHeaderScrolled}
             previewMode={ui.previewMode}
@@ -3985,8 +4139,11 @@ const App = () => {
         <BottomNav
           activePage={ui.activePage}
           showSavedAdsPage={ui.showSavedAdsPage}
+          showMySpacePage={ui.showMySpacePage}
+          showProfilePage={ui.showProfilePage}
           onPageChange={handleNavPageChange}
           onShowSavedAdsPage={handleToggleSavedAdsPage}
+          onShowMySpacePage={showMySpaceIfEnabled}
           onOpenKeywordsExplorer={openKeywordsExplorerPage}
           onOpenFilters={() => dispatch(setSidebarOpen(true))}
           activeFilterCount={sdui.totalActiveFilters}
@@ -3999,6 +4156,21 @@ const App = () => {
           keywordExplorerEnabled={keywordExplorerUIEnabled}
           isLoggedIn={!guest?.isRestricted}
           allowedPlatforms={adsAllowedPlatforms}
+        />
+      )}
+
+      {imageGenEnabled && (
+        <RecreateModal
+          isOpen={!!recreateModalAd}
+          ad={recreateModalAd}
+          onClose={() => setRecreateModalAd(null)}
+          onShowToast={showToast}
+          onViewMySpace={handleToggleMySpacePage}
+          onUpgrade={() => { setRecreateModalAd(null); dispatch(openModal('isPricingModalOpen')); }}
+          onJobStarted={(jobId) => {
+            trackRecreateJob(jobId);
+            setMySpaceRefreshVersion((version) => version + 1);
+          }}
         />
       )}
 
@@ -4086,7 +4258,7 @@ const App = () => {
           if (category) next.adcategory = [category];
           if (countries?.length) next.country_filter = countries;
           if (Object.keys(next).length) sdui.setAllFilters(next);
-          dispatch(setShowSavedAdsPage(false));
+          exitSpecialPages();
           dispatch(setActivePage('ads'));
           navigate('/');
         }}

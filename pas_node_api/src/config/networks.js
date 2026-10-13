@@ -465,6 +465,47 @@ module.exports = {
       },
     },
   },
+  // AI Recreate + MySpace (image generation) — NOT an ad network, no insertion/crawler
+  // concept. Listed here purely to reuse DatabaseManager's connectAll()/ServiceRegistry's
+  // injectDatabases() bootstrap (same mechanism chatgptads uses) for its Mongo connection.
+  // Its own feature config (Ad Studio URL, aspect ratios, credits, …) lives in the
+  // top-level config.json `imageGen` section, read by src/services/imageGen/config.js —
+  // not duplicated here. See pas_node_api/docs/imageGen/MANIFEST.md.
+  imageGen: {
+    name: 'AI Recreate + MySpace',
+    slug: 'imageGen',
+    enabled: toBool(netVal(netCfg.imageGen, 'enabled', 'IMAGEGEN_ENABLED', true)),
+    database: {
+      sql: { enabled: false },
+      mongo: {
+        enabled:  toBool(netVal(netCfg.imageGen?.mongo, 'enabled',  'IMAGEGEN_MONGO_ENABLED',   true)),
+        poolSize: netVal(netCfg.imageGen?.mongo, 'poolSize', 'IMAGEGEN_MONGO_POOL_SIZE', config.databases.mongo.poolSize),
+        database: netVal(netCfg.imageGen?.mongo, 'database', 'IMAGEGEN_MONGO_DATABASE',  config.databases.mongo.database || 'pas_dev', true),
+        uri:      netVal(netCfg.imageGen?.mongo, 'uri',      'IMAGEGEN_MONGO_URI',       config.databases.mongo.uri,                    true),
+      },
+      elastic: { enabled: false },
+    },
+  },
+  // Not a crawled ad network — /profile (Account/Billing/Credits/Notifications)
+  // local-extension data (profile_* fields, notification_preferences). Same
+  // "listed here purely to reuse DatabaseManager/ServiceRegistry's Mongo
+  // bootstrap" posture as imageGen above. Mongo chosen over a SQL migration
+  // (am_user_action) so the feature needs no schema migration step at all.
+  profile: {
+    name: 'Profile',
+    slug: 'profile',
+    enabled: toBool(netVal(netCfg.profile, 'enabled', 'PROFILE_ENABLED', true)),
+    database: {
+      sql: { enabled: false },
+      mongo: {
+        enabled:  toBool(netVal(netCfg.profile?.mongo, 'enabled',  'PROFILE_MONGO_ENABLED',   true)),
+        poolSize: netVal(netCfg.profile?.mongo, 'poolSize', 'PROFILE_MONGO_POOL_SIZE', config.databases.mongo.poolSize),
+        database: netVal(netCfg.profile?.mongo, 'database', 'PROFILE_MONGO_DATABASE',  config.databases.mongo.database || 'pas_dev', true),
+        uri:      netVal(netCfg.profile?.mongo, 'uri',      'PROFILE_MONGO_URI',       config.databases.mongo.uri,                    true),
+      },
+      elastic: { enabled: false },
+    },
+  },
   tiktok: {
     name: 'TikTok',
     slug: 'tiktok',
