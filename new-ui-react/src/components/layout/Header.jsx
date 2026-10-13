@@ -146,6 +146,8 @@ const Header = ({
   onAiSearch,
   onExitAiSearch,
   onClearAiSearch,
+  // Installed phone app: logo tap → Ads Library (App passes it only there).
+  onLogoClick,
   onAiModeChange,
   aiSearchAvailable = false,
   aiSearchChecked = false,
@@ -748,7 +750,8 @@ const Header = ({
         <img
           src={powerAdSpyLogo}
           alt="PowerAdSpy"
-          className="pwa-logo h-8 w-auto max-w-[126px] cursor-pointer sm:h-9 sm:max-w-none 2xl:h-12"
+          className="pwa-logo h-8 w-auto max-w-[126px] cursor-pointer sm:h-9 sm:max-w-none 2xl:h-12 pwa:active:opacity-70"
+          {...(onLogoClick ? { onClick: onLogoClick, role: "link", "aria-label": "Go to Ads Library" } : {})}
         />
       </div>
 

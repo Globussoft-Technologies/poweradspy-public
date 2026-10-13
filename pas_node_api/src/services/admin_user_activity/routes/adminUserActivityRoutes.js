@@ -195,9 +195,10 @@ function createAdmin_user_activityRoutes(service) {
   // GET /api/v1/admin_user_activity/purge-old-activities
   // Deletes user_activities docs older than 90 days.
   // Add ?dry_run=true to preview count without deleting.
+  // Add ?max_docs=N to delete at most N docs per run.
+  // No auth — called by cron.
   router.get(
     '/purge-old-activities',
-    authMiddleware,
     asyncHandler(async (req, res) => {
       const result = await purgeOldActivities(req, getElastic(service.db), service.log);
       return res.status(result.code === 200 ? 200 : result.code).json(result);

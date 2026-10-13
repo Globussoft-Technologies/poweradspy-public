@@ -184,7 +184,9 @@ function SearchableMultiSelect({
         </button>
       </div>
 
-      {helperText && <p className="text-[11px] text-theme-text-muted mt-1.5">{helperText}</p>}
+      {/* pwa: helper lines hidden in the phone app (the n/max counter and
+          placeholder already say it), which keeps the sheet short. */}
+      {helperText && <p className="text-[11px] text-theme-text-muted mt-1.5 pwa:hidden">{helperText}</p>}
 
       {open && !disabled && (
         <div className="absolute z-10 mt-1.5 w-full bg-theme-surface border border-theme-border rounded-lg shadow-xl max-h-52 overflow-y-auto custom-scrollbar">
@@ -459,12 +461,15 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
   if (!isOpen) return null;
 
   return (
-    <div className="onboarding-overlay fixed inset-0 z-[999999] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
-      <div className="onboarding-card w-full max-w-md bg-theme-surface border border-theme-border rounded-xl shadow-[0_16px_40px_-12px_rgba(55,98,193,0.3)] flex flex-col overflow-hidden max-h-[70vh]">
-        {/* Accent top bar */}
-        <div className="h-[3px] bg-gradient-to-r from-[#6b99ff] via-[#3762c1] to-[#6b99ff]" />
+    // pwa: installed phone app — a bottom sheet (like native apps) instead of
+    // a big centred box; the website keeps the centred card.
+    <div className="onboarding-overlay fixed inset-0 z-[999999] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 pwa:items-end pwa:p-0 pwa:bg-black/50">
+      <div className="onboarding-card w-full max-w-md bg-theme-surface border border-theme-border rounded-xl shadow-[0_16px_40px_-12px_rgba(55,98,193,0.3)] flex flex-col overflow-hidden max-h-[70vh] pwa:max-w-none pwa:max-h-[85dvh] pwa:rounded-none pwa:rounded-t-[22px] pwa:border-x-0 pwa:border-b-0 pwa:pb-[env(safe-area-inset-bottom)]">
+        {/* Accent top bar (website) / grab handle (installed app) */}
+        <div className="h-[3px] bg-gradient-to-r from-[#6b99ff] via-[#3762c1] to-[#6b99ff] pwa:hidden" />
+        <span className="hidden pwa:block mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-theme-text/15" aria-hidden="true" />
 
-        <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2.5 border-b border-theme-border">
+        <div className="flex items-center justify-between gap-3 px-4 pt-3.5 pb-2.5 border-b border-theme-border pwa:pt-2">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="flex items-center justify-center w-7 h-7 rounded-lg bg-[#3762c1]/12 border border-[#3762c1]/20 shrink-0">
               <Sparkles size={14} className="text-[#6b99ff]" />
@@ -491,9 +496,9 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
           </div>
         </div>
 
-        <div className="overflow-y-auto px-4 py-4 custom-scrollbar">
+        <div className="overflow-y-auto px-4 py-4 custom-scrollbar pwa:py-3">
           {step === "form" && (
-            <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-3 pwa:gap-3.5">
               <div>
                 <CategorySearch
                   selected={selectedCategory}
@@ -539,11 +544,12 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
                 </p>
               )}
 
-              <div className="flex justify-end items-center gap-2.5 pt-2 border-t border-theme-border/70 -mx-4 px-4 pt-4">
+              {/* pwa: thumb-sized Skip + full-width primary action. */}
+              <div className="flex justify-end items-center gap-2.5 pt-2 border-t border-theme-border/70 -mx-4 px-4 pt-4 pwa:pt-3">
                 <button
                   type="button"
                   onClick={handleSkip}
-                  className="px-3 py-2 text-sm font-medium text-theme-text-muted hover:text-theme-text transition-colors whitespace-nowrap"
+                  className="px-3 py-2 text-sm font-medium text-theme-text-muted hover:text-theme-text transition-colors whitespace-nowrap pwa:h-11 pwa:px-4"
                 >
                   Skip
                 </button>
@@ -551,7 +557,7 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
                   type="button"
                   onClick={handleSubmit}
                   disabled={!canSubmit}
-                  className="inline-flex items-center gap-1.5 bg-gradient-to-r from-[#3762c1] to-[#335296] hover:from-[#4374e0] hover:to-[#3e64b8] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-full text-sm px-4 py-2.5 font-semibold shadow-lg shadow-blue-900/25 transition-all active:scale-95 whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 bg-gradient-to-r from-[#3762c1] to-[#335296] hover:from-[#4374e0] hover:to-[#3e64b8] disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-full text-sm px-4 py-2.5 font-semibold shadow-lg shadow-blue-900/25 transition-all active:scale-95 whitespace-nowrap pwa:h-11 pwa:flex-1 pwa:justify-center pwa:rounded-xl pwa:text-[15px]"
                 >
                   Show trending ads <ArrowRight size={15} />
                 </button>
@@ -627,7 +633,7 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
                 <button
                   type="button"
                   onClick={() => setStep("form")}
-                  className="px-3 py-2 text-sm font-medium text-theme-text-muted hover:text-theme-text transition-colors whitespace-nowrap"
+                  className="px-3 py-2 text-sm font-medium text-theme-text-muted hover:text-theme-text transition-colors whitespace-nowrap pwa:h-11 pwa:px-4"
                 >
                   Back
                 </button>
@@ -637,7 +643,7 @@ const OnboardingModal = ({ isOpen, onClose, onExplore, onSkip }) => {
                     onExplore?.(selectedCategory?.major_category, countries);
                     onClose();
                   }}
-                  className="inline-flex items-center gap-1.5 bg-gradient-to-r from-[#3762c1] to-[#335296] hover:from-[#4374e0] hover:to-[#3e64b8] text-white rounded-full text-sm px-4 py-2.5 font-semibold shadow-lg shadow-blue-900/25 transition-all active:scale-95 whitespace-nowrap"
+                  className="inline-flex items-center gap-1.5 bg-gradient-to-r from-[#3762c1] to-[#335296] hover:from-[#4374e0] hover:to-[#3e64b8] text-white rounded-full text-sm px-4 py-2.5 font-semibold shadow-lg shadow-blue-900/25 transition-all active:scale-95 whitespace-nowrap pwa:h-11 pwa:flex-1 pwa:justify-center pwa:rounded-xl pwa:text-[15px]"
                 >
                   Explore Library <ArrowRight size={15} />
                 </button>

@@ -2,6 +2,7 @@ import { jsPDF } from "jspdf";
 import he from "he";
 import { fetchImageAsDataUrl } from "./api";
 import { ctaLabelText } from "../utils/cta";
+import { isInstalledMobileNow } from "../hooks/useInstalledMobile";
 
 // ─── Stat trio (mirrors the per-platform trio shown on the card) ───────────
 const STAT_TRIOS = {
@@ -339,7 +340,6 @@ export const downloadAdAsPdf = async (ad) => {
   ]);
 
   // ─── Engagement ───────────────────────────────────────────────
-  sectionHeader("Engagement");
   const platform = String(ad.network || "").toLowerCase();
   const trioKeys = STAT_TRIOS[platform] || DEFAULT_TRIO;
   const trio = trioKeys.map((key) => ({
@@ -348,9 +348,28 @@ export const downloadAdAsPdf = async (ad) => {
     label: STAT_LABELS[key] || key,
     value: resolveStatValue(key, ad),
   }));
+  const engagementRows = [
+    ["Impressions", formatStat(ad.impressions)],
+    ["Views", formatStat(ad.views)],
+    ["Likes", formatStat(ad.likes)],
+    ["Comments", formatStat(ad.comments)],
+    ["Shares", formatStat(ad.shares)],
+    ["CTR", ad.ctr != null ? `${ad.ctr}%` : null],
+    ["Engagement Rate", ad.engRate],
+    ["Engagement / Day", ad.engPerDay],
+    ["Popularity", ad.popularity != null ? String(ad.popularity) : null],
+  ];
+  // Installed phone app: ads with no engagement data (e.g. Meta Ads Library)
+  // skip the three "N/A" tiles, and the whole section when nothing in it has
+  // a value. The website report is unchanged.
+  const hideEmptyEngagement = isInstalledMobileNow();
+  const hasTrio = trio.slice(0, 3).some((s) => formatStat(s.value));
+  const hasEngagementRows = engagementRows.some(([, v]) => v != null && v !== "");
+  const showTiles = !hideEmptyEngagement || hasTrio;
+  if (showTiles || hasEngagementRows) sectionHeader("Engagement");
   const tileW = (contentW - 12) / 3;
-  ensureSpace(60);
-  trio.slice(0, 3).forEach((s, i) => {
+  if (showTiles) ensureSpace(60);
+  if (showTiles) trio.slice(0, 3).forEach((s, i) => {
     const tx = margin + i * (tileW + 6);
     doc.setFillColor(...BG_SOFT);
     doc.roundedRect(tx, y, tileW, 52, 4, 4, "F");
@@ -364,18 +383,8 @@ export const downloadAdAsPdf = async (ad) => {
     /* v8 ignore next -- s.label is always set from STAT_LABELS; the `|| ""` is defensive */
     doc.text((s.label || "").toUpperCase(), tx + 10, y + 42);
   });
-  y += 60;
-  drawRows([
-    ["Impressions", formatStat(ad.impressions)],
-    ["Views", formatStat(ad.views)],
-    ["Likes", formatStat(ad.likes)],
-    ["Comments", formatStat(ad.comments)],
-    ["Shares", formatStat(ad.shares)],
-    ["CTR", ad.ctr != null ? `${ad.ctr}%` : null],
-    ["Engagement Rate", ad.engRate],
-    ["Engagement / Day", ad.engPerDay],
-    ["Popularity", ad.popularity != null ? String(ad.popularity) : null],
-  ]);
+  if (showTiles) y += 60;
+  drawRows(engagementRows);
 
   // ─── Budget ───────────────────────────────────────────────────
   const hasBudget =

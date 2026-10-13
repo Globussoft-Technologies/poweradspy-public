@@ -2561,19 +2561,23 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
   }, [competitorSearch]);
 
   return (
-    <div className="flex-1 h-full overflow-y-auto bg-theme-bg p-8 text-theme-text custom-scrollbar">
+    // pwa: installed phone app — 16px screen gutters instead of 32px, and no
+    // sideways scroll.
+    <div className="flex-1 h-full overflow-y-auto bg-theme-bg p-8 text-theme-text custom-scrollbar pwa:px-4 pwa:py-5 pwa:overflow-x-hidden">
       {viewState === 0 && (
-        <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300">
-          <div className="flex items-center justify-between mb-8">
+        <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-300 pwa:space-y-4">
+          {/* pwa: title + description on top, the two buttons as one full-width
+              row under them (side by side they ran off the right edge). */}
+          <div className="flex items-center justify-between mb-8 pwa:flex-col pwa:items-stretch pwa:gap-4 pwa:mb-2">
             <div>
-              <h1 className="text-3xl font-bold tracking-tight text-white mb-2">
+              <h1 className="text-3xl font-bold tracking-tight text-white mb-2 pwa:text-[26px] pwa:mb-1">
                 My Projects
               </h1>
-              <p className="text-theme-text-muted">
+              <p className="text-theme-text-muted pwa:text-[14px] pwa:leading-snug">
                 Manage your monitored advertisers and competitor intelligence.
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 pwa:gap-2.5 pwa:[&>button]:flex-auto pwa:[&>button]:h-11 pwa:[&>button]:justify-center pwa:[&>button]:px-3 pwa:[&>button]:text-[14px] pwa:[&>button]:whitespace-nowrap">
               {capabilityAllowed("projects.members") ? (
                 <MembersManager
                   userId={competitorUserId}
@@ -2616,14 +2620,15 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
               <Loader2 className="animate-spin text-[#3759a3] w-10 h-10" />
             </div>
           ) : hasProjects ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pwa:gap-3">
               {projects.map((proj) => {
                 const monitoredCount = getProjectMonitoredCount(proj);
                 return (
                   <div
                     key={proj.id}
                     onClick={() => openProject(proj.id, proj.advertiser)}
-                    className="bg-theme-card border border-theme-border rounded-2xl p-6 cursor-pointer hover:border-[#3759a3]/40 hover:shadow-xl hover:shadow-[#3759a3]/5 transition-all group relative"
+                    // pwa: compact full-width card; the press feedback replaces hover.
+                    className="bg-theme-card border border-theme-border rounded-2xl p-6 cursor-pointer hover:border-[#3759a3]/40 hover:shadow-xl hover:shadow-[#3759a3]/5 transition-all group relative pwa:px-4 pwa:py-3.5 pwa:active:scale-[0.99]"
                   >
                     <button
                       onClick={(e) => {
@@ -2637,7 +2642,8 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                           advertiser: proj.advertiser,
                         });
                       }}
-                      className={`absolute top-4 right-4 p-2 rounded-xl opacity-0 group-hover:opacity-100 transition-all border border-transparent ${
+                      // pwa: phones have no hover, so the delete icon is always shown (muted).
+                      className={`absolute top-4 right-4 p-2 rounded-xl opacity-0 group-hover:opacity-100 transition-all border border-transparent pwa:opacity-60 pwa:top-1/2 pwa:-translate-y-1/2 pwa:right-2 ${
                         capabilityAllowed("projects.manage")
                           ? "text-theme-text-muted hover:text-red-400 hover:bg-red-500/10 hover:border-red-500/20"
                           : "text-theme-text-muted cursor-not-allowed"
@@ -2652,7 +2658,7 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                     </button>
                     <h3
                       title={proj.advertiser}
-                      className="text-xl font-bold text-white mb-1 group-hover:text-[#6b99ff] transition-colors mt-2 break-words line-clamp-2 pr-8"
+                      className="text-xl font-bold text-white mb-1 group-hover:text-[#6b99ff] transition-colors mt-2 break-words line-clamp-2 pr-8 pwa:mt-0 pwa:text-[17px] pwa:pr-10"
                     >
                       {capitalizeFirst(proj.advertiser)}
                     </h3>

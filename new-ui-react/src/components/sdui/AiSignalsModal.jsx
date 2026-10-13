@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { isInstalledMobileNow } from "../../hooks/useInstalledMobile";
 import { Check, Search, Sparkles, SlidersHorizontal, X } from "lucide-react";
 import SchemaRenderer from "./SchemaRenderer";
 import { useTheme } from "../../hooks/useTheme";
@@ -217,22 +218,31 @@ const FocusedOptionGrid = ({
     <>
       {options.length > 4 && (
         <div className="sticky top-0 z-[2] bg-theme-surface pb-3">
+          {/* pwa: a soft pill search field, like native app search bars. */}
           <Search
             size={14}
-            className="pointer-events-none absolute left-3 top-[11px] text-theme-text-muted"
+            className="pointer-events-none absolute left-3 top-[11px] text-theme-text-muted pwa:left-3.5 pwa:top-[14px] pwa:h-4 pwa:w-4"
           />
           <input
             type="search"
             value={searchQuery}
             onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={`Search ${options.length} ${String(filter.label || "filter").toLowerCase()} options`}
-            className="w-full rounded-lg border border-theme-border bg-theme-card py-2 pl-9 pr-3 text-[13px] text-theme-text outline-none transition-colors placeholder:text-theme-text-muted focus:border-theme-text/30"
+            // Installed phone app: a short placeholder at 13px (the typed text
+            // stays 16px so iOS doesn't zoom into the field).
+            placeholder={
+              isInstalledMobileNow()
+                ? `Search ${String(filter.label || "options").toLowerCase()}`
+                : `Search ${options.length} ${String(filter.label || "filter").toLowerCase()} options`
+            }
+            className="w-full rounded-lg border border-theme-border bg-theme-card py-2 pl-9 pr-3 text-[13px] text-theme-text outline-none transition-colors placeholder:text-theme-text-muted focus:border-theme-text/30 pwa:rounded-full pwa:border-transparent pwa:bg-theme-text/[0.05] pwa:py-2.5 pwa:pl-10 pwa:placeholder:text-[13px]"
           />
         </div>
       )}
 
       {visibleOptions.length > 0 ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        // pwa: installed phone app — one grouped list (rows split by thin
+        // lines) instead of a stack of separately bordered boxes.
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 pwa:gap-0 pwa:overflow-hidden pwa:rounded-xl pwa:border pwa:border-theme-border pwa:bg-theme-card">
           {visibleOptions.map((option) => {
             const value = optionValue(option);
             const label = optionLabel(option);
@@ -243,7 +253,7 @@ const FocusedOptionGrid = ({
                 key={option?._id || value}
                 onClick={() => toggle(value)}
                 aria-pressed={isSelected}
-                className="flex min-w-0 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-[13px] transition-colors hover:border-theme-text/30"
+                className="flex min-w-0 items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-[13px] transition-colors hover:border-theme-text/30 pwa:gap-3 pwa:rounded-none pwa:border-0 pwa:border-b pwa:border-theme-border/70 pwa:px-3.5 pwa:py-3 pwa:text-[14.5px] pwa:last:border-b-0 pwa:active:bg-theme-text/[0.04] pwa:flex-row-reverse pwa:justify-between pwa:[&>span:first-child]:h-[22px] pwa:[&>span:first-child]:w-[22px] pwa:[&>span:first-child]:rounded-full"
                 style={{
                   borderColor: isSelected
                     ? `color-mix(in srgb, ${hue} ${
@@ -565,6 +575,16 @@ const AiSignalsModal = ({
     visibleFilters.find((filter) => filter._id === activeFilterId) ||
     visibleFilters[0] ||
     null;
+
+  // Installed phone app: keep the active group chip in view in the sideways
+  // group row (it could open scrolled to another group). Website unchanged.
+  const groupRowRef = useRef(null);
+  useEffect(() => {
+    if (!isOpen || !isInstalledMobileNow()) return;
+    groupRowRef.current
+      ?.querySelector('[data-ai-group-active="true"]')
+      ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [isOpen, activeFilter?._id]);
   const activePresentation =
     AI_FILTER_PRESENTATION[activeFilter?._id] || {
       description: activeFilter?.description || "AI-derived ad signal.",
@@ -830,7 +850,8 @@ const AiSignalsModal = ({
         className="flex h-[min(760px,94vh)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-theme-border bg-theme-surface shadow-2xl pwa:h-full pwa:rounded-none pwa:border-0"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex shrink-0 items-center gap-3 border-b border-theme-border px-5 py-4 sm:px-6">
+        {/* pwa: compact header — title + NEW and a round close button. */}
+        <div className="flex shrink-0 items-center gap-3 border-b border-theme-border px-5 py-4 sm:px-6 pwa:px-4 pwa:py-3">
           <div
             className={`hidden rounded-xl border p-2.5 sm:flex ${
               isLightTheme
@@ -856,7 +877,7 @@ const AiSignalsModal = ({
                 New
               </span>
             </div>
-            <p className="mt-0.5 truncate text-[12px] text-theme-text-secondary">
+            <p className="mt-0.5 truncate text-[12px] text-theme-text-secondary pwa:hidden">
               Refine ads using AI-derived creative, intent, offer, color, and
               category signals.
             </p>
@@ -865,20 +886,25 @@ const AiSignalsModal = ({
           <button
             type="button"
             onClick={closeAndForgetDraft}
-            className="shrink-0 rounded-lg border border-theme-border bg-theme-bg p-2 text-theme-text-muted transition-colors hover:border-theme-text/30 hover:text-theme-text"
+            className="shrink-0 rounded-lg border border-theme-border bg-theme-bg p-2 text-theme-text-muted transition-colors hover:border-theme-text/30 hover:text-theme-text pwa:rounded-full pwa:border-0 pwa:bg-theme-text/[0.06]"
             aria-label="Close AI Filters popup"
           >
             <X size={17} />
           </button>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
-          <aside className="flex shrink-0 flex-col border-b border-theme-border bg-theme-bg/40 md:w-56 md:border-b-0 md:border-r">
+        {/* pwa: installed phone app uses the shopping-app filter layout —
+            every group listed down the left (nothing hidden off-screen, each
+            with its selected count), the chosen group's options on the right. */}
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row pwa:flex-row">
+          <aside className="flex shrink-0 flex-col border-b border-theme-border bg-theme-bg/40 md:w-56 md:border-b-0 md:border-r pwa:w-[116px] pwa:border-b-0 pwa:border-r pwa:bg-theme-text/[0.03]">
             <div className="hidden px-4 pb-2 pt-4 text-[10px] font-semibold uppercase tracking-[0.1em] text-theme-text-muted md:block">
               Filter groups
             </div>
 
-            <div className="flex gap-1 overflow-x-auto p-2 md:flex-1 md:flex-col md:overflow-y-auto">
+            {/* pwa: a vertical list of every group; the active one is kept in view. */}
+            <div ref={groupRowRef} className="flex gap-1 overflow-x-auto p-2 md:flex-1 md:flex-col md:overflow-y-auto pwa:flex-1 pwa:flex-col pwa:gap-0 pwa:overflow-y-auto pwa:overflow-x-hidden pwa:p-0">
+
               {visibleFilters.map((filter) => {
                 const presentation =
                   AI_FILTER_PRESENTATION[filter._id] || activePresentation;
@@ -896,7 +922,12 @@ const AiSignalsModal = ({
                     type="button"
                     key={filter._id}
                     onClick={() => setActiveFilterId(filter._id)}
-                    className="flex min-w-max items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[13px] transition-colors md:min-w-0"
+                    data-ai-group-active={isActive ? "true" : undefined}
+                    // pwa: full-width row, name wraps onto two lines if needed;
+                    // the active row gets a coloured left edge + white background.
+                    className={`flex min-w-max items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[13px] transition-colors md:min-w-0 pwa:min-w-0 pwa:gap-2 pwa:rounded-none pwa:border-0 pwa:border-l-[3px] pwa:px-2.5 pwa:py-3.5 pwa:leading-snug pwa:[&>span:nth-child(2)]:whitespace-normal pwa:[&>span:nth-child(2)]:break-words ${
+                      isActive ? "pwa:!bg-theme-card pwa:font-semibold" : ""
+                    }`}
                     style={{
                       color: isActive ? filterAccent : undefined,
                       borderColor: isActive
@@ -960,22 +991,23 @@ const AiSignalsModal = ({
           <section className="flex min-h-0 min-w-0 flex-1 flex-col">
             {activeFilter ? (
               <>
-                <div className="flex shrink-0 items-center gap-3 px-5 pb-3 pt-4 sm:px-6">
+                {/* pwa: one short line — group name, Select all / Clear. */}
+                <div className="flex shrink-0 items-center gap-3 px-5 pb-3 pt-4 sm:px-6 pwa:gap-2 pwa:px-3 pwa:pb-2 pwa:pt-3">
                   <span
-                    className="h-8 w-1 shrink-0 rounded-full"
+                    className="h-8 w-1 shrink-0 rounded-full pwa:h-5"
                     style={{ backgroundColor: activeAccent }}
                   />
                   <div className="min-w-0 flex-1">
-                    <h3 className="text-[15px] font-semibold text-theme-text">
+                    <h3 className="text-[15px] font-semibold text-theme-text pwa:text-[16px] pwa:font-bold">
                       {activeFilter.label}
                     </h3>
-                    <p className="mt-0.5 truncate text-[12px] text-theme-text-secondary">
+                    <p className="mt-0.5 truncate text-[12px] text-theme-text-secondary pwa:hidden">
                       {activeFilter.description ||
                         activeFilter.meta ||
                         activePresentation.description}
                     </p>
                   </div>
-                  <div className="flex shrink-0 items-center gap-3 text-[12px] font-medium">
+                  <div className="flex shrink-0 items-center gap-3 text-[12px] font-medium pwa:text-[13.5px] pwa:font-semibold">
                     <button
                       type="button"
                       onClick={handleSelectAllActive}
@@ -998,7 +1030,7 @@ const AiSignalsModal = ({
                   </div>
                 </div>
 
-                <div className="modal-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-5 sm:px-6">
+                <div className="modal-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-5 sm:px-6 pwa:px-3">
                   <PopupErrorBoundary
                     key={activeFilter._id}
                     fallback={
@@ -1059,11 +1091,12 @@ const AiSignalsModal = ({
         </div>
 
         {activeSelectionEntries.length > 0 && (
-          <div className="flex max-h-[88px] shrink-0 items-start gap-3 overflow-y-auto border-t border-theme-border bg-theme-bg/30 px-5 py-2.5 sm:px-6">
-            <span className="shrink-0 pt-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-theme-text-muted">
+          // pwa: selected values in one sideways-scrolling row (no 3-line stack).
+          <div className="flex max-h-[88px] shrink-0 items-start gap-3 overflow-y-auto border-t border-theme-border bg-theme-bg/30 px-5 py-2.5 sm:px-6 pwa:items-center pwa:px-4 pwa:py-2">
+            <span className="shrink-0 pt-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-theme-text-muted pwa:pt-0">
               Active
             </span>
-            <div className="flex flex-1 flex-wrap gap-1.5">
+            <div className="flex flex-1 flex-wrap gap-1.5 pwa:min-w-0 pwa:flex-nowrap pwa:overflow-x-auto pwa:scrollbar-hide pwa:[&>*]:shrink-0">
               {activeSelectionEntries.map((entry) => {
                 const presentation =
                   AI_FILTER_PRESENTATION[entry.filter._id] ||
@@ -1100,7 +1133,8 @@ const AiSignalsModal = ({
           </div>
         )}
 
-        <div className="flex shrink-0 items-center gap-2 border-t border-theme-border bg-theme-surface px-5 py-3 sm:px-6">
+        {/* pwa: full-width, thumb-sized Cancel + Apply. */}
+        <div className="flex shrink-0 items-center gap-2 border-t border-theme-border bg-theme-surface px-5 py-3 sm:px-6 pwa:gap-3 pwa:px-4">
           <span className="hidden text-[12px] text-theme-text-muted sm:block">
             {totalSelectedValues > 0
               ? `${totalSelectedValues} ${
@@ -1108,11 +1142,22 @@ const AiSignalsModal = ({
                 } ready to apply`
               : `${visibleFilters.length} filter groups available`}
           </span>
-          <div className="flex-1" />
+          <div className="flex-1 pwa:hidden" />
+          {/* Installed phone app: ✕ in the header already closes, so the
+              footer offers "Clear all" (the sidebar's copy is hidden on
+              phones) in place of a second Cancel. */}
+          <button
+            type="button"
+            onClick={handleClear}
+            disabled={activeFilterCount === 0}
+            className="hidden pwa:block pwa:h-11 pwa:flex-1 pwa:rounded-xl pwa:border pwa:border-theme-border pwa:bg-theme-bg pwa:text-[14px] pwa:font-semibold pwa:text-theme-text-secondary pwa:disabled:opacity-40"
+          >
+            Clear all
+          </button>
           <button
             type="button"
             onClick={closeAndForgetDraft}
-            className="rounded-lg border border-theme-border bg-theme-bg px-4 py-2 text-[12px] font-semibold text-theme-text-secondary transition-colors hover:bg-theme-card"
+            className="rounded-lg border border-theme-border bg-theme-bg px-4 py-2 text-[12px] font-semibold text-theme-text-secondary transition-colors hover:bg-theme-card pwa:hidden"
           >
             Cancel
           </button>
@@ -1120,7 +1165,7 @@ const AiSignalsModal = ({
             type="button"
             onClick={handleApply}
             disabled={!hasPendingChanges}
-            className={`rounded-lg border px-4 py-2 text-[12px] font-semibold transition-colors ${
+            className={`rounded-lg border px-4 py-2 text-[12px] font-semibold transition-colors pwa:h-11 pwa:flex-[2] pwa:rounded-xl pwa:text-[14px] pwa:font-bold ${
               hasPendingChanges
                 ? "border-[#4f46e5] bg-[#4f46e5] text-white hover:bg-[#4338ca]"
                 : "cursor-not-allowed border-theme-border bg-theme-bg text-theme-text-muted opacity-50"

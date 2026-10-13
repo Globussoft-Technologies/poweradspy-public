@@ -525,6 +525,7 @@ async function getOtherActivities(req, elastic, logger) {
 // GET /api/v1/admin_user_activity/purge-old-activities
 // Deletes all user_activities docs older than 90 days (based on dateTime field).
 // Optional query param: dry_run=true → counts docs to be deleted without deleting.
+// Optional query param: max_docs=N  → delete at most N docs in this run.
 async function purgeOldActivities(req, elastic, logger) {
   try {
     if (!elastic) {
@@ -558,6 +559,74 @@ async function purgeOldActivities(req, elastic, logger) {
           cutoff_timestamp: cutoffTs,
           cutoff_date: new Date(cutoffTs * 1000).toISOString(),
           docs_to_delete: count,
+        },
+      };
+    }
+
+    // Optional query param: max_docs=N → delete at most N docs in this run (positive integer)
+    let maxDocs = null;
+    if (req.query.max_docs !== undefined && req.query.max_docs !== '') {
+      maxDocs = parseInt(req.query.max_docs, 10);
+      if (!Number.isInteger(maxDocs) || maxDocs <= 0) {
+        return { code: 400, message: 'max_docs must be a positive integer' };
+      }
+    }
+
+    // ES 7.x+: submit delete_by_query as an ES-side task (wait_for_completion=false)
+    // so the request returns immediately with a task id — no client timeout / retry
+    // re-submitting duplicate deletes. Track progress with GET _tasks/<task_id>.
+    // The DatabaseManager wrapper does not expose deleteByQuery — use the raw client.
+    const esClient = elastic.client || elastic;
+    if (typeof esClient.deleteByQuery === 'function') {
+      const countResult = await elastic.count({
+        index: 'user_activities',
+        body: { query: rangeQuery },
+      });
+      const matching = countResult?.count ?? countResult?.body?.count ?? 0;
+      const toDelete = maxDocs ? Math.min(maxDocs, matching) : matching;
+
+      if (matching === 0) {
+        return {
+          code: 200,
+          message: `No documents older than ${DAYS} days to delete.`,
+          data: {
+            cutoff_timestamp: cutoffTs,
+            cutoff_date: new Date(cutoffTs * 1000).toISOString(),
+            docs_matching: 0,
+            docs_to_delete: 0,
+          },
+        };
+      }
+
+      const dbqParams = {
+        index: 'user_activities',
+        body: { query: rangeQuery },
+        conflicts: 'proceed',
+        refresh: true,
+        slices: 'auto',
+        wait_for_completion: false,
+      };
+      // delete_by_query doc limit: ES 7.3+ uses max_docs, ES 6.x uses size.
+      if (maxDocs) dbqParams[elastic.esMajor && elastic.esMajor < 7 ? 'size' : 'max_docs'] = maxDocs;
+
+      const dbqResult = await esClient.deleteByQuery(dbqParams);
+      const taskId = dbqResult?.task ?? dbqResult?.body?.task ?? null;
+
+      logger?.info?.(`[purgeOldActivities] delete_by_query task started: ${taskId} (matching=${matching}, to_delete=${toDelete})`);
+
+      return {
+        code: 202,
+        message: `Deletion started. Will delete ${toDelete} of ${matching} document(s) older than ${DAYS} days.`,
+        data: {
+          status: 'DELETING',
+          task_id: taskId,
+          cutoff_timestamp: cutoffTs,
+          cutoff_date: new Date(cutoffTs * 1000).toISOString(),
+          docs_matching: matching,
+          docs_to_delete: toDelete,
+          max_docs: maxDocs,
+          remaining_after_run: matching - toDelete,
+          message: `Track progress with GET _tasks/${taskId}`,
         },
       };
     }

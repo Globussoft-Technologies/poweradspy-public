@@ -3622,6 +3622,9 @@ const App = () => {
       style={{ backgroundColor: "var(--color-bg)", color: "var(--color-text)" }}
     >
       <Header
+        // Installed phone app only: tapping the logo goes back to the Ads
+        // Library, same as the bottom nav's first tab. Website unchanged.
+        onLogoClick={isInstalledMobile ? () => handleNavPageChange('ads') : undefined}
         isSidebarOpen={ui.isSidebarOpen}
         setIsSidebarOpen={(val) => dispatch(setSidebarOpen(val))}
         committedQuery={ui.searchQuery}
@@ -4285,7 +4288,8 @@ const App = () => {
       <ChatbotWidget />
 
       {/* Push Notification Permission Prompt */}
-      <NotificationPermissionPrompt />
+      {/* Installed phone app: held back while onboarding is open (they stacked). */}
+      <NotificationPermissionPrompt suppress={isInstalledMobile && ui.isOnboardingModalOpen} />
 
       {/* "Install PowerAdSpy" banner — phone browsers only (see component) */}
       <InstallAppPrompt />
