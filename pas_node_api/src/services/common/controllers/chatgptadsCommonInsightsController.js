@@ -6,6 +6,7 @@ const {
   getAdDetails,
   getChatgptAdCountry,
   getAdvertiserCountryData,
+  getChatgptOutgoings,
 } = require('../../chatgptads/controllers/adInsightsController');
 
 const INSIGHT_REGISTRY = [
@@ -23,6 +24,11 @@ const INSIGHT_REGISTRY = [
     key: 'advertiserCountryData',
     fn: getAdvertiserCountryData,
     payload: (p) => ({ chatgptads_ad_id: p.chatgptads_ad_id, user_id: p.user_id, year: p.year }),
+  },
+  {
+    key: 'outgoingLinks',
+    fn: getChatgptOutgoings,
+    payload: (p) => ({ chatgptads_ad_id: p.chatgptads_ad_id }),
   },
 ];
 

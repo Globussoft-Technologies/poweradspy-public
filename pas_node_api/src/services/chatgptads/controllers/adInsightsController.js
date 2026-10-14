@@ -33,6 +33,7 @@ const AD_DETAIL_FIELDS = [
   'image_url_original',
   'days_running',
   'lang_detect',
+  'domain_registered_date', // written to ES by landers/insertHtmlService (WHOIS of the lander domain)
 ];
 
 // Read from ES only to build `image_video_url` — not returned as-is.
@@ -68,6 +69,51 @@ async function getAdDetails(req, db, logger) {
     // lang_detect holds the full language name (e.g. "English"). Also sent as `language`,
     // the field the analytics modal (and the other networks' ad details) read.
     adData.language = adData.lang_detect;
+
+    // Advertiser name is stored as post_owner_name; the analytics modal header (and the other
+    // networks' ad details) read `post_owner`. Without this a deep-linked /chatgptads/:id —
+    // which has no search-card `advertiser` to fall back to — shows a blank advertiser name.
+    adData.post_owner = adData.post_owner_name;
+
+    // Lander fields from chatgptads_ad_landers (written by landers/insertHtmlService):
+    //   lander_screen_shot — screenshot_url as a full CDN URL; the field the analytics modal's
+    //                        Lander Details reads (the ES overlay does not carry the screenshot).
+    //   out_going_url      — JSON [{start_url, destination_url, redirect_urls[]}] as an array.
+    //   redirect_url       — JSON [url, ...] joined with '||' — BasicInfo reads it as a string
+    //                        and already splits on '||'.
+    // Best-effort: a missing row or SQL error leaves them null and the rest is still returned.
+    adData.lander_screen_shot = null;
+    adData.out_going_url = null;
+    adData.redirect_url = null;
+    if (db.sql) {
+      try {
+        const rows = await db.sql.query(
+          'SELECT screenshot_url, out_going_url, redirect_url FROM chatgptads_ad_landers WHERE chatgptads_ad_id = ? LIMIT 1',
+          [src.id ?? adId]
+        );
+        const lander = rows?.[0];
+        if (lander) {
+          // JSON columns may come back parsed or as a string depending on the driver.
+          const asArray = (v) => {
+            if (Array.isArray(v)) return v;
+            if (typeof v === 'string' && v.trim()) {
+              try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : null; } catch { return null; }
+            }
+            return null;
+          };
+          const outgoing = asArray(lander.out_going_url);
+          const redirects = (asArray(lander.redirect_url) || [])
+            .filter((u) => typeof u === 'string' && u.trim() && u !== 'NA')
+            .map((u) => u.trim());
+
+          adData.lander_screen_shot = mediaUrl(lander.screenshot_url) || null;
+          adData.out_going_url = outgoing && outgoing.length ? outgoing : null;
+          adData.redirect_url = redirects.length ? redirects.join('||') : null;
+        }
+      } catch (sqlErr) {
+        logger.warn('getAdDetails (chatgptads): lander lookup failed', { error: sqlErr.message });
+      }
+    }
 
     return { code: 200, data: [adData], message: 'Ad details fetched successfully' };
   } catch (err) {
@@ -226,9 +272,66 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
   }
 }
 
+// ─── 5. getChatgptOutgoings ─────────────────────────────
+
+/**
+ * Outgoing links captured on the ad's lander — the analytics modal's `outgoingLinks` event
+ * (Source / Redirect / Target URL rows in BasicInfo).
+ *
+ * chatgptads_ad_landers.out_going_url holds [{start_url, destination_url, redirect_urls[]}];
+ * reshaped to the other networks' one-row shape [{ source_url, redirect_url, final_url }],
+ * multiple URLs joined with '||' (BasicInfo splits on '||').
+ */
+async function getChatgptOutgoings(req, db, logger) {
+  const adId = readAdId(req);
+
+  if (!adId) return { code: 401, message: 'Missing parameters: chatgptads_ad_id is required' };
+  if (!db.sql) return { code: 503, message: 'SQL connection not available' };
+
+  try {
+    const rows = await db.sql.query(
+      'SELECT out_going_url FROM chatgptads_ad_landers WHERE chatgptads_ad_id = ? LIMIT 1',
+      [adId]
+    );
+
+    // JSON column may come back parsed or as a string depending on the driver.
+    let outgoing = rows?.[0]?.out_going_url;
+    if (typeof outgoing === 'string') {
+      try { outgoing = JSON.parse(outgoing); } catch { outgoing = null; }
+    }
+    if (!Array.isArray(outgoing)) outgoing = [];
+
+    const uniq = (list) => [...new Set(
+      list.filter((u) => typeof u === 'string' && u.trim() && u !== 'NA').map((u) => u.trim())
+    )];
+    const entries = outgoing.filter((o) => o && typeof o === 'object');
+    const sourceUrls = uniq(entries.map((o) => o.start_url));
+    const redirectUrls = uniq(entries.flatMap((o) => (Array.isArray(o.redirect_urls) ? o.redirect_urls : [o.redirect_urls])));
+    const finalUrls = uniq(entries.map((o) => o.destination_url));
+
+    if (!sourceUrls.length && !redirectUrls.length && !finalUrls.length) {
+      return { code: 400, data: null, message: 'No urls found' };
+    }
+
+    return {
+      code: 200,
+      message: 'Urls found',
+      data: [{
+        source_url: sourceUrls.join('||'),
+        redirect_url: redirectUrls.join('||'),
+        final_url: finalUrls.join('||'),
+      }],
+    };
+  } catch (err) {
+    logger.error('Error in getChatgptOutgoings', { error: err.message });
+    return { code: 500, message: 'Error fetching outgoing links', error: err.message };
+  }
+}
+
 module.exports = {
   getAdDetails,
   getChatgptAdCountry,
   getAdvertiserCountryData,
   getAdvertiserInsightsByDateRange,
+  getChatgptOutgoings,
 };

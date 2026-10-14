@@ -1651,7 +1651,11 @@ const isAdmob =
 // looks the ad up by its internal id (chatgptads_ad.id) — same as AdMob.
 const isChatgpt =
   normalizePlatformSlug(ad?.network || ad?.platform) === "chatgptads";
-const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id;
+// A deep-linked ad id must be a plain integer (Google ids can be negative). Without
+// this, /linkedin/44628abc loads ad 44628 — the backend's parseInt / MySQL int cast
+// drops the trailing characters. Invalid ids skip the fetch and show the 404 below.
+const invalidUrlAdId = !!ad?._fromUrl && !/^-?\d+$/.test(String(ad?.id ?? ''));
+const insightAdId = invalidUrlAdId ? null : ((isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id);
   const { insights, loading: insightsLoading, notFound: adNotFound, notFoundForId, errors: insightErrors } = useAdInsights(
     insightAdId,
     ad?.network,
@@ -1850,7 +1854,7 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
   if (!ad) return null;
 
   // Show 404 immediately when backend sends code:404 for adDetails event — don't wait for SSE stream to finish
-  if (adNotFound && notFoundForId === ad?.id) {
+  if (invalidUrlAdId || (adNotFound && notFoundForId === ad?.id)) {
     return (
       <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
         <div className="flex flex-col items-center gap-4 text-center p-8">
@@ -2558,6 +2562,11 @@ const insightAdId = (isAdmob || isChatgpt) ? (ad?.internalId ?? ad?.id) : ad?.id
   })();
   const visibleDetailRows = detailRows.filter((item) => {
     if (isAdmob) return hasDisplayableAdmobValue(item.value);
+    if (
+      isTikTok &&
+      item.label === "AD LANGUAGE" &&
+      String(item.value).trim().toLowerCase() === "unknown"
+    ) return false;
     return !(
       ["FUNNEL", "AFFILIATE", "ECOMMERCE PLATFORM", "CATEGORY", "SUB CATEGORY"].includes(item.label) &&
       item.value === "—"

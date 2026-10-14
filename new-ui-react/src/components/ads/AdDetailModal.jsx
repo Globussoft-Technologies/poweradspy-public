@@ -402,6 +402,8 @@ const AdDetailModal = ({
     // Full name (e.g. "english", "swedish", "Ido", "Twi") — just capitalize.
     return raw.charAt(0).toUpperCase() + raw.slice(1);
   })();
+  const hideUnknownTikTokLanguage =
+    aiMetaNetwork === "tiktok" && displayLanguage.toLowerCase() === "unknown";
 
   // Keep load status keyed to the media URL. Resetting a boolean in an effect
   // races cached images: the ref marks them loaded during commit, then the
@@ -1664,7 +1666,7 @@ const AdDetailModal = ({
                     </span>
                   </>
                 )}
-                {(
+                {!hideUnknownTikTokLanguage && (
                   <>
                     <span style={{ color: "var(--color-text-muted)" }}>
                       Language
@@ -1875,7 +1877,7 @@ const AdDetailModal = ({
     </>
   )}
 
-  {shouldShowDetailValue(displayLanguage) && (
+  {!hideUnknownTikTokLanguage && shouldShowDetailValue(displayLanguage) && (
     <>
       <span
         className="text-[9px] font-bold uppercase"
