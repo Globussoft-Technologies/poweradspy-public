@@ -42,7 +42,7 @@ Internal service (no auth token). One ad per request.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `ad_id` | string / number | ✅ | The ad's **public** id (same id you read from `getDescriptionDetails`). |
+| `ad_id` | string / number | ✅ | The classifier id read from `getDescriptionDetails`. For TikTok, send the numeric `sql_id` returned as `id`; the request key remains `ad_id`. |
 | `network` | string | ✅ | One of: `facebook`, `instagram`, `youtube`, `gdn`, `google`, `native`, `linkedin`, `reddit`, `quora`, `pinterest`, `tiktok`. |
 | `ai_meta` | object | ✅ | The enrichment object — see §3. |
 

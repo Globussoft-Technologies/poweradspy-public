@@ -755,6 +755,10 @@ const App = () => {
     return null;
   });
   const [analyticsNavigationContext, setAnalyticsNavigationContext] = useState(null);
+  // Carousel navigation adds Analytics URL entries; the close button must
+  // unwind those entries while ordinary browser Back can still step through them.
+  const analyticsHistoryOpenRef = useRef(false);
+  const analyticsCloseRequestedRef = useRef(false);
 
   // Bumped to tell AdGrid to dismiss its (locally-owned) AdDetailModal when a
   // parent-level navigation jumps to the Ads Library out from under it.
@@ -789,6 +793,8 @@ const App = () => {
       // so in-session back/forward still loads the insights from the right source.
       const urlNetwork = (network === 'youtube' && ad.badgeNetwork === 'gdn') ? 'youtube' : (ad.badgeNetwork || network);
       const id = ad.internalId ?? ad.adId ?? ad.id;
+      analyticsHistoryOpenRef.current = true;
+      analyticsCloseRequestedRef.current = false;
       window.history.pushState(
         { adModal: true, network, id },
         "",
@@ -809,8 +815,29 @@ const App = () => {
     setSelectedAdForAnalytics(ad);
   };
 
-  const closeAnalyticsModal = () => {
-    window.history.pushState(null, "", "/");
+  const closeAnalyticsModal = ({ preserveHistory = false } = {}) => {
+    if (preserveHistory) {
+      // Feature navigation keeps Analytics in browser history so Back can return to it.
+      window.history.pushState(null, "", "/");
+      analyticsHistoryOpenRef.current = false;
+      analyticsCloseRequestedRef.current = false;
+      setSelectedAdForAnalytics(null);
+      setAnalyticsNavigationContext(null);
+      return;
+    }
+
+    if (analyticsCloseRequestedRef.current) return;
+
+    if (analyticsHistoryOpenRef.current || window.history.state?.adModal) {
+      analyticsHistoryOpenRef.current = true;
+      analyticsCloseRequestedRef.current = true;
+      window.history.back();
+      return;
+    }
+
+    // A directly opened Analytics URL has no app-created modal entry to pop.
+    window.history.replaceState(window.history.state, "", "/");
+    analyticsHistoryOpenRef.current = false;
     setSelectedAdForAnalytics(null);
     setAnalyticsNavigationContext(null);
   };
@@ -880,7 +907,7 @@ const App = () => {
     }
     setKeywordExplorer(null);
     setAdvertiserProfile(null);
-    if (selectedAdForAnalytics) closeAnalyticsModal();
+    if (selectedAdForAnalytics) closeAnalyticsModal({ preserveHistory: true });
     dispatch(setActivePage('keywords-explorer'));
   };
   const openAdvertiserProfile = (arg) => {
@@ -909,21 +936,37 @@ const App = () => {
         "admob",
         "chatgptads",
       ];
+      const isAnalyticsPath =
+        pathParts.length === 2 &&
+        validNetworks.includes(pathParts[0].toLowerCase()) &&
+        Boolean(pathParts[1]);
 
-      // Pattern 1: /{network}/{adId}
-      if (pathParts.length === 2) {
-        const [network, adId] = pathParts;
-        if (validNetworks.includes(network.toLowerCase()) && adId) {
-          // Prefer the real network stored in history state — for YouTube DISPLAY
-          // ads the URL shows 'gdn' but insights must load from 'youtube'.
-          const realNetwork = (e.state?.network || network).toLowerCase();
-          setSelectedAdForAnalytics({
-            id: adId,
-            network: realNetwork,
-            _fromUrl: true,
-          });
+      if (analyticsCloseRequestedRef.current) {
+        if (
+          e.state?.adModal ||
+          (analyticsHistoryOpenRef.current && isAnalyticsPath)
+        ) {
+          window.history.back();
           return;
         }
+        analyticsCloseRequestedRef.current = false;
+        analyticsHistoryOpenRef.current = false;
+      }
+
+      // Pattern 1: /{network}/{adId}
+      if (isAnalyticsPath) {
+        const [network, adId] = pathParts;
+        // Prefer the real network stored in history state — for YouTube DISPLAY
+        // ads the URL shows 'gdn' but insights must load from 'youtube'.
+        const realNetwork = (e.state?.network || network).toLowerCase();
+        analyticsHistoryOpenRef.current =
+          Boolean(e.state?.adModal) || analyticsHistoryOpenRef.current;
+        setSelectedAdForAnalytics({
+          id: adId,
+          network: realNetwork,
+          _fromUrl: true,
+        });
+        return;
       }
 
       // Pattern 2: /{network}/landing/ad_id/{adId}
@@ -934,17 +977,22 @@ const App = () => {
       ) {
         const [network, , , adId] = pathParts;
         if (validNetworks.includes(network.toLowerCase()) && adId) {
+          analyticsHistoryOpenRef.current = false;
           setLandingAd({
             id: adId,
             network: network.toLowerCase(),
             _fromUrl: true,
           });
           setSelectedAdForAnalytics(null);
+          setAnalyticsNavigationContext(null);
           return;
         }
       }
+      analyticsHistoryOpenRef.current = false;
+      analyticsCloseRequestedRef.current = false;
       setLandingAd(null);
       setSelectedAdForAnalytics(null);
+      setAnalyticsNavigationContext(null);
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -3428,7 +3476,7 @@ const App = () => {
     }
     setKeywordExplorer(null);
     setAdvertiserProfile(null);
-    if (selectedAdForAnalytics) closeAnalyticsModal();
+    if (selectedAdForAnalytics) closeAnalyticsModal({ preserveHistory: true });
     setCloseDetailSignal((n) => n + 1);
     sdui.setActivePlatforms(["google"]);
     dispatch(setSpecificPlatforms(["google"]));
@@ -4178,7 +4226,7 @@ const App = () => {
         ad={hasAdAnalyticsAccess ? selectedAdForAnalytics : null}
         categoryOptions={categoryOptions}
         sduiConfig={sdui.config}
-        onClose={closeAnalyticsModal}
+        onClose={() => closeAnalyticsModal()}
         onPrev={() => {
           if (analyticsNavigation.previous) {
             openAnalyticsModal(

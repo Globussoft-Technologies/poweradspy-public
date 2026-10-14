@@ -50,6 +50,10 @@ Each row in the response gained the following fields (additive no existing field
 | `native_creative_type` | string \| null | **Native only** source creative label when available (`IMAGE` / `TEXT`) |
 | `image_url_original` | string \| null | **Native only** original scraped URL, fallback creative source |
 
+For TikTok, `id` and `cursor` are the numeric ES `sql_id` (the `tiktok_ads.id` value).
+The feed collapses legacy/current duplicate documents by `sql_id`; callers send this `id`
+back under the existing `ad_id` request key, and writes update every matching ES document.
+
 **Image URLs are now resolvable.** `ad_image` and `thumbnail` are passed through a `served()`
 helper that strips the stored NAS mount prefix (`/PowerAdspy/n2/`, `pas-dev/stream`, `pas-prod/stream`)
 and prepends the configured CDN base (`config.cdn.baseUrl` / `CDN_BASE_URL`). Already-absolute
@@ -89,7 +93,9 @@ POST of a *different* category overwrites the previous one and is immediately se
 ### 1.3 `GET /getAdCategory?platform=&ad_id=` single-ad read-back (new)
 
 Verifies one ad without paging the whole feed. Matched on the same per-platform key
-`newCatInsertion` writes to (`ad_id` for google/youtube, `<net>_ad.id` elsewhere).
+`newCatInsertion` writes to (`ad_id` for google/youtube, `sql_id` for TikTok,
+`<net>_ad.id` elsewhere). TikTok's classifier feed collapses legacy/current ES pairs by
+`sql_id`, and writes update every document in the pair.
 
 ```http
 GET /api/v1/common/getAdCategory?platform=facebook&ad_id=13011

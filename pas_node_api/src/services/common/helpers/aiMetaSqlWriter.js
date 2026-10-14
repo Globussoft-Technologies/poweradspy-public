@@ -24,13 +24,12 @@
  * category-table dual-write is skipped. All values are a fixed internal whitelist
  * (never user input), so interpolating them into SQL is injection-safe.
  *
- * `matchCol` is the `<net>_ad` column that the INCOMING public `ad_id` (the same
- * value ES matches on) actually equals, so we resolve the internal PK from it:
+ * `matchCol` is the `<net>_ad` column that the incoming classifier identifier
+ * (transported in the API's `ad_id` field) equals, so we resolve the internal PK:
  *   - Every network's `<net>_ad` table has BOTH an integer PK `id` and a separate
- *     `ad_id` varchar (the platform's external id string). In every ES index EXCEPT
- *     google, the doc's `ad_id` field === the SQL PK `id` (verified live: fb 16175,
- *     ig 50001, yt 35431 all resolve on `id`, never on the `ad_id` column), so we
- *     match on `id`.
+ *     `ad_id` varchar (the platform's external id string). Most classifier keys equal
+ *     the SQL PK (verified live: fb 16175, ig 50001, yt 35431); TikTok explicitly uses
+ *     ES `sql_id`, which is also `tiktok_ads.id`. These networks match on `id`.
  *   - google_ads_data_v2 is the one index whose ES `ad_id` is the distinct Google ad
  *     identifier (the numeric hash), which maps to the SQL `ad_id` column - so
  *     google matches on `ad_id`. This mirrors PLATFORM_CONFIG.google in the
@@ -95,7 +94,7 @@ async function resolveCategoryId(conn, categoryTable, categoryName) {
  * @param {object}  args
  * @param {object}  args.sql        the network's SQL connection wrapper (service.db.sql) - { getConnection, ... }
  * @param {string}  args.network    network slug (key of NET_SQL)
- * @param {string|number} args.adId the ad's PUBLIC ad_id (resolved here to the internal PK)
+ * @param {string|number} args.adId the classifier identifier from the API's ad_id field
  * @param {object}  args.normalized the validated ai_meta object (from validateAiMeta)
  * @param {object}  [args.logger]   optional logger ({ info, warn })
  * @returns {Promise<object>} status object - never throws. Shapes:
@@ -124,9 +123,8 @@ async function persistAiMeta({ sql, network, adId, normalized, logger }) {
   try {
     await conn.beginTransaction();
 
-    // 1) Resolve the internal PK from the public ad_id (FK target). `matchCol` is
-    //    the column the incoming id equals - the PK `id` for every network except
-    //    google (which matches its distinct `ad_id`); see NET_SQL note above.
+    // 1) Resolve the internal PK (FK target). `matchCol` is the column the incoming
+    //    classifier id equals - `id` for TikTok/most networks and `ad_id` for Google.
     const [adRows] = await conn.execute(
       `SELECT id FROM \`${cfg.adTable}\` WHERE \`${cfg.matchCol}\` = ? LIMIT 1`,
       [String(adId)],

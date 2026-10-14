@@ -172,7 +172,7 @@ describe("addCategoryController > getDescriptionDetails", () => {
   });
   it("skips SQL fallback for tiktok (no SQL creative-text table)", async () => {
     const search = vi.fn(async () => ({ hits: { hits: [{ _source: {
-      ad_id: 5, ad_type: "IMAGE",
+      sql_id: 5, video_cover: "https://cdn.example/cover.jpg",
     }}]}}));
     const sqlQuery = vi.fn(async () => []);
     serviceRegistry.getService.mockReturnValue(mkService({ esSearch: search, sql: { query: sqlQuery } }));
@@ -1606,7 +1606,7 @@ describe("addCategoryController > insertAiMeta (Option B — dedicated /ai-meta)
     svc.db.elastic.esMajor = 8;
     const res = mkRes();
 
-    await insertAiMeta({ body: { ad_id: "48979890", network: "tiktok", ai_meta: VALID_AI_META } }, res);
+    await insertAiMeta({ body: { ad_id: "87", network: "tiktok", ai_meta: VALID_AI_META } }, res);
 
     expect(res.statusCode).toBe(200);
     expect(update.mock.calls[0][0]).not.toHaveProperty("type");
@@ -1954,9 +1954,8 @@ describe("addCategoryController > SQL dual-write wiring", () => {
   });
 });
 
-// TikTok docs key on a keyword `ad_id`. Most docs carry the 19-digit TikTok id as a string
-// (above Number.MAX_SAFE_INTEGER); legacy docs carry the numeric sql_id. Lookups must match
-// the string form, and the creative is `video_cover` (see docs/erd/tiktok.md).
+// TikTok uses the SQL PK as the classifier identity. The index can contain a legacy/current
+// document pair for one sql_id, so feeds collapse the pair and writes update both documents.
 describe("addCategoryController > TikTok docs (live-shaped ES doc)", () => {
   const TT_DOC = {
     _id: "tt-doc-7337683789543505922",
@@ -1969,6 +1968,11 @@ describe("addCategoryController > TikTok docs (live-shaped ES doc)", () => {
       video_cover: "https://p16-sign.tiktokcdn.com/cover.jpeg",
       video_url: "https://v16.tiktokcdn.com/video.mp4",
     },
+  };
+  const TT_LEGACY_DOC = {
+    ...TT_DOC,
+    _id: "tt-doc-legacy-87",
+    _source: { ...TT_DOC._source, ad_id: 87 },
   };
 
   // Minimal stand-in for ES term/terms/range/exists/bool evaluation. A field the doc does
@@ -1993,21 +1997,33 @@ describe("addCategoryController > TikTok docs (live-shaped ES doc)", () => {
 
   function esOver(docs) {
     return vi.fn(async (params) => {
-      const hits = docs.filter((d) => matchesClause(d._source, params.body.query));
+      let hits = docs.filter((d) => matchesClause(d._source, params.body.query));
+      const collapseField = params.body.collapse?.field;
+      if (collapseField) {
+        const seen = new Set();
+        hits = hits.filter((hit) => {
+          const value = String(hit._source[collapseField]);
+          if (seen.has(value)) return false;
+          seen.add(value);
+          return true;
+        });
+      }
       return { hits: { hits } };
     });
   }
 
-  it("getDescriptionDetails pages TikTok ads on ad_id with the video cover as thumbnail", async () => {
-    const esSearch = esOver([TT_DOC]);
+  it("getDescriptionDetails pages and collapses TikTok ads on sql_id", async () => {
+    const esSearch = esOver([TT_DOC, TT_LEGACY_DOC]);
     serviceRegistry.getService.mockReturnValue(mkService({ esSearch }));
     const res = mkRes();
     await getDescriptionDetails({ query: { platform: "tiktok", exVal: 0, limit: 50 }, body: {} }, res);
-    expect(esSearch.mock.calls[0][0].body.sort).toEqual([{ ad_id: "asc" }]);
+    expect(esSearch.mock.calls[0][0].body.sort).toEqual([{ sql_id: "asc" }]);
+    expect(esSearch.mock.calls[0][0].body.collapse).toEqual({ field: "sql_id" });
     expect(res.statusCode).toBe(200);
     expect(res.body).toHaveLength(1);
     expect(res.body[0]).toMatchObject({
-      id: "7337683789543505922",
+      id: 87,
+      cursor: 87,
       ad_title: "Trial offer",
       ad_text: "Try it free",
       post_owner_name: "Acme",
@@ -2015,23 +2031,57 @@ describe("addCategoryController > TikTok docs (live-shaped ES doc)", () => {
     });
   });
 
-  it("insertAiMeta finds a TikTok doc by its string ad_id and writes ai_meta onto it", async () => {
+  it("insertAiMeta finds TikTok duplicate docs by sql_id and updates both", async () => {
     const update = vi.fn(async () => {});
     serviceRegistry.getService.mockImplementation((name) => (name === "tiktok"
-      ? mkService({ esSearch: esOver([TT_DOC]), esUpdate: update })
+      ? mkService({ esSearch: esOver([TT_DOC, TT_LEGACY_DOC]), esUpdate: update })
       : null));
     const res = mkRes();
-    await insertAiMeta({ body: { ad_id: "7337683789543505922", network: "tiktok", ai_meta: VALID_AI_META } }, res);
+    const aiWithCategory = { ...VALID_AI_META, category: "Retail", category_id: "1234" };
+    await insertAiMeta({ body: { ad_id: 87, network: "tiktok", ai_meta: aiWithCategory } }, res);
     expect(res.statusCode).toBe(200);
-    expect(update).toHaveBeenCalledTimes(1);
-    expect(update.mock.calls[0][0]).toMatchObject({ id: "tt-doc-7337683789543505922" });
+    const aiMetaUpdates = update.mock.calls.filter(([params]) => params.body.script);
+    const categoryUpdates = update.mock.calls.filter(([params]) => params.body.doc);
+    expect(aiMetaUpdates.map(([params]) => params.id)).toEqual(expect.arrayContaining([
+      "tt-doc-7337683789543505922",
+      "tt-doc-legacy-87",
+    ]));
+    expect(categoryUpdates.map(([params]) => params.id)).toEqual(expect.arrayContaining([
+      "tt-doc-7337683789543505922",
+      "tt-doc-legacy-87",
+    ]));
   });
 
-  it("getAdCategory reads a TikTok doc back by its string ad_id", async () => {
+  it("newCatInsertion updates both TikTok docs that share a sql_id", async () => {
+    const tiktokUpdate = vi.fn(async () => {});
+    const tiktokService = mkService({
+      esSearch: esOver([TT_DOC, TT_LEGACY_DOC]),
+      esUpdate: tiktokUpdate,
+    });
+    const gdnService = mkService({
+      esSearch: vi.fn(async () => ({ hits: { hits: [] } })),
+      esIndex: vi.fn(async () => ({})),
+      esUpdate: vi.fn(async () => ({})),
+    });
+    serviceRegistry.getService.mockImplementation((name) => (
+      name === "tiktok" ? tiktokService : (name === "gdn" ? gdnService : null)
+    ));
+    const res = mkRes();
+    await newCatInsertion({
+      body: { platform: "tiktok", category: "Retail", category_id: "1234", ad_id: 87 },
+    }, res);
+    expect(res.statusCode).toBe(200);
+    expect(tiktokUpdate.mock.calls.map(([params]) => params.id)).toEqual(expect.arrayContaining([
+      "tt-doc-7337683789543505922",
+      "tt-doc-legacy-87",
+    ]));
+  });
+
+  it("getAdCategory reads a TikTok doc back by sql_id", async () => {
     serviceRegistry.getService.mockReturnValue(mkService({ esSearch: esOver([TT_DOC]) }));
     const res = mkRes();
-    await getAdCategory({ query: { platform: "tiktok", ad_id: "7337683789543505922" } }, res);
+    await getAdCategory({ query: { platform: "tiktok", ad_id: "87" } }, res);
     expect(res.statusCode).toBe(200);
-    expect(res.body.ad_id).toBe("7337683789543505922");
+    expect(res.body.ad_id).toBe("87");
   });
 });

@@ -168,15 +168,20 @@ describe("aiMetaSqlWriter > persistAiMeta", () => {
   });
 
   it("resolves the PK via `id` for most networks but `ad_id` for google (matchCol)", async () => {
-    // Non-google: the incoming public id equals the SQL PK `id` (ES `ad_id` field
-    // === SQL `id` everywhere except google). Google's incoming id is its distinct
-    // `ad_id` hash → matches the `ad_id` column. Regression guard for the
-    // ad_not_found-on-every-fb/ig/yt-ad bug.
+    // Most classifier identities equal the SQL PK; TikTok passes ES `sql_id` through
+    // the API's ad_id field. Google alone passes its distinct external ad_id hash.
     const fbConn = mkConn({ adRow: [{ id: 42 }] });
     await persistAiMeta({ sql: mkSql(fbConn), network: "facebook", adId: "16175", normalized: NORMALIZED });
     const fbLookup = fbConn.calls.find((c) => c.sql.includes("FROM `facebook_ad`"));
     expect(fbLookup.sql).toContain("WHERE `id`");
     expect(NET_SQL.facebook.matchCol).toBe("id");
+
+    const ttConn = mkConn({ adRow: [{ id: 87 }] });
+    await persistAiMeta({ sql: mkSql(ttConn), network: "tiktok", adId: "87", normalized: NORMALIZED });
+    const ttLookup = ttConn.calls.find((c) => c.sql.includes("FROM `tiktok_ads`"));
+    expect(ttLookup.sql).toContain("WHERE `id`");
+    expect(ttLookup.params).toEqual(["87"]);
+    expect(NET_SQL.tiktok.matchCol).toBe("id");
 
     const gConn = mkConn({ adRow: [{ id: 11 }] });
     await persistAiMeta({ sql: mkSql(gConn), network: "google", adId: "-882", normalized: NORMALIZED });

@@ -245,17 +245,17 @@ function recordCategorySyncError(status, phase, err) {
 }
 
 /**
- * Exact-ID ad lookup shared by newCatInsertion (to update) and getAdCategory (to read
- * back). Some platforms index the id as a long (facebook_ad.id), others as a keyword
- * (google.ad_id)  so we try both the string and numeric term. Returns the first ES hit
- * (with `_source`) or null.
+ * Exact-ID ad lookup shared by the AI-meta write/read paths. Some platforms index the
+ * id as a long (facebook_ad.id), others as a keyword (google.ad_id), so we try both the
+ * string and numeric term. TikTok can have two ES docs for one SQL ad, therefore write
+ * paths use every hit while read paths use the first one.
  *
  * @param {object} esForPlat  the platform's ES client (service.db.elastic)
  * @param {string} esIndex    resolved index name
  * @param {string} idField    the ad's primary-key field for this platform
  * @param {string|number} adId
  */
-async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
+async function findAdDocs(esForPlat, esIndex, idField, adId, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
   const adIdStr      = String(adId);
   const adIdNum      = Number(adId);
   const adIdNumValid = !Number.isNaN(adIdNum) && String(adIdNum) === adIdStr;
@@ -264,9 +264,18 @@ async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = A
 
   const adSearch = await esForPlat.search({
     index: esIndex,
-    body:  { query: { bool: { should: shouldClauses, minimum_should_match: 1 } } },
+    body:  {
+      // shortcut: fetch at most 100 duplicates; use update-by-query if one id can exceed this.
+      // Live TikTok data currently has at most a legacy/current pair per sql_id.
+      size: 100,
+      query: { bool: { should: shouldClauses, minimum_should_match: 1 } },
+    },
   }, getAiMetaTransportOptions(requestTimeoutMs));
-  const adHits = (adSearch.hits || adSearch.body?.hits)?.hits || [];
+  return (adSearch.hits || adSearch.body?.hits)?.hits || [];
+}
+
+async function findAdDoc(esForPlat, esIndex, idField, adId, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
+  const adHits = await findAdDocs(esForPlat, esIndex, idField, adId, requestTimeoutMs);
   return adHits[0] || null;
 }
 
@@ -305,20 +314,22 @@ async function findReadBackAdDoc(
  * older payload shape are dropped. v1.4 removed the `status` field, so there is no
  * longer a partial/status-only path  every payload is a completed enrichment.
  */
-async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
+async function writeAiMeta(esForPlat, esIndex, docIds, normalized, platform, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
   const aiMetaField = getAiMetaEsField(platform);
-  await esForPlat.update(withEsType(esForPlat, {
-    index: esIndex,
-    id:    docId,
-    body: {
-      script: {
-        source: `ctx._source.${aiMetaField} = params.aiMeta;`,
-        lang:   'painless',
-        params: { aiMeta: normalized },
+  await Promise.all(docIds.map(docId => (
+    esForPlat.update(withEsType(esForPlat, {
+      index: esIndex,
+      id:    docId,
+      body: {
+        script: {
+          source: `ctx._source.${aiMetaField} = params.aiMeta;`,
+          lang:   'painless',
+          params: { aiMeta: normalized },
+        },
       },
-    },
-    refresh: getAiMetaRefreshPolicy(platform),
-  }), getAiMetaTransportOptions(requestTimeoutMs));
+      refresh: getAiMetaRefreshPolicy(platform),
+    }), getAiMetaTransportOptions(requestTimeoutMs))
+  )));
 }
 
 /**
@@ -331,21 +342,23 @@ async function writeAiMeta(esForPlat, esIndex, docId, normalized, platform, requ
  *
  * @param {object} cat  { category, subCategory, categoryId, subCategoryId }
  */
-async function mirrorCategoryToEs(esForPlat, esIndex, docId, platform, cat, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
-  await esForPlat.update(withEsType(esForPlat, {
-    index: esIndex,
-    id:    docId,
-    body: {
-      doc: {
-        category_id:                 cat.categoryId ?? null,
-        [`${platform}.category`]:    cat.category,
-        subCategory_id:              cat.subCategoryId ?? null,
-        [`${platform}.subCategory`]: cat.subCategory ?? null,
-        confidence_score:            0,
+async function mirrorCategoryToEs(esForPlat, esIndex, docIds, platform, cat, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS) {
+  await Promise.all(docIds.map(docId => (
+    esForPlat.update(withEsType(esForPlat, {
+      index: esIndex,
+      id:    docId,
+      body: {
+        doc: {
+          category_id:                 cat.categoryId ?? null,
+          [`${platform}.category`]:    cat.category,
+          subCategory_id:              cat.subCategoryId ?? null,
+          [`${platform}.subCategory`]: cat.subCategory ?? null,
+          confidence_score:            0,
+        },
       },
-    },
-    refresh: getAiMetaRefreshPolicy(platform),
-  }), getAiMetaTransportOptions(requestTimeoutMs));
+      refresh: getAiMetaRefreshPolicy(platform),
+    }), getAiMetaTransportOptions(requestTimeoutMs))
+  )));
 }
 
 /**
@@ -534,7 +547,7 @@ async function syncMasterCategory(esClient, { category, catId, subCategory, subC
  *
  * @returns {Promise<{taxonomy, mirrored, taxonomy_error?, mirror_error?}|null>}
  */
-async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform, normalized, log, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS }) {
+async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docIds, platform, normalized, log, requestTimeoutMs = AI_META_OPERATION_TIMEOUT_MS }) {
   if (!normalized || !normalized.category || !normalized.category_id) return null;
   const status = { taxonomy: null, mirrored: false, retryable: false };
 
@@ -564,7 +577,7 @@ async function applyAiMetaCategoryToEs({ gdnEs, platEs, esIndex, docId, platform
   }
 
   try {
-    await mirrorCategoryToEs(platEs, esIndex, docId, platform, {
+    await mirrorCategoryToEs(platEs, esIndex, docIds, platform, {
       category:      normalized.category,
       subCategory:   normalized.sub_category,
       categoryId:    normalized.category_id,
@@ -773,7 +786,10 @@ const PLATFORM_CONFIG = {
   tiktok: {
     service:      'tiktok',
     index:        resolveIndex('tiktok'),
-    idField:      'ad_id',
+    // `sql_id` is the stable integer identity shared by ES, SQL, the UI, and the
+    // classifier. Some ads have legacy/current ES pairs, so collapse the feed.
+    idField:      'sql_id',
+    collapseDescription: true,
     textField:    'ad_text',
     titleField:   'ad_title',
     ownerField:   'post_owner',
@@ -985,9 +1001,9 @@ function addNativeCreativeAvailability(rows, platform) {
  * a normalised array used for AI category mapping.
  *
  * Each row includes a `cursor` field that is the stable, monotonic value to pass
- * as the next `exVal`. For most platforms `cursor === id`. For Google the index
- * has a distinct internal PK (`id`) and a public `ad_id`; `cursor` is the internal
- * `id` so pagination is stable, while `ad_id` is returned separately for ad lookup.
+ * as the next `exVal`. For most platforms `cursor === id`. Google uses its internal
+ * `id` cursor and returns public `ad_id` separately. TikTok uses numeric `sql_id` and
+ * collapses legacy/current duplicate documents so every SQL ad appears once.
  *
  * Query/body params: platform (required), exVal (default 0), limit (default 150)
  */
@@ -1053,6 +1069,7 @@ async function getDescriptionDetails(req, res) {
           size: limit,
           _source: descriptionSourceIncludes(cfg, platform, pageField),
           sort: [{ [pageField]: 'asc' }],
+          ...(cfg.collapseDescription ? { collapse: { field: pageField } } : {}),
           query: { bool: boolQuery },
         },
       });
@@ -1545,20 +1562,27 @@ async function newCatInsertion(req, res) {
     // not be located ('not_found').
     let adCategoryStatus = 'not_found';
     let adPreviousCategory = null;
-    let adDocId = null;   // captured for the optional ai_meta write below
+    let adDocIds = [];   // captured for the optional ai_meta write below
     try {
       gdnService.log?.info(`[newCatInsertion] searching index="${esIndex}" idField="${platCfg.idField}" for ad_id=${ad_id} platform=${platform}`);
 
-      const adHit = await findAdDoc(esForPlat, esIndex, platCfg.idField, ad_id);
-      if (adHit) {
-        adDocId = adHit._id;
-        // Compare against the ad's current category to classify insert vs update vs no-op.
-        const prevSrc = adHit._source || {};
-        const prevCat = prevSrc[categoryField]    ?? null;
-        const prevSub = prevSrc[subCategoryField] ?? null;
-        adPreviousCategory = prevCat;
-        const sameValue = prevCat === category && (prevSub ?? null) === (subCategory ?? null);
-        adCategoryStatus = prevCat == null ? 'inserted' : (sameValue ? 'unchanged' : 'updated');
+      const adHits = await findAdDocs(esForPlat, esIndex, platCfg.idField, ad_id);
+      if (adHits.length) {
+        adDocIds = adHits.map(hit => hit._id);
+        // TikTok duplicate pairs must agree before a write can be called unchanged.
+        const previousValues = adHits.map((hit) => {
+          const src = hit._source || {};
+          return {
+            category:    src[categoryField] ?? null,
+            subCategory: src[subCategoryField] ?? null,
+          };
+        });
+        adPreviousCategory = previousValues.find(value => value.category != null)?.category ?? null;
+        const allMissing = previousValues.every(value => value.category == null);
+        const allSame = previousValues.every(value => (
+          value.category === category && value.subCategory === (subCategory ?? null)
+        ));
+        adCategoryStatus = allMissing ? 'inserted' : (allSame ? 'unchanged' : 'updated');
 
         const updateDoc = {
           category_id,
@@ -1572,12 +1596,14 @@ async function newCatInsertion(req, res) {
         // TikTok's ES 8.1 is typeless and would reject an explicit type.
         // A doc-merge update overwrites any prior category, so re-POSTing a
         // different category replaces the old one (Issue 1 acceptance criterion).
-        await esForPlat.update(withEsType(esForPlat, {
-          index: esIndex,
-          id:    adHit._id,
-          body:  { doc: updateDoc },
-          refresh: 'wait_for',
-        }));
+        await Promise.all(adDocIds.map(docId => (
+          esForPlat.update(withEsType(esForPlat, {
+            index: esIndex,
+            id:    docId,
+            body:  { doc: updateDoc },
+            refresh: 'wait_for',
+          }))
+        )));
         adUpdated = true;
         gdnService.log?.info(`[newCatInsertion] ${esIndex} ${adCategoryStatus} for ad_id=${ad_id}`);
       } else {
@@ -1601,11 +1627,11 @@ async function newCatInsertion(req, res) {
       const { errors: aiErrors, normalized: aiNormalized, storedFields } = validateAiMeta(aiMeta);
       if (aiErrors.length > 0) {
         aiMetaResult = { ai_meta_status: 'validation_error', ai_meta_errors: aiErrors };
-      } else if (!adDocId) {
+      } else if (!adDocIds.length) {
         aiMetaResult = { ai_meta_status: 'ad_not_found' };
       } else {
         try {
-          await writeAiMeta(esForPlat, esIndex, adDocId, aiNormalized, platform);
+          await writeAiMeta(esForPlat, esIndex, adDocIds, aiNormalized, platform);
           aiMetaResult = { ai_meta_status: 'stored', ai_meta_stored_fields: storedFields };
           gdnService.log?.info(`[newCatInsertion] ai_meta stored for ad_id=${ad_id}`);
 
@@ -1810,13 +1836,13 @@ async function insertAiMeta(req, res) {
 
   try {
     const esSearchStartedAt = Date.now();
-    let adHit;
+    let adHits;
     try {
-      adHit = await findAdDoc(es, esIndex, cfg.idField, adId);
+      adHits = await findAdDocs(es, esIndex, cfg.idField, adId);
     } finally {
       timings.es_search_ms = Date.now() - esSearchStartedAt;
     }
-    if (!adHit) {
+    if (!adHits.length) {
       return finish(404, {
         success: false,
         ad_id:   adId,
@@ -1825,8 +1851,9 @@ async function insertAiMeta(req, res) {
     }
 
     const esWriteStartedAt = Date.now();
+    const adDocIds = adHits.map(hit => hit._id);
     try {
-      await writeAiMeta(es, esIndex, adHit._id, normalized, platform);
+      await writeAiMeta(es, esIndex, adDocIds, normalized, platform);
     } finally {
       // Preserve the failed attempt duration in timing headers as well.
       timings.es_write_ms = Date.now() - esWriteStartedAt;
@@ -1840,7 +1867,7 @@ async function insertAiMeta(req, res) {
       gdnEs:      serviceRegistry.getService('gdn')?.db?.elastic,
       platEs:     es,
       esIndex,
-      docId:      adHit._id,
+      docIds:     adDocIds,
       platform,
       normalized,
       log:        service.log,

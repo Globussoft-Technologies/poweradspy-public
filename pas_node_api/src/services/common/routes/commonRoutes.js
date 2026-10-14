@@ -430,6 +430,7 @@ router.post(
 // GET /api/v1/common/getDescriptionDetails?platform=facebook&exVal=0&limit=150
 // Unified replacement for the per-platform Laravel getDescriptionDetails endpoints.
 // Returns ad text/title/image data used for AI category mapping. No auth — internal only.
+// TikTok returns/cursors on numeric sql_id so DS can safely send it back as ad_id.
 router.get(
   '/getDescriptionDetails',
   asyncHandler(getDescriptionDetails)
@@ -462,8 +463,9 @@ router.get(
 // POST /api/v1/common/ai-meta
 // Dedicated AI-Meta enrichment write path (AI_META_API_PAYLOAD_SPEC.md, Option B).
 // Validates the ai_meta payload and writes it onto the runtime AI-Meta ES field
-// (`ai` normally, `ai_meta` only for production facebook). Decoupled from category
-// classification. No auth — internal only.
+// (`ai` normally, `ai_meta` only for production facebook), including category mirroring
+// when category fields are present. For TikTok, ad_id carries the feed's numeric sql_id.
+// No auth — internal only.
 router.post(
   '/ai-meta',
   asyncHandler(insertAiMeta)

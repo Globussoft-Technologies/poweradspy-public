@@ -11969,7 +11969,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [facebook, instagram, youtube, gdn, google, native, linkedin, quora, reddit, pinterest]
+            enum: [facebook, instagram, youtube, gdn, google, native, linkedin, quora, reddit, pinterest, tiktok]
           example: facebook
         - in: query
           name: exVal
@@ -12000,7 +12000,7 @@ paths:
                     id:
                       type: number
                       example: 123456
-                      description: Platform-native ad identifier. For Google this is the internal PK (`id`), not the public `ad_id`.
+                      description: Classifier identifier. Google returns its internal `id`; TikTok returns numeric `sql_id`; other platforms return their normal ad key.
                     cursor:
                       type: number
                       example: 123456
@@ -12009,7 +12009,7 @@ paths:
                       type: string
                       nullable: true
                       example: "abc123"
-                      description: Public platform ad identifier. Present only for Google because its internal PK (`id`) differs from `ad_id`; on all other platforms `id` already is the public ad id.
+                      description: Public platform ad identifier. Present only for Google because its feed `id` is the internal PK.
                     ad_text:
                       type: string
                       example: "Buy now and save 50%!"
@@ -12210,6 +12210,7 @@ paths:
                 ad_id:
                   type: string
                   example: "123456"
+                  description: Use the feed `id`; for TikTok this is numeric `sql_id`, transported under the existing ad_id API key.
                 sub_category:
                   type: string
                   minLength: 5
@@ -12336,7 +12337,7 @@ paths:
         Single-ad read-back so the classifier can verify a prior newCatInsertion write
         attached, without paging the whole getDescriptionDetails feed. Matched on the same
         per-platform primary key newCatInsertion updates (`ad_id` for google/youtube,
-        `<net>_ad.id` elsewhere). Internal endpoint — no auth required.
+        `sql_id` for TikTok, `<net>_ad.id` elsewhere). Internal endpoint — no auth required.
       parameters:
         - in: query
           name: platform
@@ -12351,6 +12352,7 @@ paths:
           schema:
             type: string
           example: "13011"
+          description: For TikTok, use the numeric `sql_id` returned as `id` by getDescriptionDetails.
       responses:
         '200':
           description: The ad's currently-stored category data
@@ -12384,9 +12386,9 @@ paths:
         - Category (Internal)
       summary: Write AI-Meta enrichment labels onto an ad (dedicated endpoint, Option B)
       description: |
-        Standalone, strict AI-Meta write path (AI_META_API_PAYLOAD_SPEC.md v1.5). Validates the
+        Standalone, strict AI-Meta write path (AI_META_API_PAYLOAD_SPEC.md v1.6). Validates the
         payload and writes it onto the ad's AI-Meta field (`ai` normally, `ai_meta` for production
-        facebook). Decoupled from category classification — it never touches `${platform}.category`.
+        facebook). When ai_meta contains category fields, it also mirrors them onto the ad.
         The whole stored AI-Meta object is REPLACED on every write (re-sending overwrites prior labels).
         Internal endpoint — no auth required.
       requestBody:
@@ -12399,7 +12401,7 @@ paths:
               properties:
                 ad_id:
                   type: string
-                  description: Must match the ad id from the GET feed.
+                  description: Must match the `id` from the GET feed; for TikTok this value is numeric `sql_id`.
                   example: "48979890"
                 network:
                   type: string
