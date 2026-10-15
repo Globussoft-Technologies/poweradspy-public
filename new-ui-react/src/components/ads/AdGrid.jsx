@@ -27,6 +27,7 @@ import {
   hasActiveAiFilters,
 } from "../../utils/aiQuickFilterPresets";
 import { trackAdAction } from "../../utils/googleAnalytics";
+import { exportAdsToExcel } from "../../services/adExcel";
 
 // Env kill-switch for the "Total Ads: X" count shown next to the filter chips
 // on every search. Set VITE_SHOW_TOTAL_ADS_COUNT=false to hide it; any other
@@ -915,6 +916,52 @@ const AdGrid = ({
     URL.revokeObjectURL(url);
   };
 
+  const exportAdsToExcelWithImages = async () => {
+    if (!ads || ads.length === 0) return;
+    if (guest?.isRestricted || guest?.isPublicLanding) {
+      guest?.showGuestWarning?.("Please login to export ads");
+      return;
+    }
+    setExcelExportProgress({ done: 0, total: 0 });
+    try {
+      let exportAds = ads;
+      if (onExportAll) {
+        const fetched = await onExportAll();
+        if (fetched && fetched.length > 0) exportAds = fetched;
+      }
+      const limitedExportAds = exportAds.slice(0, 100);
+      setExcelExportProgress({ done: 0, total: limitedExportAds.length });
+
+      const targetKeyword =
+        filterValues?.keyword ||
+        filterValues?.search ||
+        filterValues?.q ||
+        "";
+      const rawCountry =
+        filterValues?.country ||
+        filterValues?.countries ||
+        filterValues?.geo ||
+        "";
+      const countries = Array.isArray(rawCountry)
+        ? rawCountry.join(", ")
+        : rawCountry;
+      const platform = isAllActive
+        ? "all"
+        : (specificPlatforms[0] || activePlatforms[0] || "ads").toLowerCase();
+
+      await exportAdsToExcel(limitedExportAds, {
+        targetKeyword,
+        countries,
+        platform,
+        onProgress: (done, total) => setExcelExportProgress({ done, total }),
+      });
+    } catch (err) {
+      console.error("Excel export failed:", err);
+    } finally {
+      setExcelExportProgress(null);
+    }
+  };
+
   // Slugs whose CSS-capitalized form doesn't read as the network's name.
   const PLATFORM_DISPLAY_NAMES = { chatgptads: "ChatGPT" };
   const activePlatformLabel =
@@ -946,6 +993,8 @@ const AdGrid = ({
 
   const { t } = useTranslation();
   const [exportLoading, setExportLoading] = useState(false);
+  // null when idle; { done, total } while the Excel-with-images export runs.
+  const [excelExportProgress, setExcelExportProgress] = useState(null);
 
   // Detail modal state
   const [selectedAd, setSelectedAd] = useState(null);
@@ -1539,13 +1588,19 @@ const AdGrid = ({
                 : "max-h-[100px] opacity-100 visible"
             }`}>
               <button
-                onClick={exportAdsToCSV}
-                disabled={!ads || ads.length === 0 || exportLoading}
-                title="Export first 100 ads as CSV"
+                onClick={exportAdsToExcelWithImages}
+                disabled={!ads || ads.length === 0 || !!excelExportProgress}
+                title="Export first 100 ads to Excel with ad images"
                 className="notranslate flex items-center gap-1.5 px-3 py-1.5 text-xs border border-white/10 2xl:text-[14px] bg-theme-card font-bold whitespace-nowrap transition-colors rounded-lg text-theme-text hover:text-[#6b99ff] disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                {exportLoading ? <RefreshCw size={13} className="animate-spin" /> : <FileDown size={13} />}
-                <span>{exportLoading ? "..." : "Export_ads"}</span>
+                {excelExportProgress ? <RefreshCw size={13} className="animate-spin" /> : <FileDown size={13} />}
+                <span>
+                  {excelExportProgress
+                    ? excelExportProgress.total
+                      ? `Fetching images… ${excelExportProgress.done}/${excelExportProgress.total}`
+                      : "..."
+                    : "Export_ads"}
+                </span>
               </button>
             </div>
           </div>
