@@ -2041,6 +2041,22 @@ function toActivityLabels(val, labels) {
   return labels[String(val)] ?? val;
 }
 
+// Language code → name for the activity log. The SDUI config is narrowed to the
+// selected platform, so on a tab without the Language section (e.g. Google) its
+// labels are missing — fall back to the browser's ISO names (es → Spanish).
+let languageDisplayNames;
+function toActivityLanguage(code, labels) {
+  const key = String(code);
+  if (labels?.[key]) return labels[key];
+  try {
+    languageDisplayNames ??= new Intl.DisplayNames(['en'], { type: 'language' });
+    const name = languageDisplayNames.of(key);
+    return name && name !== key ? name : code;
+  } catch {
+    return code;
+  }
+}
+
 // Range slider value → "min-max" for the activity log. Accepts [min, max] or
 // { min, max }; anything else (incl. 'NA') passes through.
 function toActivityRange(val) {
@@ -2081,10 +2097,10 @@ async function trackUserActivity(payload, meta, info = {}) {
   const isAll = payload.isAllTab === true || networkArr[0] === 'all';
   const { total: metaTotal, present: metaTotalPresent } = sumRequestedTotal(meta?.total, networkArr, isAll);
   const adsReturned = Number(info.adsReturned) || 0;
-  // Backend totals can under-report (per-network timeout, a count aggregation
-  // returning 0 while ES still has hits, missing meta) — if ads were returned
-  // the count must never be below what the user actually sees.
-  const total = Math.max(metaTotal, adsReturned);
+  // The logged ad count is always the search response's meta.total for the
+  // selected platforms (every platform). adsReturned only feeds ads_count_reason,
+  // which flags a total of 0 / missing while ads were still returned.
+  const total = metaTotal;
   const networkErrors = Array.isArray(payload.error_message) ? payload.error_message : [];
   let adsCountReason;
   if (info.failureReason)                          adsCountReason = info.failureReason;
@@ -2163,6 +2179,16 @@ async function trackUserActivity(payload, meta, info = {}) {
     popularity:           rangeToStr(payload.popularity),
     adBudget:             payload.adBudget             ?? 'NA',
     ctr:                  rangeToStr(payload.ctr),
+    // Sent for every platform so a filter applied on any tab is logged (the
+    // YouTube / All / TikTok blocks below still override with their own values).
+    views_sort:           payload.views_sort           ?? 'NA',
+    views:                rangeToStr(payload.view),
+    view:                 rangeToStr(payload.view),
+    budget:               payload.budget && payload.budget !== 'NA' ? payload.budget : 'NA',
+    nativeNetwork:        payload.nativeNetwork        ?? 'NA',
+    image_celebrity:      payload.image_celebrity      ?? 'NA',
+    image_logo:           payload.image_logo           ?? 'NA',
+    image_object:         payload.image_object         ?? 'NA',
     html_content:         payload.html_content         ?? 'NA',
     verified:             payload.verified             ?? 'NA',
     meta_ads_lib_filter:  (payload.platform === 15 || Array.isArray(payload.platform_positions)) ? 'true' : 'NA',
@@ -2533,6 +2559,22 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
   // AI search tier probes (_aiSearchExecution.probe) are not logged: only the
   // final committed search, which loads the results, logs one record per prompt.
   const shouldTrackActivity = (!filters.skip || filters.skip === 0) && aiExecution?.probe !== true;
+  // Range filters the search drops for networks that don't support them (e.g.
+  // Likes with Transparency Ads on → google only) — still log the user's pick.
+  const pickedRange = (searchVal, ...keys) => {
+    if (searchVal !== undefined && searchVal !== null && searchVal !== 'NA') return searchVal;
+    for (const k of keys) {
+      const val = filters[k];
+      if (Array.isArray(val) ? val.length > 0 : (val !== undefined && val !== null && val !== '' && val !== 'NA')) return val;
+    }
+    return searchVal;
+  };
+  // buildSearchPayload auto-sorts by the last-moved range slider when the sort
+  // is on its default — that sets e.g. shares_sort without the user picking a
+  // sort. Log a metric sort flag only when the user's sort choice names it.
+  const chosenSort = String(filters.sortBy || filters.sorting || '').toLowerCase();
+  const chosenSortFlag = (flag, ...words) =>
+    (flag && flag !== 'NA' && words.some((w) => chosenSort.includes(w)) ? flag : 'NA');
   const activityPayload = (errorMessage) => ({
     ...payload,
     // AI filters / "AI analysed only" drop networks without AI-Meta (AdMob,
@@ -2583,12 +2625,15 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
                                 return toActivityLabels(payload.source, filters.filterOptionLabels?.source_filter);
                               })(),
     // AdMob "Sub Network" (GDN, Meta Audience Network, …) — stored as filter.sub_network.
-    sub_network:              toActivityLabels(payload.sub_network ?? 'NA', {
+    // The search sends it only when AdMob is selected — on another tab (e.g.
+    // Facebook) log the user's pick from the filters instead.
+    sub_network:              toActivityLabels(pickedRange(payload.sub_network ?? 'NA', 'admob_network_filter', 'sub_network_filter', 'sub_network', 'subNetwork') ?? 'NA', {
                                 ...filters.filterOptionLabels?.admob_network_filter,
                                 ...filters.filterOptionLabels?.sub_network_filter,
                               }),
-    // AdMob "Source App" — stored as filter.source_app.
-    source_app:               toActivityLabels(payload.source_app ?? 'NA', {
+    // AdMob "Source App" — stored as filter.source_app. Same AdMob-only search
+    // gating as sub_network, so fall back to the user's pick.
+    source_app:               toActivityLabels(pickedRange(payload.source_app ?? 'NA', 'admob_source_app_filter', 'source_app_filter', 'source_app', 'sourceApp') ?? 'NA', {
                                 ...filters.filterOptionLabels?.admob_source_app_filter,
                                 ...filters.filterOptionLabels?.source_app_filter,
                               }),
@@ -2602,12 +2647,29 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
                                 : (payload.subCategory && payload.subCategory !== 'NA'
                                     ? (filters.categoryLabels?.[payload.subCategory] ?? payload.subCategory)
                                     : payload.subCategory),
+    likes:                    pickedRange(payload.likes,       'likes', 'like', 'likes_range', 'engagement_likes'),
+    comments:                 pickedRange(payload.comments,    'comments', 'comment', 'comments_range', 'engagement_comments'),
+    impressions:              pickedRange(payload.impressions, 'impressions', 'impression', 'impressions_range', 'engagement_impressions'),
+    popularity:               pickedRange(payload.popularity,  'popularity', 'popularity_score', 'popularity_range'),
+    adBudget:                 pickedRange(payload.adBudget,    'adBudget', 'ad_budget', 'avg_ad_budget'),
+    // Native-only / AdMob-only in the search request — still log the user's pick.
+    nativeNetwork:            pickedRange(payload.nativeNetwork, 'native_network_filter', 'nativeNetwork', 'native_network'),
+    leadScoreRange:           pickedRange(payload.leadScoreRange,       'leadScoreRange', 'admob_lead_score_range'),
+    occurrenceCountRange:     pickedRange(payload.occurrenceCountRange, 'occurrenceCountRange', 'admob_occurrence_count_range'),
+    activeDaysRange:          pickedRange(payload.activeDaysRange,      'activeDaysRange', 'admob_active_days_range'),
+    likes_sort:               chosenSortFlag(payload.likes_sort,      'like', 'engagement'),
+    comments_sort:            chosenSortFlag(payload.comments_sort,   'comment'),
+    shares_sort:              chosenSortFlag(payload.shares_sort,     'share'),
+    impression_sort:          chosenSortFlag(payload.impression_sort, 'impression'),
+    popularity_sort:          chosenSortFlag(payload.popularity_sort, 'popular'),
+    views_sort:               chosenSortFlag(payload.views_sort,      'view'),
+    adBudget_sort:            chosenSortFlag(payload.adBudget_sort,   'budget'),
     // Languages are searched by code (en); the log stores the name (English).
     // A code with no SDUI option is kept as-is.
     lang:                     Array.isArray(payload.lang)
-                                ? payload.lang.map((code) => filters.languageLabels?.[code] ?? code)
+                                ? payload.lang.map((code) => toActivityLanguage(code, filters.languageLabels))
                                 : (payload.lang && payload.lang !== 'NA'
-                                    ? (filters.languageLabels?.[payload.lang] ?? payload.lang)
+                                    ? toActivityLanguage(payload.lang, filters.languageLabels)
                                     : payload.lang),
     // AI colors are searched by hex (#E03131); the log stores the name (Red).
     // A hex outside the fixed palette is kept as-is.
@@ -2845,15 +2907,23 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
 
   // Fire-and-forget user activity — only on fresh search (skip=0), not scroll pagination
   if (shouldTrackActivity) {
-    trackUserActivity(
-      activityPayload(
-        (json.errors && typeof json.errors === 'object' && Object.keys(json.errors).length)
-          ? Object.entries(json.errors).map(([network, message]) => ({ network, message: String(message) }))
-          : 'NA',
-      ),
-      sanitizedMeta,
-      { adsReturned: sortedAds.length, signal },
+    const loggedActivity = activityPayload(
+      (json.errors && typeof json.errors === 'object' && Object.keys(json.errors).length)
+        ? Object.entries(json.errors).map(([network, message]) => ({ network, message: String(message) }))
+        : 'NA',
     );
+    // The log is for the tabs the user picked, which can differ from the
+    // networks actually searched (e.g. Meta Ads Library on Google + YouTube runs
+    // a Facebook + Instagram search only for the "We have ads in…" banner).
+    // Count only returned ads from the logged networks, so ads from other
+    // networks never inflate the logged ad count.
+    const loggedNetworks = (Array.isArray(loggedActivity.network) ? loggedActivity.network : [])
+      .map((n) => String(n).toLowerCase());
+    const countAllAds = loggedActivity.isAllTab || loggedNetworks.length === 0 || loggedNetworks.includes('all');
+    const adsReturned = countAllAds
+      ? sortedAds.length
+      : sortedAds.filter((ad) => !ad.network || loggedNetworks.includes(String(ad.network).toLowerCase())).length;
+    trackUserActivity(loggedActivity, sanitizedMeta, { adsReturned, signal });
   }
 
   return {

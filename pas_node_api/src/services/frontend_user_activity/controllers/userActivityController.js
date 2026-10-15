@@ -62,6 +62,12 @@ function toBoolStr(val) {
   return (val === 1 || val === '1' || val === true || val === 'true') ? 'true' : 'NA';
 }
 
+// First value that is actually set (not undefined / null / '' / 'NA'), else 'NA'.
+function firstSet(...vals) {
+  const hit = vals.find(v => v !== undefined && v !== null && v !== '' && v !== 'NA');
+  return hit === undefined ? 'NA' : hit;
+}
+
 // The frontend sends this over a urlencoded form body, so an array like
 // [{"network":"tiktok","message":"..."}] arrives here JSON-stringified into
 // a plain string. Parse it back so it's indexed as real JSON, not escaped
@@ -213,11 +219,9 @@ function buildGetAdsInsertData(data, network) {
   base['dashboard.ai_prompt'] = aiPrompt && aiPrompt !== 'NA' ? aiPrompt : 'NA';
   base['dashboard.ai_search'] = aiPrompt && aiPrompt !== 'NA' ? 'true' : 'NA';
   base['filter.sub_network'] = data.sub_network;
-  // Ad Sub Position (TOP / BOTTOM) for every network — the Google and All
-  // branches below set the same field from the same value.
+  // Ad Sub Position (TOP / BOTTOM) for every network.
   base['filter.ad_subPositions'] = toTitleCase(data.ad_sub_position);
-  // Image Size ('1080*159,1080*167' → array) for every network — the GDN and
-  // All branches below set the same field the same way.
+  // Image Size ('1080*159,1080*167' → array) for every network.
   base['filter.image_size'] = data.size && data.size !== 'NA'
     ? (typeof data.size === 'string' ? data.size.split(',').map(s => s.trim()).filter(Boolean) : data.size)
     : 'NA';
@@ -239,192 +243,68 @@ function buildGetAdsInsertData(data, network) {
     ? 'true'
     : (data.has_ai_meta === 'false' ? 'false' : 'NA');
 
-  if (network === 'facebook') {
+  // Every filter / sort the user picked is stored whatever the network — the
+  // frontend sends the same fields for every platform, and anything not picked
+  // arrives as 'NA' and is dropped by filterNA. Some fields arrive under a
+  // different name per platform (celeb / celebrity / image_celebrity, …).
+  Object.assign(base, {
+    'search_by.text':                data.ocr,
+    'search_by.celebrities':         firstSet(data.image_celebrity, data.celeb, data.celebrity),
+    'search_by.objects':             firstSet(data.image_object, data.object),
+    'search_by.brands':              firstSet(data.image_logo, data.logo, data.brand_logo),
+    'search.commentdata':            data.commentdata,
+    'filter.ad_type':                firstSet(data.type, data.type_filter),
+    'dashboard.likes_sort':          data.likes_sort,
+    'dashboard.likes_range':         data.likes,
+    'dashboard.comments_sort':       data.comments_sort,
+    'dashboard.comments_range':      data.comments,
+    'dashboard.shares_sort':         data.shares_sort,
+    'dashboard.shares_range':        data.shares,
+    'dashboard.impressions_sort':    firstSet(data.impression_sort, data.impressionsort),
+    'dashboard.impressions_range':   data.impressions,
+    'dashboard.popularity_sort':     firstSet(data.popularity_sort, data.popularitysort),
+    'dashboard.popularity_range':    firstSet(data.popularity, data.popularitys),
+    'dashboard.views_sort':          data.views_sort,
+    'dashboard.views_range':         firstSet(data.view, data.views),
+    'dashboard.adBudget_sort':       data.adBudget_sort,
+    'dashboard.adBudget':            data.adBudget,
+    'dashboard.verified':            toBoolStr(data.verified),
+    'dashboard.meta_ads_library':    toBoolStr(data.meta_ads_lib_filter),
+    'filter.native_network':         data.nativeNetwork && data.nativeNetwork !== 'NA'
+      ? (Array.isArray(data.nativeNetwork) ? data.nativeNetwork : [data.nativeNetwork])
+      : 'NA',
+    'filter.budget':                 data.budget,
+    'filter.ctr':                    data.ctr,
+  });
+
+  // Network-specific fields only.
+  if (network === 'instagram' || network === 'Linkedin') {
     Object.assign(base, {
-      'search_by.text':           data.ocr,
-      'search_by.celebrities':    data.image_celebrity ?? 'NA',
-      'search_by.objects':        data.image_object ?? 'NA',
-      'search_by.brands':         data.image_logo ?? 'NA',
-      'search.commentdata':       data.commentdata ?? 'NA',
-      'filter.ad_type':           data.type,
-      'dashboard.likes_sort':       data.likes_sort,
-      'dashboard.likes_range':      data.likes,
-      'dashboard.comments_sort':    data.comments_sort,
-      'dashboard.comments_range':   data.comments,
-      'dashboard.shares_sort':      data.shares_sort,
-      'dashboard.shares_range':     data.shares,
-      'dashboard.popularity_sort':  data.popularity_sort,
-      'dashboard.popularity_range': data.popularity,
-      'dashboard.impressions_sort': data.impression_sort,
-      'dashboard.impressions_range': data.impressions,
-      'dashboard.adBudget':         data.adBudget,
-      'dashboard.verified':         toBoolStr(data.verified),
-      'dashboard.meta_ads_library': toBoolStr(data.meta_ads_lib_filter),
-    });
-  } else if (network === 'GDN') {
-    Object.assign(base, {
-      'search_by.text':          data.ocr,
-      'search_by.celebrities':   data.celeb,
-      'search_by.objects':       data.object,
-      'search_by.brands':        data.logo,
-      'filter.image_size':       data.size && data.size !== 'NA'
-        ? (typeof data.size === 'string' ? data.size.split(',').map(s => s.trim()).filter(Boolean) : data.size)
-        : 'NA',
-      'dashboard.likes_sort':    data.likes_sort,
-      'dashboard.comments_sort': data.comments_sort,
-      'dashboard.shares_sort':   data.shares_sort,
-    });
-  } else if (network === 'instagram') {
-    Object.assign(base, {
-      'search_by.text':           data.ocr,
-      'search_by.celebrities':    data.celeb,
-      'search_by.objects':        data.object,
-      'search_by.brands':         data.logo,
-      'filter.ad_type':           data.type,
-      'sort_by.likes':              data.likes,
-      'sort_by.comments':           data.comments,
-      'dashboard.likes_sort':       data.likes_sort,
-      'dashboard.likes_range':      data.likes,
-      'dashboard.comments_sort':    data.comments_sort,
-      'dashboard.comments_range':   data.comments,
-      'dashboard.shares_sort':      data.shares_sort,
-      'dashboard.shares_range':     data.shares,
-      'dashboard.popularity_sort':  data.popularity_sort,
-      'dashboard.popularity_range': data.popularity,
-      'dashboard.impressions_sort': data.impression_sort,
-      'dashboard.impressions_range': data.impressions,
-      'dashboard.adBudget':         data.adBudget,
-      'dashboard.verified':         toBoolStr(data.verified),
-      'dashboard.meta_ads_library': toBoolStr(data.meta_ads_lib_filter),
+      'sort_by.likes':    data.likes,
+      'sort_by.comments': data.comments,
     });
   } else if (network === 'Google') {
     Object.assign(base, {
-      'user.email':              data.user_email,
-      target_keywords:           data.target_keywords,
-      'filter.ad_type':          data.type_filter,
-      'filter.ad_subPositions':  toTitleCase(data.ad_sub_position),
-      'dashboard.likes_sort':    data.likes_sort,
-      'dashboard.comments_sort': data.comments_sort,
-      'dashboard.shares_sort':   data.shares_sort,
-    });
-  } else if (network === 'Linkedin') {
-    Object.assign(base, {
-      'search_by.text':        data.ocr,
-      'search_by.celebrities': data.image_celebrity ?? 'NA',
-      'search_by.objects':     data.image_object ?? 'NA',
-      'search_by.brands':      data.image_logo ?? 'NA',
-      'filter.ad_type':        data.type,
-      'sort_by.likes':              data.likes,
-      'sort_by.comments':           data.comments,
-      'dashboard.likes_sort':       data.likes_sort,
-      'dashboard.likes_range':      data.likes,
-      'dashboard.comments_sort':    data.comments_sort,
-      'dashboard.comments_range':   data.comments,
-      'dashboard.shares_sort':      data.shares_sort,
-      'dashboard.shares_range':     data.shares,
-      'dashboard.impressions_sort':  data.impressionsort ?? data.impression_sort,
-      'dashboard.impressions_range': data.impressions,
-      'dashboard.popularity_sort':   data.popularitysort ?? data.popularity_sort,
-      'dashboard.popularity_range':  data.popularitys ?? data.popularity,
-      'dashboard.verified':          toBoolStr(data.verified),
-    });
-  } else if (network === 'Pinterest') {
-    Object.assign(base, {
-      'search_by.text':          data.ocr,
-      'search_by.celebrities':   data.image_celebrity ?? 'NA',
-      'search_by.objects':       data.image_object ?? 'NA',
-      'search_by.brands':        data.image_logo ?? 'NA',
-      'filter.ad_type':          data.type,
-      'dashboard.likes_sort':    data.likes_sort,
-      'dashboard.likes_range':   data.likes,
-      'dashboard.comments_sort': data.comments_sort,
-      'dashboard.comments_range': data.comments,
-      'dashboard.shares_sort':   data.shares_sort,
-      'dashboard.shares_range':  data.shares,
-    });
-  } else if (network === 'Quora') {
-    Object.assign(base, {
-      'search_by.text':        data.ocr,
-      'search_by.celebrities': data.celeb,
-      'search_by.objects':     data.object,
-      'search_by.brands':      data.logo,
-      'filter.ad_type':        data.type_filter,
+      'user.email':    data.user_email,
+      target_keywords: data.target_keywords,
     });
   } else if (network === 'Reddit') {
-    Object.assign(base, {
-      'search_by.text':          data.ocr,
-      'search_by.celebrities':   data.celeb,
-      'search_by.objects':       data.object,
-      'search_by.brands':        data.logo,
-      'filter.ad_type':          data.type,
-      'sort_by.likes':           data.likes,
-      'dashboard.likes_sort':    data.likes_sort,
-      'dashboard.likes_range':   data.likes,
-      'dashboard.comments_sort': data.comments_sort,
-      'dashboard.comments_range': data.comments,
-      'dashboard.shares_sort':   data.shares_sort,
-      'dashboard.shares_range':  data.shares,
-    });
+    base['sort_by.likes'] = data.likes;
   } else if (network === 'Youtube') {
     Object.assign(base, {
-      'search_by.text':        data.ocr,
-      'search_by.celebrities': data.celebrity,
-      'search_by.objects':     data.object ?? 'NA',
-      'search_by.brands':      data.brand_logo ?? 'NA',
-      'search.commentdata':    data.commentdata ?? 'NA',
-      'filter.ad_type':        data.type_filter,
-      'sort_by.likes':           data.likes,
-      'sort_by.comments':        data.comments,
-      'sort_by.views':           data.views,
-      'dashboard.likes_sort':    data.likes_sort,
-      'dashboard.likes_range':   data.likes,
-      'dashboard.comments_sort': data.comments_sort,
-      'dashboard.comments_range': data.comments,
-      'dashboard.adBudget':      data.adBudget,
-      'dashboard.views_sort':    data.views_sort,
-      'dashboard.views_range':   data.views,
-      'dashboard.verified':      toBoolStr(data.verified),
-    });
-  } else if (network === 'tiktok' || network === 'TikTok') {
-    Object.assign(base, {
-      'filter.ad_type':              data.type,
-      'filter.languages':            data.lang,
-      'filter.countries':            data.country,
-      'filter.ad_categories':        data.adcategory,
-      'filter.ad_subCategories':     data.subCategory,
-      'search_by.text':              data.ocr,
-      'search_by.celebrities':       data.image_celebrity ?? 'NA',
-      'search_by.objects':           data.image_object ?? 'NA',
-      'search_by.brands':            data.image_logo ?? 'NA',
-      'dashboard.likes_sort':        data.likes_sort,
-      'dashboard.likes_range':       data.likes,
-      'dashboard.comments_sort':     data.comments_sort,
-      'dashboard.comments_range':    data.comments,
-      'dashboard.shares_sort':       data.shares_sort,
-      'dashboard.shares_range':      data.shares,
-      'dashboard.impressions_sort':  data.impression_sort,
-      'dashboard.impressions_range': data.impressions,
-      'dashboard.popularity_sort':   data.popularity_sort,
-      'dashboard.popularity_range':  data.popularity,
-      'dashboard.adBudget':          data.adBudget,
-      'filter.ctr':                  data.ctr,
-      'filter.budget':               data.budget,
+      'sort_by.likes':    data.likes,
+      'sort_by.comments': data.comments,
+      'sort_by.views':    data.views,
     });
   } else if (network === 'Native') {
     Object.assign(base, {
-      'search_by.text':        data.ocr,
-      'search_by.celebrities': data.image_celebrity ?? 'NA',
-      'search_by.objects':     data.image_object ?? 'NA',
-      'search_by.brands':      data.image_logo ?? 'NA',
-      'filter.ad_type':        data.type,
-      'filter.network':        data.network,
-      'dashboard.likes':       data.likes_sort,
-      'dashboard.comments':    data.comments_sort,
-      'dashboard.shares':      data.shares_sort,
+      'filter.network':      data.network,
+      'dashboard.likes':     data.likes_sort,
+      'dashboard.comments':  data.comments_sort,
+      'dashboard.shares':    data.shares_sort,
     });
   } else if (network === 'Chatgpt') {
     Object.assign(base, {
-      'filter.ad_type': data.type,
       'dashboard.hits_sort': data.hits_sort,
       'dashboard.sort_by':   chatgptSortName(data),
     });
@@ -449,42 +329,6 @@ function buildGetAdsInsertData(data, network) {
         base['dashboard.least_hits_sort'] = 'least_hits_sort';
       }
     }
-  } else if (network === 'All') {
-    Object.assign(base, {
-      'search_by.text':              data.ocr,
-      'search_by.celebrities':       data.image_celebrity ?? data.celeb ?? 'NA',
-      'search_by.objects':           data.image_object    ?? data.object ?? 'NA',
-      'search_by.brands':            data.image_logo      ?? data.logo ?? 'NA',
-      'filter.ad_type':              data.type ?? data.type_filter,
-      'dashboard.newest_sort':          data.newest_sort,
-      'dashboard.running_longest_sort': data.running_longest_sort,
-      'dashboard.last_seen_sort':       data.last_seen_sort,
-      'dashboard.likes_sort':           data.likes_sort,
-      'dashboard.likes_range':          data.likes,
-      'dashboard.comments_sort':        data.comments_sort,
-      'dashboard.comments_range':       data.comments,
-      'dashboard.shares_sort':          data.shares_sort,
-      'dashboard.shares_range':         data.shares,
-      'dashboard.impressions_sort':     data.impression_sort,
-      'dashboard.impressions_range':    data.impressions,
-      'dashboard.popularity_sort':      data.popularity_sort,
-      'dashboard.popularity_range':     data.popularity,
-      'dashboard.views_sort':           data.views_sort,
-      'dashboard.views_range':          data.view ?? data.views,
-      'dashboard.adBudget_sort':        data.adBudget_sort,
-      'dashboard.adBudget':             data.adBudget,
-      'dashboard.verified':             toBoolStr(data.verified),
-      'dashboard.meta_ads_library':     toBoolStr(data.meta_ads_lib_filter),
-      'filter.image_size':              data.size && data.size !== 'NA'
-        ? (typeof data.size === 'string' ? data.size.split(',').map(s => s.trim()).filter(Boolean) : data.size)
-        : 'NA',
-      'filter.native_network':          data.nativeNetwork && data.nativeNetwork !== 'NA'
-        ? (Array.isArray(data.nativeNetwork) ? data.nativeNetwork : [data.nativeNetwork])
-        : 'NA',
-      'filter.ad_subPositions':         toTitleCase(data.ad_sub_position),
-      'filter.budget':                  data.budget,
-      'filter.ctr':                     data.ctr,
-    });
   }
 
   return base;
@@ -501,22 +345,19 @@ function determineFilterType(data, searchFields, filterFields) {
 
 const SEARCH_FIELDS = ['keyword', 'advertiser', 'domain'];
 
-const FILTER_FIELDS_BY_NETWORK = {
-  facebook:  ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','commentdata','likes','comments','shares','popularity','impressions','adBudget'],
-  GDN:       ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','celeb','object','logo','size','affiliate','ecommerce','funnel','source','market_platform','adcategory','subCategory'],
-  instagram: ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','celeb','object','logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes','comments','popularity','impressions','adBudget'],
-  Google:    ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','affiliate','ecommerce','funnel','source','market_platform','type_filter','adcategory','subCategory','target_keywords','ad_sub_position'],
-  Linkedin:  ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes','comments','popularitys','impressions'],
-  Pinterest: ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory'],
-  Quora:     ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','celeb','object','logo','affiliate','ecommerce','funnel','source','market_platform','type_filter','adcategory','subCategory'],
-  Reddit:    ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','celeb','object','logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes'],
-  Youtube:   ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','celebrity','object','brand_logo','affiliate','ecommerce','funnel','source','market_platform','type_filter','adcategory','subCategory','commentdata','likes','comments','views','adBudget'],
-  Native:    ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','network','adcategory','subCategory'],
-  TikTok:    ['html_content','country','lang','call_to_action','ad_position_filter','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes','comments','shares','popularity','impressions','adBudget','ctr','budget'],
-  tiktok:    ['html_content','country','lang','call_to_action','ad_position_filter','ocr','image_celebrity','image_object','image_logo','affiliate','ecommerce','funnel','source','market_platform','type','adcategory','subCategory','likes','comments','shares','popularity','impressions','adBudget','ctr','budget'],
-  Chatgpt:   ['html_content','country','lang','call_to_action','ad_position_filter','type','adcategory','subCategory'],
-  All:       ['html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age','ocr','image_celebrity','image_object','image_logo','celeb','object','logo','affiliate','ecommerce','funnel','source','market_platform','type','type_filter','adcategory','subCategory','likes','comments','shares','popularity','impressions','view','views','adBudget','verified','meta_ads_lib_filter','size','nativeNetwork','ad_sub_position','budget','ctr'],
-};
+// Filter fields for every network — a filter counts whatever platform it was
+// applied on (values not picked arrive as 'NA'). Sorts are not filters. AI
+// filters are included, so an AI-only search is recorded as 'filter_only'.
+const FILTER_FIELDS = [
+  'html_content','country','lang','call_to_action','ad_position_filter','gender','lower_age','upper_age',
+  'ocr','image_celebrity','image_object','image_logo','celeb','object','logo','celebrity','brand_logo','commentdata',
+  'affiliate','ecommerce','funnel','source','market_platform','type','type_filter','adcategory','subCategory',
+  'likes','comments','shares','popularity','popularitys','impressions','view','views','adBudget','ctr','budget',
+  'verified','meta_ads_lib_filter','size','nativeNetwork','ad_sub_position','target_keywords',
+  'google_transparency_ads','sub_network','source_app','admob_poster_sort','lead_score_range',
+  'occurrence_count_range','active_days_range',
+  ...AI_FILTER_FIELDS,
+];
 
 // ── AI prompt searches → MongoDB ─────────────────────────────────────────────
 // One document per AI search in the user-activity MongoDB (config:
@@ -685,14 +526,10 @@ async function userActivity(req, elastic, logger) {
       const net = isNative ? 'Native' : data.network;
       const isAllOrMulti = net === 'All' || (typeof net === 'string' && net.includes(','));
       const branchNet = isAllOrMulti ? 'All' : net;
-      // AI filters count as filters on every network, so an AI-only search
-      // is recorded as filterType 'filter_only'.
-      const filterFields = [...(FILTER_FIELDS_BY_NETWORK[branchNet] || []), ...AI_FILTER_FIELDS, 'google_transparency_ads', 'sub_network', 'ad_sub_position', 'size',
-        'source_app', 'admob_poster_sort', 'lead_score_range', 'occurrence_count_range', 'active_days_range'];
       // Use actual net for the stored network field, branchNet only for field-mapping branch selection
       const insertData = buildGetAdsInsertData(data, branchNet);
       insertData.network = net; // overwrite with actual value (e.g. 'facebook,instagram' not 'All')
-      const filterType = determineFilterType(data, SEARCH_FIELDS, filterFields);
+      const filterType = determineFilterType(data, SEARCH_FIELDS, FILTER_FIELDS);
       if (filterType) insertData.filterType = filterType;
       const cleaned = filterNA(insertData);
       if (Object.keys(cleaned).length > 0) await indexWithMeta(cleaned);
