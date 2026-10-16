@@ -2,6 +2,18 @@
 
 const repo = require('./repository');
 
+// redirect_status values (quora_ad_meta_data):
+//   0 = PENDING       — not claimed yet
+//   2 = IN_PROCESSING — claimed (present in ES), handed off to a worker
+//   5 = NOT_FOUND     — absent from ES, dead-ended
+const PENDING = 0;
+const IN_PROCESSING = 2;
+const NOT_FOUND = 5;
+
+function esHits(res) {
+  return res?.hits?.hits || res?.body?.hits?.hits || [];
+}
+
 // A destination_url is usable only if it is a non-empty string that is not the
 // literal token "null"/"undefined" (some upstream writes store those as text
 // rather than a real SQL NULL). Mirrors the SQL filter in getDataForLander.
@@ -12,90 +24,108 @@ function isUsableDestinationUrl(value) {
   return !['null', 'undefined'].includes(trimmed.toLowerCase());
 }
 
+const splitCountries = (row) =>
+  String(row.country || '').replace(/\r\n/g, '').split(',').map((c) => c.trim()).filter(Boolean);
+
+/**
+ * getAdwithCountryCode — same flow as facebook/landers/getAdsService.js.
+ *
+ *   1. Fetch up to 100 ads at redirect_status = 0 (PENDING). Only when the pending queue is
+ *      fully drained (0 rows) fall back to redirect_status = 2 (IN_PROCESSING) not served
+ *      today (updated_date < today) — ads claimed by a worker that crashed/never finished —
+ *      so those get re-served at most once a day instead of on every poll.
+ *   2. Check every ad in ES (index from config, match on `quora_ad.id`), in parallel:
+ *        - present → redirect_status = 2 + updated_date = NOW(), resolve ISO codes, emit the ad.
+ *        - absent  → redirect_status = 5 (NOT_FOUND).
+ *   3. Return { code, message, data, exe_time }.
+ *
+ * Status updates and the ISO lookup are batched (one IN (...) query each). Each ad gets ONLY
+ * its own ISO codes / country names (no cross-ad accumulator).
+ */
 async function getAdwithCountryCode(db, log) {
   const startTime = Date.now();
+  const elastic = db?.elastic;
+  const ES_INDEX = elastic?.indexName;
+
   try {
-    // Fetch ads with redirect_status = 0. Never lease an ad without a usable
-    // destination_url (defence-in-depth — getDataForLander already excludes these
-    // at the SQL level).
-    // Pending (0) has priority; only once it is fully drained fall back to 2 (in processing —
-    // claimed by a worker that crashed/never finished) so those get re-served, not stranded.
-    let fetched = await repo.getDataForLander(0);
-    if (!fetched.length) {
-      fetched = await repo.getDataForLander(2);
+    if (!elastic) {
+      return { code: 400, message: 'urls over', data: [], exe_time: (Date.now() - startTime) / 1000 };
     }
-    const ads = fetched.filter((a) => isUsableDestinationUrl(a.destination_url));
+
+    // PENDING first; IN_PROCESSING (not served today) only once PENDING is drained.
+    let ads = await repo.getDataForLander(PENDING);
+    if (!ads.length) {
+      ads = await repo.getDataForLander(IN_PROCESSING, { excludeServedToday: true });
+    }
+    // Never lease an ad without a usable destination_url (defence-in-depth —
+    // getDataForLander already excludes these at the SQL level).
+    ads = ads.filter((a) => isUsableDestinationUrl(a.destination_url));
 
     log?.info(`Fetched ${ads.length} ads`);
 
-    if (!ads || ads.length === 0) {
+    if (!ads.length) {
+      return { code: 400, message: 'urls over', data: [], exe_time: (Date.now() - startTime) / 1000 };
+    }
+
+    // ── 1. ES existence check — all ads in parallel.
+    const hitsPerAd = await Promise.all(ads.map((ad) =>
+      elastic.search({
+        index: ES_INDEX,
+        body: { query: { match: { 'quora_ad.id': ad.id } }, size: 1 },
+      })
+        .then(esHits)
+        .catch((err) => {
+          log?.warn(`[quora-landers] ES search failed for ad ${ad.id}: ${err.message}`);
+          return [];
+        })
+    ));
+    const found = ads.filter((_, i) => hitsPerAd[i].length > 0);
+    const missingIds = ads.filter((_, i) => hitsPerAd[i].length === 0).map((ad) => ad.id);
+
+    // ── 2. Bulk status writes + one ISO lookup (awaited one at a time).
+    //   present → IN_PROCESSING + updated_date stamped (served today); absent → NOT_FOUND.
+    await repo.markServedMultiple(found.map((ad) => ad.id), IN_PROCESSING);
+    await repo.updateStatusByIds(missingIds, { redirect_status: NOT_FOUND });
+
+    const nicenames = [...new Set(found.flatMap(splitCountries))];
+    const isoRows = await repo.getIsoByNicenamesMultiple(nicenames);
+    const isoByNicename = new Map();
+    const nicenameByIso = new Map();
+    for (const r of isoRows) {
+      if (r.iso === undefined || r.iso === null) continue;
+      const key = String(r.nicename).toLowerCase();
+      if (!isoByNicename.has(key)) isoByNicename.set(key, []);
+      isoByNicename.get(key).push(r.iso);
+      if (!nicenameByIso.has(r.iso)) nicenameByIso.set(r.iso, r.nicename);
+    }
+
+    // ── 3. Build the response — each ad gets ONLY its own resolved ISO codes.
+    const response = found.map((ad) => {
+      const seen = new Set();
+      const iso = [];
+      for (const name of splitCountries(ad)) {
+        const key = name.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        iso.push(...(isoByNicename.get(key) || []));
+      }
       return {
-        code: 400,
-        message: 'urls over',
-        data: [],
-        exe_time: (Date.now() - startTime) / 1000
+        id: ad.id,
+        destination_url: ad.destination_url,
+        iso,
+        countries: iso.map((code) => nicenameByIso.get(code) || code),
       };
-    }
-
-    // Update redirect_status to 2 (processing)
-    const adIds = ads.map(a => a.id);
-    await repo.updateStatusByIds(adIds, { redirect_status: 2 });
-
-    // Build response with ISO accumulator
-    const response = [];
-    let isoAccumulator = [];
-    let cachedCountryNames = null;
-
-    for (const ad of ads) {
-      const countries = ad.country ? ad.country.split(',') : [];
-
-      if (!countries.length) {
-        log?.warn(`No countries for ad ${ad.id}`);
-        continue;
-      }
-
-      // Get ISO codes for each country
-      const isoRows = await repo.getCountriesForAd(countries.map(c => c.trim()).join(','));
-
-      if (isoRows && isoRows.length > 0) {
-        // Accumulate unique ISOs
-        const newIsos = [];
-        for (const row of isoRows) {
-          if (!isoAccumulator.includes(row.iso)) {
-            isoAccumulator.push(row.iso);
-            newIsos.push(row.iso);
-          }
-        }
-
-        // Cache country names to avoid repeated queries
-        if (newIsos.length > 0 || !cachedCountryNames) {
-          cachedCountryNames = await repo.getCountryNames(isoAccumulator);
-        }
-        const countryNameList = cachedCountryNames.map(c => c.nicename);
-
-        response.push({
-          id: ad.id,
-          destination_url: ad.destination_url,
-          iso: isoAccumulator,
-          countries: countryNameList
-        });
-      }
-    }
+    });
 
     if (response.length === 0) {
-      return {
-        code: 400,
-        message: 'urls over',
-        data: [],
-        exe_time: (Date.now() - startTime) / 1000
-      };
+      return { code: 400, message: 'urls over', data: [], exe_time: (Date.now() - startTime) / 1000 };
     }
 
     return {
       code: 200,
       message: 'Success',
       data: response,
-      exe_time: (Date.now() - startTime) / 1000
+      exe_time: (Date.now() - startTime) / 1000,
     };
   } catch (err) {
     log?.error(`Error in getAdwithCountryCode: ${err.message}`);
@@ -103,11 +133,11 @@ async function getAdwithCountryCode(db, log) {
       code: 400,
       message: 'Error fetching ads',
       error: err.message,
-      exe_time: (Date.now() - startTime) / 1000
+      exe_time: (Date.now() - startTime) / 1000,
     };
   }
 }
 
 module.exports = {
-  getAdwithCountryCode
+  getAdwithCountryCode,
 };

@@ -13,13 +13,17 @@ function isUsableDestinationUrl(value) {
   return !['null', 'undefined'].includes(trimmed.toLowerCase());
 }
 
-async function searchAd(adId) {
-  try {
-    const esWrapper = databaseManager.getElastic('native');
-    if (!esWrapper) {
-      return true; // Skip ES validation if not available
-    }
+// redirect_status values (native_ad_meta_data):
+//   0 = PENDING       — not claimed yet
+//   2 = IN_PROCESSING — claimed (present in ES), handed off to a worker
+//   5 = NOT_FOUND     — absent from ES, dead-ended
+const PENDING = 0;
+const IN_PROCESSING = 2;
+const NOT_FOUND = 5;
 
+// Ad presence in ES (index from config). An ES error counts as "absent".
+async function searchAd(esWrapper, adId) {
+  try {
     const result = await esWrapper.search({
       index: esWrapper.indexName,
       body: {
@@ -28,10 +32,12 @@ async function searchAd(adId) {
             'native_ad.id': adId,
           },
         },
+        size: 1,
       },
     });
 
-    return result?.hits?.hits?.length > 0;
+    const hits = result?.hits?.hits || result?.body?.hits?.hits || [];
+    return hits.length > 0;
   } catch (error) {
     console.error(`Elasticsearch search error for ad ${adId}:`, error.message);
     return false;
@@ -40,66 +46,75 @@ async function searchAd(adId) {
 
 class GetNativeAdsService {
   /**
-   * Fetch ads with status=0 and return with ISO codes
+   * Same flow as facebook/landers/getAdsService.js:
+   *   1. Fetch up to 100 ads at redirect_status = 0 (PENDING). Only when the pending queue is
+   *      fully drained (0 rows) fall back to redirect_status = 2 (IN_PROCESSING) not served
+   *      today (updated_date < today) — ads claimed by a worker that crashed/never finished —
+   *      so those get re-served at most once a day instead of on every poll.
+   *   2. Check every ad in ES (index from config, match on `native_ad.id`), in parallel:
+   *        - present → redirect_status = 2 + updated_date = NOW(), resolve ISO codes, emit the ad.
+   *        - absent  → redirect_status = 5 (NOT_FOUND), NOT returned.
+   *   3. Return the list of ads (the controller wraps it in { code, message, data, exe_time }).
    */
-  static async fetchAdsForScraping() {
+  static async fetchAdsForScraping(db) {
     try {
-      // Step 1: Get ads with status=0
-      // Pending (0) has priority; only once it is fully drained fall back to 2 (in processing —
-      // claimed by a worker that crashed/never finished) so those get re-served, not stranded.
-      let ads = await NativeAdMetaData.getAdsByStatus(0);
-      if (ads.length === 0) {
-        ads = await NativeAdMetaData.getAdsByStatus(2);
+      const esWrapper = db?.elastic || databaseManager.getElastic('native');
+      if (!esWrapper) {
+        console.error('fetchAdsForScraping: native Elasticsearch connection is unavailable');
+        return [];
       }
+
+      // PENDING first; IN_PROCESSING (not served today) only once PENDING is drained.
+      let ads = await NativeAdMetaData.getAdsByStatus(PENDING);
+      if (ads.length === 0) {
+        ads = await NativeAdMetaData.getAdsByStatus(IN_PROCESSING, { excludeServedToday: true });
+      }
+      // Never serve an ad without a usable destination_url (defence-in-depth —
+      // getAdsByStatus already excludes these at the SQL level).
+      ads = ads.filter((ad) => isUsableDestinationUrl(ad.destination_url));
 
       if (ads.length === 0) {
         return [];
       }
 
-      const resultAds = [];
+      // ── 1. ES existence check — all ads in parallel.
+      const esPresence = await Promise.all(ads.map((ad) => searchAd(esWrapper, ad.id)));
+      const found = ads.filter((_, i) => esPresence[i]);
+      const missingIds = ads.filter((_, i) => !esPresence[i]).map((ad) => ad.id);
 
-      // Step 2: Check all ads in Elasticsearch (parallel)
-      const esCheckResults = await Promise.all(
-        ads.map(ad => searchAd(ad.id).catch(() => false))
-      );
+      // ── 2. Bulk status writes + one ISO lookup (awaited one at a time).
+      //   present → IN_PROCESSING + updated_date stamped (served today); absent → NOT_FOUND.
+      await NativeAdMetaData.markServedMultiple(found.map((ad) => ad.id), IN_PROCESSING);
+      await NativeAdMetaData.updateRedirectStatusMultiple(missingIds, NOT_FOUND);
 
-      // Step 3: Build batch update and get all country ISO codes
-      const countriesToLookup = new Set();
-      ads.forEach(ad => {
-        if (ad.countries) {
-          ad.countries.split(',').forEach(c => countriesToLookup.add(c.trim()));
+      const splitCountries = (ad) => String(ad.countries || '').split(',').map((c) => c.trim()).filter(Boolean);
+      const nicenames = [...new Set(found.flatMap(splitCountries))];
+      const isoRows = await NativeCountryData.getIsoByNicenamesMultiple(nicenames);
+      const isoByNicename = new Map();
+      for (const r of isoRows) {
+        if (r.iso === undefined || r.iso === null) continue;
+        const key = String(r.nicename).toLowerCase();
+        if (!isoByNicename.has(key)) isoByNicename.set(key, []);
+        isoByNicename.get(key).push(r.iso);
+      }
+
+      // ── 3. Build the result — only ads present in ES, each with ONLY its own ISO codes.
+      return found.map((ad) => {
+        const seen = new Set();
+        const iso = [];
+        for (const name of splitCountries(ad)) {
+          const key = name.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          iso.push(...(isoByNicename.get(key) || []));
         }
+        return {
+          id: ad.id,
+          destination_url: ad.destination_url,
+          iso,
+          country: ad.countries,
+        };
       });
-
-      // Get all ISO codes in one query
-      const countryToIsoMap = await this.getCountriesIsoCodesBatch(Array.from(countriesToLookup));
-
-      // Step 4: Prepare batch updates
-      const updateStatements = [];
-      ads.forEach((ad, index) => {
-        const newStatus = esCheckResults[index] ? 2 : 5;
-        updateStatements.push({ adId: ad.id, status: newStatus });
-      });
-
-      // Step 5: Batch update statuses
-      await NativeAdMetaData.batchUpdateRedirectStatus(updateStatements);
-
-      // Step 6: Build result
-      ads.forEach((ad, index) => {
-        // Never serve an ad without a usable destination_url (defence-in-depth —
-        // getAdsByStatus already excludes these at the SQL level).
-        if (isUsableDestinationUrl(ad.destination_url)) {
-          const isoCodes = this.mapCountriesToIso(ad.countries, countryToIsoMap);
-          resultAds.push({
-            id: ad.id,
-            destination_url: ad.destination_url,
-            iso: isoCodes,
-            country: ad.countries,
-          });
-        }
-      });
-
-      return resultAds;
     } catch (error) {
       console.error('Error in fetchAdsForScraping:', error);
       throw error;

@@ -30,6 +30,17 @@ class NativeCountryData {
     return result.map((row) => row.iso);
   }
 
+  // ISO for many nicenames at once → [{ nicename, iso }] (getAds batch path).
+  static async getIsoByNicenamesMultiple(countryNames) {
+    if (!Array.isArray(countryNames) || countryNames.length === 0) {
+      return [];
+    }
+
+    const placeholders = countryNames.map(() => '?').join(',');
+    const sql = `SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`;
+    return executeQuery(sql, countryNames);
+  }
+
   static async batchGetIso(countryNames) {
     if (!Array.isArray(countryNames) || countryNames.length === 0) {
       return new Map();

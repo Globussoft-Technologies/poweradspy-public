@@ -3,23 +3,30 @@
 /**
  * GDN landers — get_ads_for_blackhat (BlackhatController@getGDNAdsWithCounrty).
  *
- * Flow (faithful to the PHP):
- *   1. Fetch up to 50 ads at redirect_status = 0 (with their tracked country names).
- *   2. Bulk-set redirect_status = 2 for ALL fetched ids.
- *   3. For each ad, resolve ISO codes (country_data.nicename → iso) and emit
- *      { id, iso, destination_url }. NOTE: the GDN get-ads does NOT check ES (unlike
- *      youtube/google) — it returns every fetched ad straight from the meta table.
- *   4. Return { code, message, data, exe_time }.
+ * Same flow as facebook/landers/getAdsService.js:
+ *   1. Fetch up to 50 ads at redirect_status = 0 (PENDING), with their tracked country names.
+ *      PENDING has priority: only when the pending queue is fully drained (0 rows) does it
+ *      fall back to redirect_status = 2 (IN_PROCESSING) not served today (updated_date < today)
+ *      — ads claimed by a worker that crashed/never finished — so those get re-served at most
+ *      once a day instead of on every poll.
+ *   2. Check every ad in Elasticsearch (index from config, match on `gdn_ad.id`), in parallel:
+ *        - present → redirect_status = 2 + updated_date = NOW(), resolve ISO codes, emit the ad.
+ *        - absent  → redirect_status = 5 (NOT_FOUND).
+ *   3. Return { code, message, data, exe_time }.
  *
- * ACCUMULATOR FIX: the legacy PHP shared a single `$a` array across all ads, so each
- * ad's `iso` carried every earlier ad's countries (phantom countries). Here each ad
- * gets ONLY its own resolved ISO codes.
+ * Status updates and the ISO lookup are batched (one IN (...) query each), awaited one at a
+ * time so a request holds at most one MySQL connection. Each ad gets ONLY its own ISO codes.
  */
 
 const repo = require('./repository');
 
 const PENDING = 0;
-const FOUND = 2;
+const IN_PROCESSING = 2;
+const NOT_FOUND = 5;
+
+function esHits(res) {
+  return res?.hits?.hits || res?.body?.hits?.hits || [];
+}
 
 // A destination_url is usable only if it is a non-empty string that is not the
 // literal token "null"/"undefined" (some upstream writes store those as text
@@ -31,46 +38,89 @@ function isUsableDestinationUrl(value) {
   return !['null', 'undefined'].includes(trimmed.toLowerCase());
 }
 
+// [{ nicename, iso }] → Map(lowercased nicename → [iso, ...]). MySQL's nicename comparison is
+// case-insensitive, so lookups are keyed by lowercase.
+function buildIsoByNicename(rows) {
+  const map = new Map();
+  for (const r of rows) {
+    if (r.iso === undefined || r.iso === null) continue;
+    const key = String(r.nicename).toLowerCase();
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(r.iso);
+  }
+  return map;
+}
+
+// ISO codes for one ad's country names (each distinct name counted once, like SQL IN (...)).
+function isosFor(names, isoByNicename) {
+  const seen = new Set();
+  const out = [];
+  for (const name of names) {
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(...(isoByNicename.get(key) || []));
+  }
+  return out;
+}
+
 async function getGdnAdsWithCountry(db, log) {
   const started = Date.now();
   const sql = db?.sql;
+  const elastic = db?.elastic;
+  const ES_INDEX = elastic?.indexName;
 
   try {
-    if (!sql) {
+    if (!sql || !elastic) {
       return { code: 401, message: 'No Ads found', data: [], exe_time: (Date.now() - started) / 1000 };
     }
 
-    // PENDING has priority: only once that queue is fully drained (0 rows) does this fall
-    // back to FOUND (2 = in processing — claimed by a worker that crashed/never finished) so
-    // those get re-served instead of stranded, but never ahead of brand-new pending ads.
-    let fetched = await repo.getDataForLander(sql, PENDING);
-    if (!fetched.length) {
-      fetched = await repo.getDataForLander(sql, FOUND);
+    // PENDING first; IN_PROCESSING (not served today) only once PENDING is drained.
+    let ads = await repo.getDataForLander(sql, PENDING);
+    if (!ads.length) {
+      ads = await repo.getDataForLander(sql, IN_PROCESSING, { excludeServedToday: true });
     }
     // Never lease an ad without a usable destination_url (defence-in-depth —
     // getDataForLander already excludes these at the SQL level).
-    const ads = fetched.filter((a) => isUsableDestinationUrl(a.destination_url));
+    ads = ads.filter((a) => isUsableDestinationUrl(a.destination_url));
     if (!ads.length) {
       return { code: 400, message: 'No Ads found', data: [], exe_time: (Date.now() - started) / 1000 };
     }
 
-    // Bulk flip to in-progress (status 2) for all fetched ids.
-    await repo.updateMetaMultiple(sql, ads.map((a) => a.id), { redirect_status: FOUND });
+    // ── 1. ES existence check — all ads in parallel.
+    const hitsPerAd = await Promise.all(ads.map((row) =>
+      elastic.search({
+        index: ES_INDEX,
+        body: { query: { match: { 'gdn_ad.id': row.id } }, size: 1 },
+      })
+        .then(esHits)
+        .catch((e) => {
+          log?.error?.('landers.getGdnAds ES search failed', { id: row.id, error: e.message });
+          return [];
+        })
+    ));
+    const found = ads.filter((_, i) => hitsPerAd[i].length > 0);
+    const missingIds = ads.filter((_, i) => hitsPerAd[i].length === 0).map((r) => r.id);
 
-    const newarr = [];
+    // ── 2. Bulk status writes + one ISO lookup (SQL awaited one at a time).
+    //   present → IN_PROCESSING + updated_date stamped (served today); absent → NOT_FOUND.
+    await repo.markServedMultiple(sql, found.map((r) => r.id), IN_PROCESSING);
+    await repo.updateMetaMultiple(sql, missingIds, { redirect_status: NOT_FOUND });
 
-    for (const row of ads) {
-      // Each ad gets ONLY its own resolved ISO codes (no cross-ad accumulator — the
-      // legacy shared-accumulator inflated every ad's `iso` with earlier ads' countries).
-      const names = String(row.country || '').split(',').filter(Boolean);
-      const isos = await repo.getIsoByNicenames(sql, names);
+    const splitCountries = (row) => String(row.country || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const nicenames = [...new Set(found.flatMap(splitCountries))];
+    const isoByNicename = buildIsoByNicename(await repo.getIsoByNicenamesMultiple(sql, nicenames));
 
-      newarr.push({ id: row.id, iso: isos, destination_url: row.destination_url });
-    }
+    // ── 3. Build the response — each ad gets ONLY its own resolved ISO codes.
+    const newarr = found.map((row) => ({
+      id: row.id,
+      iso: isosFor(splitCountries(row), isoByNicename),
+      destination_url: row.destination_url,
+    }));
 
     return {
       code: 200,
-      message: 'Ads fetched successfully',
+      message: newarr.length ? 'Ads fetched successfully' : 'Ads not found in Elastisearch',
       data: newarr,
       exe_time: (Date.now() - started) / 1000,
     };

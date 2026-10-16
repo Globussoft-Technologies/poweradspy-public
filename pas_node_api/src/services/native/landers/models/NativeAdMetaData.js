@@ -19,7 +19,13 @@ class NativeAdMetaData {
   // never flipped to redirect_status 2/5, and therefore never re-served on a later poll.
   // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
   // (some upstream writes store the string, not a real NULL).
-  static async getAdsByStatus(status) {
+  //
+  // `excludeServedToday` skips ads whose updated_date is today (already handed out today by
+  // markServedMultiple) — used for the IN_PROCESSING fallback so an ad is re-served at most once a day.
+  static async getAdsByStatus(status, { excludeServedToday = false } = {}) {
+    const servedTodayFilter = excludeServedToday
+      ? `AND (native_ad_meta_data.updated_date IS NULL OR native_ad_meta_data.updated_date < CURDATE())`
+      : '';
     const sql = `
       SELECT
         native_ad_meta_data.native_ad_id as id,
@@ -32,6 +38,7 @@ class NativeAdMetaData {
         AND native_ad_meta_data.destination_url IS NOT NULL
         AND TRIM(native_ad_meta_data.destination_url) <> ''
         AND LOWER(TRIM(native_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
+        ${servedTodayFilter}
       GROUP BY native_ad_meta_data.native_ad_id
       ORDER BY native_ad_meta_data.native_ad_id DESC
       LIMIT 100
@@ -84,6 +91,34 @@ class NativeAdMetaData {
     `;
 
     return await executeQuery(sql, adIds);
+  }
+
+  // Claim ads for the lander worker: redirect_status = status and updated_date = NOW().
+  // updated_date is set explicitly because ON UPDATE CURRENT_TIMESTAMP does not fire when an
+  // already-IN_PROCESSING ad is re-served (no column value changes).
+  static async markServedMultiple(adIds, status) {
+    if (!adIds.length) return 0;
+    const placeholders = adIds.map(() => '?').join(',');
+    const sql = `
+      UPDATE native_ad_meta_data
+      SET redirect_status = ?, updated_date = NOW()
+      WHERE native_ad_id IN (${placeholders})
+    `;
+    const result = await executeQuery(sql, [status, ...adIds]);
+    return result.affectedRows;
+  }
+
+  // Bulk updateRedirectStatus: one UPDATE ... WHERE native_ad_id IN (...).
+  static async updateRedirectStatusMultiple(adIds, status) {
+    if (!adIds.length) return 0;
+    const placeholders = adIds.map(() => '?').join(',');
+    const sql = `
+      UPDATE native_ad_meta_data
+      SET redirect_status = ?
+      WHERE native_ad_id IN (${placeholders})
+    `;
+    const result = await executeQuery(sql, [status, ...adIds]);
+    return result.affectedRows;
   }
 
   // Get metadata details for an ad

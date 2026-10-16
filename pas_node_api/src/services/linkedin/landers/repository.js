@@ -30,7 +30,13 @@ const stripNulls = (obj) =>
 // never flipped to redirect_status=5, and therefore never re-served on a later poll.
 // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
 // (some upstream writes store the string, not a real NULL).
-async function getDataForLander(exec, redirectStatus) {
+//
+// `excludeServedToday` skips ads whose updated_at is today (already handed out today by
+// markServedMultiple) — used for the IN_PROCESSING fallback so an ad is re-served at most once a day.
+async function getDataForLander(exec, redirectStatus, { excludeServedToday = false } = {}) {
+  const servedTodayFilter = excludeServedToday
+    ? `AND (linkedin_ad_meta_data.updated_at IS NULL OR linkedin_ad_meta_data.updated_at < CURDATE())`
+    : '';
   const sql = `
     SELECT linkedin_ad_meta_data.linkedin_ad_id AS id,
            ANY_VALUE(linkedin_ad_meta_data.ad_url) AS ad_url,
@@ -45,6 +51,7 @@ async function getDataForLander(exec, redirectStatus) {
        AND linkedin_ad_meta_data.destination_url IS NOT NULL
        AND TRIM(linkedin_ad_meta_data.destination_url) <> ''
        AND LOWER(TRIM(linkedin_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
+       ${servedTodayFilter}
      GROUP BY linkedin_ad_meta_data.linkedin_ad_id
      ORDER BY linkedin_ad_meta_data.linkedin_ad_id DESC
      LIMIT 100`;
@@ -65,6 +72,31 @@ async function updateMeta(exec, adId, data) {
   if (!cols.length) return 0;
   const sql = `UPDATE linkedin_ad_meta_data SET ${cols.map((c) => `\`${c}\` = ?`).join(', ')} WHERE linkedin_ad_id = ?`;
   return affected(await exec.query(sql, [...Object.values(data), adId]));
+}
+
+/**
+ * Bulk-claim ads for the lander worker: redirect_status = status and updated_at = NOW().
+ * updated_at is set explicitly because ON UPDATE CURRENT_TIMESTAMP does not fire when an
+ * already-IN_PROCESSING ad is re-served (no column value changes).
+ */
+async function markServedMultiple(exec, adIds, status) {
+  const ids = (Array.isArray(adIds) ? adIds : [adIds]).filter((v) => v !== undefined && v !== null);
+  if (!ids.length) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  return affected(await exec.query(
+    `UPDATE linkedin_ad_meta_data SET redirect_status = ?, updated_at = NOW() WHERE linkedin_ad_id IN (${placeholders})`,
+    [status, ...ids]
+  ));
+}
+
+/** Bulk updateMeta: one UPDATE ... WHERE linkedin_ad_id IN (...). */
+async function updateMetaMultiple(exec, adIds, data) {
+  const ids = (Array.isArray(adIds) ? adIds : [adIds]).filter((v) => v !== undefined && v !== null);
+  const cols = Object.keys(data);
+  if (!ids.length || !cols.length) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  const sql = `UPDATE linkedin_ad_meta_data SET ${cols.map((c) => `\`${c}\` = ?`).join(', ')} WHERE linkedin_ad_id IN (${placeholders})`;
+  return affected(await exec.query(sql, [...Object.values(data), ...ids]));
 }
 
 async function updateMainAdDomainId(exec, adId, domainId) {
@@ -160,16 +192,22 @@ async function getIsoByNicenames(exec, nicenames) {
   const r = rows(await exec.query(`SELECT iso FROM country_data WHERE nicename IN (${list.map(() => '?').join(',')})`, list));
   return r.map((row) => row.iso).filter((v) => v !== undefined && v !== null);
 }
+/** ISO for many nicenames at once → [{ nicename, iso }] (getAds batch path). */
+async function getIsoByNicenamesMultiple(exec, nicenames) {
+  if (!nicenames.length) return [];
+  const placeholders = nicenames.map(() => '?').join(',');
+  return rows(await exec.query(`SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`, nicenames));
+}
 async function getNicenameByIso(exec, iso) {
   const r = rows(await exec.query('SELECT nicename FROM country_data WHERE iso = ?', [iso]));
   return r.length ? r[0].nicename : null;
 }
 
 module.exports = {
-  getDataForLander, getMetaDataDetails, updateMeta, updateMainAdDomainId,
+  getDataForLander, getMetaDataDetails, updateMeta, markServedMultiple, updateMetaMultiple, updateMainAdDomainId,
   getDomainId, updateDomainRegisterDate, insertDomainName,
   getOutgoingDetails, insertOutgoing, updateOutgoingCountry,
   getDestinationDetails, insertAdUrl, updateAdUrl, getCountryCodes,
   getHtmlLanderDetails, insertHtmlFile, updateHtmlFile,
-  getIsoByNicenames, getNicenameByIso,
+  getIsoByNicenames, getIsoByNicenamesMultiple, getNicenameByIso,
 };

@@ -25,7 +25,13 @@ async function executeQuery(sql, params = []) {
 // never flipped to redirect_status=2, and therefore never re-served on a later poll.
 // "Unusable" = SQL NULL, empty/whitespace, or the literal strings 'null'/'undefined'
 // (some upstream writes store the string, not a real NULL).
-async function getDataForLander(status = 0) {
+//
+// `excludeServedToday` skips ads whose updated_date is today (already handed out today by
+// markServedMultiple) — used for the IN_PROCESSING fallback so an ad is re-served at most once a day.
+async function getDataForLander(status = 0, { excludeServedToday = false } = {}) {
+  const servedTodayFilter = excludeServedToday
+    ? `AND (quora_ad_meta_data.updated_date IS NULL OR quora_ad_meta_data.updated_date < CURDATE())`
+    : '';
   const sql = `
     SELECT quora_ad_meta_data.quora_ad_id as id,
            MAX(quora_ad_meta_data.destination_url) as destination_url,
@@ -37,6 +43,7 @@ async function getDataForLander(status = 0) {
       AND quora_ad_meta_data.destination_url IS NOT NULL
       AND TRIM(quora_ad_meta_data.destination_url) <> ''
       AND LOWER(TRIM(quora_ad_meta_data.destination_url)) NOT IN ('null', 'undefined')
+      ${servedTodayFilter}
     GROUP BY quora_ad_meta_data.quora_ad_id
     ORDER BY quora_ad_meta_data.quora_ad_id DESC
     LIMIT 100
@@ -55,6 +62,25 @@ async function updateStatusByIds(ids, data) {
 
   const result = await executeQuery(sql, params);
   return result.affectedRows;
+}
+
+// Claim ads for the lander worker: redirect_status = status and updated_date = NOW().
+// updated_date is set explicitly because ON UPDATE CURRENT_TIMESTAMP does not fire when an
+// already-IN_PROCESSING ad is re-served (no column value changes).
+async function markServedMultiple(ids, status) {
+  if (!ids || ids.length === 0) return 0;
+  const placeholders = ids.map(() => '?').join(',');
+  const sql = `UPDATE quora_ad_meta_data SET redirect_status = ?, updated_date = NOW() WHERE quora_ad_id IN (${placeholders})`;
+  const result = await executeQuery(sql, [status, ...ids]);
+  return result.affectedRows;
+}
+
+// ISO for many nicenames at once → [{ nicename, iso }] (getAds batch path).
+async function getIsoByNicenamesMultiple(nicenames) {
+  if (!nicenames || nicenames.length === 0) return [];
+  const placeholders = nicenames.map(() => '?').join(',');
+  const sql = `SELECT nicename, iso FROM country_data WHERE nicename IN (${placeholders})`;
+  return executeQuery(sql, nicenames);
 }
 
 async function getCountriesForAd(country) {
@@ -199,6 +225,8 @@ async function getCountryNames(isoList) {
 module.exports = {
   getDataForLander,
   updateStatusByIds,
+  markServedMultiple,
+  getIsoByNicenamesMultiple,
   getCountriesForAd,
   getDomainIdByDomain,
   insertDomain,
