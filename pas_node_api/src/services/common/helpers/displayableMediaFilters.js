@@ -27,6 +27,15 @@
  */
 
 // ─── Facebook ───────────────────────────────────────────────────────────
+// Legacy pasimages/pasvideos/bydefault paths 404 on the NAS and are hidden by
+// new-ui-react, so Facebook excludes them in every branch (mirrors
+// facebook/builders/SearchMixQueryBuilder.js BLOCKED_MEDIA_WILDCARDS).
+const FB_BLOCKED_MEDIA = (...fields) =>
+  fields.flatMap((field) =>
+    ['*pasimage*', '*pasvideo*', '*bydefault*'].map((value) => ({
+      wildcard: { [`${field}.keyword`]: { value } },
+    })),
+  );
 const FACEBOOK = [
   {
     bool: {
@@ -38,6 +47,7 @@ const FACEBOOK = [
           ],
           must_not: [
             { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
+            ...FB_BLOCKED_MEDIA('new_nas_image_url'),
           ],
         } },
         { bool: {
@@ -47,6 +57,7 @@ const FACEBOOK = [
           ],
           must_not: [
             { wildcard: { 'Thumbnail.keyword': { value: '*DefaultImage*' } } },
+            ...FB_BLOCKED_MEDIA('Thumbnail', 'new_nas_image_url'),
           ],
         } },
         { bool: {
@@ -65,6 +76,7 @@ const FACEBOOK = [
           must_not: [
             { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
             { wildcard: { 'othermedia.keyword': { value: '*DefaultImage*' } } },
+            ...FB_BLOCKED_MEDIA('new_nas_image_url', 'othermedia'),
           ],
         } },
       ],

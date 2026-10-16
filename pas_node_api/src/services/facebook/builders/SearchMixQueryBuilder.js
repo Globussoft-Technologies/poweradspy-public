@@ -60,6 +60,15 @@ const DEFAULT_FB_INDEX = fbNet?.database?.elastic?.index || process.env.FB_ELAST
  * and none of them may be a DefaultImage path. Lives in filter context.
  */
 const DEFAULT_IMAGE_WILDCARD = { value: '*DefaultImage*' };
+// Legacy pre-migration storage folders (pasimages/pasvideos/…) and the
+// bydefault_ads placeholder 404 on the NAS. new-ui-react hides any ad whose
+// media points at them (shouldHideAdForBlockedMedia), so exclude them here too
+// or the count/page includes ads the dashboard never renders.
+const BLOCKED_MEDIA_WILDCARDS = ['*pasimage*', '*pasvideo*', '*bydefault*'];
+const blockedMediaMustNot = (...fields) =>
+  fields.flatMap((field) =>
+    BLOCKED_MEDIA_WILDCARDS.map((value) => ({ wildcard: { [`${field}.keyword`]: { value } } })),
+  );
 // IMPORTANT: If you change this displayable-media gate, you MUST update all 3
 // mirrored copies of `displayableMediaFilters.js`:
 //   - pas_node_api/src/services/common/helpers/displayableMediaFilters.js
@@ -78,6 +87,7 @@ const EXTRA_CONDITION = [
             ],
             must_not: [
               { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
+              ...blockedMediaMustNot('new_nas_image_url'),
             ],
           },
         },
@@ -89,6 +99,9 @@ const EXTRA_CONDITION = [
             ],
             must_not: [
               { wildcard: { 'Thumbnail.keyword': DEFAULT_IMAGE_WILDCARD } },
+              // The card's thumbnail comes from new_nas_image_url, so a VIDEO
+              // with a legacy path there is hidden even if Thumbnail is fine.
+              ...blockedMediaMustNot('Thumbnail', 'new_nas_image_url'),
             ],
           },
         },
@@ -111,6 +124,7 @@ const EXTRA_CONDITION = [
             must_not: [
               { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
               { wildcard: { 'othermedia.keyword': DEFAULT_IMAGE_WILDCARD } },
+              ...blockedMediaMustNot('new_nas_image_url', 'othermedia'),
             ],
           },
         },

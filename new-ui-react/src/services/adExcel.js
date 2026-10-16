@@ -184,7 +184,14 @@ export const exportAdsToExcel = async (
   const sheet = workbook.addWorksheet("Ads", {
     views: [{ state: "frozen", ySplit: 1 }],
   });
-  sheet.columns = HEADERS.map(({ header, width }) => ({ header, width }));
+  // Text-only exports (e.g. Google text ads) have no creative at all — drop
+  // the Creative column instead of filling it with "Image unavailable".
+  const includeCreative = thumbnails.some(Boolean);
+  const keepCol = (_, i) => includeCreative || i !== CREATIVE_COL;
+  // Sheet column (1-based) for a buildRowValues index, after any removal.
+  const sheetCol = (i) =>
+    (includeCreative || i < CREATIVE_COL ? i : i - 1) + 1;
+  sheet.columns = HEADERS.filter(keepCol).map(({ header, width }) => ({ header, width }));
 
   const headerRow = sheet.getRow(1);
   headerRow.height = 22;
@@ -200,8 +207,9 @@ export const exportAdsToExcel = async (
 
   ads.forEach((ad, index) => {
     const values = buildRowValues(ad, index, targetKeyword, countries);
-    const row = sheet.addRow(values);
-    row.height = 90; // points (~120px) — fits the IMAGE_BOX_PX thumbnail
+    const row = sheet.addRow(values.filter(keepCol));
+    // points (~120px) — fits the IMAGE_BOX_PX thumbnail; text-only rows stay compact
+    row.height = includeCreative ? 90 : 45;
     row.eachCell({ includeEmpty: true }, (cell) => {
       cell.alignment = { vertical: "middle", wrapText: true };
     });
@@ -214,12 +222,13 @@ export const exportAdsToExcel = async (
         url.length <= MAX_HYPERLINK_LENGTH &&
         /^https?:\/\//i.test(url)
       ) {
-        const cell = row.getCell(col + 1);
+        const cell = row.getCell(sheetCol(col));
         cell.value = { text: url, hyperlink: url };
         cell.font = { color: { argb: "FF0563C1" }, underline: true };
       }
     });
 
+    if (!includeCreative) return;
     const thumb = thumbnails[index];
     const creativeCell = row.getCell(CREATIVE_COL + 1);
     if (thumb) {
@@ -233,7 +242,8 @@ export const exportAdsToExcel = async (
         ext: { width: thumb.width, height: thumb.height },
         editAs: "oneCell",
       });
-    } else {
+    } else if (!["text", "organic_search"].includes(String(ad.adType || "").toLowerCase())) {
+      // Text ads never had a creative, so their cell is left blank.
       creativeCell.value = "Image unavailable";
       creativeCell.font = { italic: true, color: { argb: "FF6E7484" } };
       creativeCell.alignment = { vertical: "middle", horizontal: "center" };
