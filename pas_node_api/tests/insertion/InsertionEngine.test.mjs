@@ -95,6 +95,125 @@ describe("insertion/InsertionEngine > run", () => {
       networks.facebook.insertion.rejectedPostOwnerNames = original;
     }
   });
+
+  it("rejects a configured keyword anywhere in the ad text, as a whole word", async () => {
+    const original = networks.facebook.insertion.rejectedKeywords;
+    networks.facebook.insertion.rejectedKeywords = ["Twinkling  Tree"];
+    const processOne = vi.fn(async () => ({ code: 200, status: "ok" }));
+    try {
+      const blocked = await engine.run(
+        { ad_id: "k1", post_owner: "Someone", ad_text: "Shop the new TWINKLING tree collection!" },
+        processOne,
+        { network: "facebook" }
+      );
+      expect(blocked.result).toMatchObject({ code: 422, status: "rejected", field: "ad_text" });
+
+      networks.facebook.insertion.rejectedKeywords = ["tree"];
+      const wordInsideOtherWord = await engine.run(
+        { ad_id: "k2", ad_text: "Main street sale" },
+        processOne,
+        { network: "facebook" }
+      );
+      const mediaFieldOnly = await engine.run(
+        { ad_id: "k3", ad_text: "hello", image_url: "https://cdn.x/tree.jpg" },
+        processOne,
+        { network: "facebook" }
+      );
+      expect(wordInsideOtherWord.result.code).toBe(200);
+      expect(mediaFieldOnly.result.code).toBe(200);
+      expect(processOne).toHaveBeenCalledTimes(2);
+    } finally {
+      networks.facebook.insertion.rejectedKeywords = original;
+    }
+  });
+
+  it("rejects a configured domain anywhere in the ad's URL fields", async () => {
+    const original = networks.google.insertion.rejectedDomains;
+    networks.google.insertion.rejectedDomains = ["https://www.TwinklingTree.com/"];
+    const processOne = vi.fn(async () => ({ code: 200, status: "ok" }));
+    try {
+      const blocked = await engine.run(
+        { ad_id: "d1", destination_url: "https://shop.twinklingtree.com/sale?x=1" },
+        processOne,
+        { network: "google" }
+      );
+      const textOnly = await engine.run(
+        { ad_id: "d2", ad_text: "visit twinklingtree.com" },
+        processOne,
+        { network: "google" }
+      );
+      expect(blocked.result).toMatchObject({ code: 422, status: "rejected", field: "destination_url" });
+      expect(textOnly.result.code).toBe(200); // domain list checks URL/domain fields only
+    } finally {
+      networks.google.insertion.rejectedDomains = original;
+    }
+  });
+
+  it("applies the global insertion.rejectedKeywords list to every network", async () => {
+    const config = require("../../src/config");
+    const spy = vi.spyOn(config, "getRawFileConfig").mockReturnValue({ insertion: { rejectedKeywords: ["casino"], rejectedDomains: [] } });
+    const processOne = vi.fn(async () => ({ code: 200, status: "ok" }));
+    try {
+      const out = await engine.run({ ad_id: "g1", title: "Best Casino bonus" }, processOne, { network: "pinterest" });
+      expect(out.result).toMatchObject({ code: 422, status: "rejected", field: "title" });
+      expect(processOne).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("classifies real payload fields: text / url / media / meta", () => {
+    const { fieldKind } = require("../../src/insertion/helpers/postOwnerRejection");
+    for (const k of ["ad_text", "ad_title", "newsfeed_description", "call_to_action", "post_owner", "image_ocr", "display_link", "social_media_text", "headline"]) {
+      expect([k, fieldKind(k)]).toEqual([k, "text"]);
+    }
+    for (const k of ["destination_url", "ad_url", "redirect_urls", "outgoing_url_json", "target_site", "final_url", "ad_url_new", "cta_link"]) {
+      expect([k, fieldKind(k)]).toEqual([k, "url"]);
+    }
+    for (const k of ["image_video_url", "image_url", "post_owner_image", "thumbnail_url", "new_nas_image_url", "nas_video_url", "other_multimedia", "ad_image_video"]) {
+      expect([k, fieldKind(k)]).toEqual([k, "media"]);
+    }
+    for (const k of ["ad_id", "post_date", "target_keyword", "domain_registered_date", "lander_status", "lander_domain_age", "redirect_status", "days_running", "country", "ip_address"]) {
+      expect([k, fieldKind(k)]).toEqual([k, "meta"]);
+    }
+  });
+
+  it("does not scan metadata or nested media for keywords/domains", async () => {
+    const original = networks.facebook.insertion.rejectedKeywords;
+    const originalDomains = networks.facebook.insertion.rejectedDomains;
+    networks.facebook.insertion.rejectedKeywords = ["tree"];
+    networks.facebook.insertion.rejectedDomains = ["tree"];
+    const processOne = vi.fn(async () => ({ code: 200, status: "ok" }));
+    try {
+      const out = await engine.run({
+        ad_id: "m1",
+        ad_text: "hello",
+        target_keyword: "tree",                                  // crawler input, not ad content
+        domain_registered_date: "tree",                          // metadata despite "domain"
+        other_multimedia: [{ url: "https://cdn/tree.jpg", title: "tree" }], // nested media stays media
+      }, processOne, { network: "facebook" });
+      expect(out.result.code).toBe(200);
+    } finally {
+      networks.facebook.insertion.rejectedKeywords = original;
+      networks.facebook.insertion.rejectedDomains = originalDomains;
+    }
+  });
+
+  it("never applies the deny-lists to delete flows", async () => {
+    const original = networks.quora.insertion.rejectedKeywords;
+    networks.quora.insertion.rejectedKeywords = ["blocked"];
+    const processOne = vi.fn(async () => ({ code: 200, status: "ok" }));
+    try {
+      const out = await engine.run(
+        { ad_id: "x", ad_text: "blocked word" },
+        processOne,
+        { network: "quora", applyPostOwnerRejection: false }
+      );
+      expect(out.result.code).toBe(200);
+    } finally {
+      networks.quora.insertion.rejectedKeywords = original;
+    }
+  });
 });
 
 describe("insertion/InsertionEngine > rejection logging", () => {

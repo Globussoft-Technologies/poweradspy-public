@@ -20,7 +20,7 @@
 
 const config = require('../config');
 const logger = require('../logger');
-const { rejectConfiguredPostOwner } = require('./helpers/postOwnerRejection');
+const { rejectConfiguredAd } = require('./helpers/postOwnerRejection');
 
 /**
  * Run a platform pipeline over one ad or an array of ads.
@@ -69,11 +69,13 @@ async function safeProcess(processOne, ad, index, opts = {}) {
   // Use the request-scoped child logger if provided, otherwise the shared insertion-rejection logger.
   const log = opts.log || logger.insertionRejections;
   try {
-    // Apply the per-network advertiser deny-list before validation, SQL, NAS,
-    // external APIs, or Elasticsearch. Matching is exact and case-insensitive.
+    // Apply the insertion deny-lists before validation, SQL, NAS, external APIs,
+    // or Elasticsearch: post owner (exact, case-insensitive), then keyword (whole
+    // word anywhere in the ad's text), then domain (anywhere in its URL fields).
+    // Delete flows pass applyPostOwnerRejection:false and skip all of them.
     const ownerRejection = opts.applyPostOwnerRejection === false
       ? null
-      : rejectConfiguredPostOwner(ad, network);
+      : rejectConfiguredAd(ad, network);
     const r = ownerRejection || await processOne(ad, index);
     if (r.code >= 400 || r.status === 'rejected' || r.status === 'server_error') {
       const logPayload = {

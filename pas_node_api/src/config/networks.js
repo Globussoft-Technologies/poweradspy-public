@@ -46,6 +46,10 @@ function insertionConfig(networkJson, envPrefix) {
   return {
     enabled: toBool(netVal(networkJson?.insertion, 'enabled', `${envPrefix}_INSERTION_ENABLED`, true)),
     rejectedPostOwnerNames: toStringArray(networkJson?.insertion?.rejectedPostOwnerNames),
+    // Reject an ad whose text contains any of these words/phrases (whole word, case-insensitive).
+    rejectedKeywords: toStringArray(networkJson?.insertion?.rejectedKeywords),
+    // Reject an ad whose URL/domain fields contain any of these (substring, case-insensitive).
+    rejectedDomains: toStringArray(networkJson?.insertion?.rejectedDomains),
   };
 }
 

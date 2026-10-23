@@ -10,6 +10,11 @@ const {
   discoverSqlAds,
   discoverEsHits,
   deleteEsDrivenAdsOneByOne,
+  confirmPhrase,
+  captureSearchApiQuery,
+  classifyNasValue,
+  nasRefsFromSource,
+  deleteNasForNetwork,
 } = require("../../scripts/delete-post-owner-ads");
 
 describe("delete-post-owner-ads safety parsing", () => {
@@ -145,5 +150,82 @@ describe("delete-post-owner-ads safety parsing", () => {
       { _id: "doc-2", _type: "doc", _source: { "instagram_ad.id": 12 } },
     ], "instagram", 1);
     expect(events).toEqual(["sql:11", "es:doc-1", "sql:12", "es:doc-2", "refresh"]);
+  });
+});
+
+describe("delete-post-owner-ads search-API + NAS", () => {
+  it("keyword mode always matches like the search API and needs its own phrase", () => {
+    const opts = parseArgs(["--keyword", "weight loss", "--exact-search"]);
+    expect(opts).toMatchObject({ keyword: "weight loss", match: "search-api", exactSearch: true, skipNas: false });
+    expect(confirmPhrase(opts)).toBe("DELETE_KEYWORD_ADS:weight loss");
+    expect(() => parseArgs(["--keyword", "x", "--match", "exact-owner"])).toThrow();
+    expect(() => parseArgs(["--keyword", "   "])).toThrow();
+  });
+
+  it("post-owner default stays exact-owner; search-api is opt-in", () => {
+    expect(parseArgs(["--post-owner", "Nike"]).match).toBe("exact-owner");
+    expect(parseArgs(["--post-owner", "Nike", "--match", "search-api"]).match).toBe("search-api");
+    expect(confirmPhrase(parseArgs(["--post-owner", "Nike"]))).toBe("DELETE_POST_OWNER_ADS:Nike");
+    expect(confirmPhrase(parseArgs(["--post-owner", "Nike", "--keyword", "shoes"]))).toBe("DELETE_SEARCH_ADS:Nike+shoes");
+  });
+
+  it("captures the exact query the search controller builds (without running it)", async () => {
+    let seenParams;
+    const searchAds = async (req, db) => {
+      seenParams = req.body;
+      await db.elastic.search({ index: "fb_idx", body: { query: { built: req.body.keyword, exact: req.body.exact_search } } });
+      return { code: 200 };
+    };
+    const realSearch = () => { throw new Error("real ES must not be called"); };
+    const q = await captureSearchApiQuery("facebook",
+      { elastic: { indexName: "fb_idx", search: realSearch } },
+      { keyword: "shoes", exactSearch: true },
+      { searchAds });
+    expect(q).toEqual({ index: "fb_idx", query: { built: "shoes", exact: 1 } });
+    expect(seenParams).toMatchObject({ keyword: "shoes", exact_search: 1 });
+  });
+
+  it("only treats our own NAS bucket paths as deletable", () => {
+    const base = "https://media.example.com";
+    expect(classifyNasValue("/pas-prod/stream/fb/adImage/202610/1.webp", base, "pas-prod")).toEqual({ path: "/pas-prod/stream/fb/adImage/202610/1.webp" });
+    expect(classifyNasValue(`${base}/pas-prod/stream/yt/video/2.mp4?x=1`, base, "pas-prod")).toEqual({ path: "/pas-prod/stream/yt/video/2.mp4" });
+    expect(classifyNasValue("/pas-dev/stream/fb/a.jpg", base, "pas-prod")).toMatchObject({ skip: "other-bucket:pas-dev" });
+    expect(classifyNasValue("https://scontent.fbcdn.net/x.jpg", base, "pas-prod")).toBeNull();
+    expect(classifyNasValue("/DefaultImage.jpg", base, "pas-prod")).toBeNull();
+    expect(classifyNasValue("/PowerAdspy/n2/old/3.jpg", base, "pas-prod")).toEqual({ path: "/PowerAdspy/n2/old/3.jpg" });
+  });
+
+  it("finds NAS refs in any field, incl. JSON carousel arrays and the owner image", () => {
+    const refs = nasRefsFromSource({
+      new_nas_image_url: "/pas-prod/stream/fb/adImage/1.webp",
+      nas_video_url: "/pas-prod/stream/fb/adVideo/1.mp4",
+      thumbnail_url: "/pas-prod/stream/fb/thumb/1.jpg",
+      ad_image_video: JSON.stringify(["/pas-prod/stream/fb/c/1.jpg", "https://cdn.other/x.jpg"]),
+      post_owners: { post_owner_image: "/pas-prod/stream/fb/owner/9.jpg" },
+      title: "not a path",
+    }, "https://media.example.com", "pas-prod");
+    expect([...refs.keys()].sort()).toEqual([
+      "/pas-prod/stream/fb/adImage/1.webp", "/pas-prod/stream/fb/adVideo/1.mp4", "/pas-prod/stream/fb/c/1.jpg",
+      "/pas-prod/stream/fb/owner/9.jpg", "/pas-prod/stream/fb/thumb/1.jpg",
+    ]);
+  });
+
+  it("deletes unreferenced files and logs every file it keeps, with the reason", async () => {
+    const refs = new Map([
+      ["/pas-prod/stream/a.jpg", null],
+      ["/pas-prod/stream/shared.jpg", null],
+      ["/pas-prod/stream/fail.jpg", null],
+      ["/pas-dev/stream/b.jpg", "other-bucket:pas-dev"],
+    ]);
+    const deleted = [];
+    const res = await deleteNasForNetwork("facebook", {}, refs, 2, {
+      stillReferenced: async (_es, p) => p.includes("shared"),
+      deleteFromNas: async (p) => { if (p.includes("fail")) return false; deleted.push(p); return true; },
+    });
+    expect(deleted).toEqual(["/pas-prod/stream/a.jpg"]);
+    expect(res.deleted).toBe(1);
+    expect(res.notDeleted.map((x) => x.reason).sort()).toEqual([
+      "nas-delete-failed-or-not-configured", "other-bucket:pas-dev", "still-referenced-by-another-ad",
+    ]);
   });
 });
