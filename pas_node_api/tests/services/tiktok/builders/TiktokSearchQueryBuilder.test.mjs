@@ -109,10 +109,25 @@ describe("TiktokSearchQueryBuilder > clause generators", () => {
     const out = b.build();
     expect(out.body.query.bool.filter[0]).toEqual({ prefix: { post_owner: "brandx" } });
   });
-  it("domain → wildcard with stripped protocol/path/TLD", () => {
+  it("domain searches the lowercased raw URL field and preserves the TLD", () => {
     b.setDomain("https://www.example.com/path");
     const out = b.build();
-    expect(out.body.query.bool.filter[0].wildcard.destination_url.value).toBe("*www.example*");
+    expect(out.body.query.bool.filter[0].wildcard["destination_url.keyword"].value).toBe("*example.com*");
+  });
+  it("dotless domain input remains searchable and never becomes a match-all wildcard", () => {
+    b.setDomain("Fablebeardco");
+    const out = b.build();
+    expect(out.body.query.bool.filter[0].wildcard["destination_url.keyword"].value).toBe("*fablebeardco*");
+  });
+  it("invalid empty hostname produces match_none", () => {
+    b.setDomain("https:///");
+    const out = b.build();
+    expect(out.body.query.bool.filter[0]).toEqual({ match_none: {} });
+  });
+  it("domain wildcard metacharacters are escaped", () => {
+    b.setDomain("exa*mple.com");
+    const out = b.build();
+    expect(out.body.query.bool.filter[0].wildcard["destination_url.keyword"].value).toBe("*exa\\\\*mple.com*");
   });
   it("industry/country/budget/language → terms filter", () => {
     b.setIndustry(["a", "b"]).setCountry(["US"]).setBudget(["Low"]).setLanguage(["en"]);

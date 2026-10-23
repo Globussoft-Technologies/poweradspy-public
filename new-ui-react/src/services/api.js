@@ -817,7 +817,16 @@ export const mapAdToCard = (raw) => {
     adText : raw.ad_text || '',
     adType: (() => {
       if (isTikTok) return 'video';
-      if (isGoogleTransparency) return mappedAdType;
+      if (isGoogleTransparency) return mappedAdType;      // Quora can store image-backed creatives with a TEXT type. Normalize
+      // those ads to IMAGE so cards and Analytics use the same classification.
+      if (mappedAdType === 'text' && resolvedNetwork === 'quora' && (
+        raw.preview_unavailable !== true &&
+        [raw.image_url_original, raw.image_url, raw.image_video_url].some(url => (
+          typeof url === 'string' && url.trim() && !url.includes('DefaultImage')
+        ))
+      )) {
+        return 'image';
+      }
       // Reddit text ads sometimes carry a real image — promote them to 'image' so
       // the card renders the creative instead of the title-only text fallback.
       if (mappedAdType === 'text' && resolvedNetwork === 'reddit' && (raw.image_url_original || raw.image_video_url)) {

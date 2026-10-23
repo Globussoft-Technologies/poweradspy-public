@@ -633,12 +633,11 @@ const App = () => {
   // crawl-status banner below can hide WHILE it's open and reappear once it closes —
   // see the banner's render condition further down.
   const [adDetailModalOpen, setAdDetailModalOpen] = useState(false);
-  // Tracks the (locally-owned-in-Header) notifications dropdown's open state, purely so
-  // the crawl-status banner below can shrink its max-width WHILE it's open — the dropdown
-  // sits just left of the bell, and at full width the banner (centered further left) can
-  // overlap it. Reported up via Header's onNotifOpenChange prop.
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  // Same idea as notificationsOpen above, but for the search bar's own suggestions/
+  // The notifications dropdown deliberately does NOT reshape the crawl-status banner
+  // below — the banner keeps its default position/size and the dropdown (much higher
+  // z-index) simply sits on top of it. Shrinking it into the gap left of the dropdown
+  // wrapped it to ~5 lines and ran it into the Quick Filters row.
+  // Tracks the search bar's own suggestions/
   // categories dropdown — it renders directly under the search input, which the
   // banner's default centered position sat on top of while the dropdown was open.
   // Header measures the search bar box itself (the dropdown is exactly as wide as
@@ -652,6 +651,46 @@ const App = () => {
     setSearchDropdownOpen(isOpen);
     setSearchDropdownRightEdge(isOpen ? rightEdgePx : null);
   }, []);
+  // Same idea again for the header's credits dropdown. When it opens, the banner keeps
+  // the left edge it has in its DEFAULT position (bannerDefaultLeftRef, refreshed by a
+  // layout effect next to the banner only while no dropdown is reshaping it), and its
+  // right edge is cut off just short of the
+  // dropdown's left edge reported by Header. Both reset to null on close, returning
+  // the banner to its default position/width.
+  const searchBannerRef = useRef(null);
+  const bannerDefaultLeftRef = useRef(null);
+  const [creditsDropdownLeftEdge, setCreditsDropdownLeftEdge] = useState(null);
+  const [bannerLeftWhileCreditsOpen, setBannerLeftWhileCreditsOpen] = useState(null);
+  const handleCreditsOpenChange = useCallback((isOpen, dropdownLeftPx) => {
+    if (isOpen && dropdownLeftPx != null && bannerDefaultLeftRef.current != null) {
+      setBannerLeftWhileCreditsOpen(bannerDefaultLeftRef.current);
+      setCreditsDropdownLeftEdge(dropdownLeftPx);
+    } else {
+      setBannerLeftWhileCreditsOpen(null);
+      setCreditsDropdownLeftEdge(null);
+    }
+  }, []);
+  const creditsShrinkBanner =
+    creditsDropdownLeftEdge != null && bannerLeftWhileCreditsOpen != null;
+  const headerDropdownShrink = creditsShrinkBanner
+    ? { dropdownLeft: creditsDropdownLeftEdge, bannerLeft: bannerLeftWhileCreditsOpen }
+    : null;
+  // Records the banner's default left edge — only while it sits in its default
+  // position (no search/credits dropdown open) AND its slide-in
+  // animation has finished: the animate-in keyframes override the transform, so
+  // mid-animation the -translate-x-1/2 centering isn't applied yet and the measured
+  // left would be half the banner's width too far right.
+  const recordBannerDefaultLeft = useCallback(() => {
+    const el = searchBannerRef.current;
+    if (!el) return;
+    if (el.getAnimations?.().some((a) => a.playState === 'running')) return;
+    bannerDefaultLeftRef.current = el.getBoundingClientRect().left;
+  }, []);
+  // No deps on purpose — re-measured after every render.
+  useLayoutEffect(() => {
+    if (searchDropdownOpen || headerDropdownShrink) return;
+    recordBannerDefaultLeft();
+  });
   const showToast = useCallback((
     message,
     type = "success",
@@ -3808,7 +3847,7 @@ const App = () => {
         aiSearchChecked={aiSearchChecked}
         aiSearchLoading={aiSearchLoading}
         onAiSuggestionsDismiss={clearAiSearchDisplay}
-        onNotifOpenChange={setNotificationsOpen}
+        onCreditsOpenChange={handleCreditsOpenChange}
         onSearchDropdownOpenChange={handleSearchDropdownOpenChange}
         searchIn={ui.searchIn}
         setSearchIn={guestSetSearchIn}
@@ -4334,13 +4373,18 @@ const App = () => {
           closes or the user navigates back to the Ads Library. */}
       {searchBannerVisible && (
         <div
+          ref={searchBannerRef}
+          // Slide-in finished — the centering transform is in effect now, so the
+          // default left edge can be recorded (see recordBannerDefaultLeft).
+          onAnimationEnd={() => {
+            if (!searchDropdownOpen && !headerDropdownShrink) {
+              recordBannerDefaultLeft();
+            }
+          }}
           className={`fixed z-[600] max-w-[calc(100vw-2rem)] ${
             // Anchored differently depending on what else is open. Centered
             // (left-1/2 + -translate-x-1/2) by default, but that centers growth
             // on both sides:
-            // - Notifications dropdown open: widening it kept pushing the right
-            //   edge further right, into the bell icon, so it's right-anchored
-            //   instead — changing the width only ever grows it leftward.
             // - Search suggestions/categories dropdown open: rather than guess a
             //   fixed offset (which drifted into a gap or an overlap depending on
             //   sidebar/window width), Header measures that dropdown's actual live
@@ -4348,13 +4392,16 @@ const App = () => {
             //   `left` below positions the banner exactly against it. No Tailwind
             //   left/right class here in that case; only the `right-4` fallback
             //   below covers the one render before that measurement lands.
-            notificationsOpen
-              ? 'right-4 lg:right-[516px]'
+            // - Credits dropdown open: inline `left` below pins the banner's
+            //   left edge where it already was, so no Tailwind left/right here.
+            // (Notifications dropdown: no change — it just sits on top of the banner.)
+            headerDropdownShrink
+              ? ''
               : (searchDropdownOpen && searchDropdownRightEdge != null)
                 ? ''
                 : searchDropdownOpen
                   ? 'right-4'
-                  : 'left-1/2 -translate-x-1/2 lg:left-[65%]'
+                  : 'left-1/2 -translate-x-1/2 lg:left-[66.8%]'
           } top-[87px] px-3 py-2 rounded-xl backdrop-blur-md border shadow-xl flex items-center gap-3 animate-in duration-300 slide-in-from-top-4 ${
             // Installed phone app: a snackbar above the bottom nav instead of
             // over the search bar and platform tabs; hidden while the search
@@ -4370,22 +4417,25 @@ const App = () => {
             color: '#ffffff',
             boxShadow: '0 10px 30px rgba(15, 23, 42, 0.35)',
           } : {
-            ...(searchDropdownOpen && searchDropdownRightEdge != null
+            ...(headerDropdownShrink
+              ? { left: `${headerDropdownShrink.bannerLeft}px` }
+              : searchDropdownOpen && searchDropdownRightEdge != null
               ? { left: `${searchDropdownRightEdge + 12}px` }
               : {}),
             // Narrower than the generic toast's max-w cap — this banner is
             // centered on a fixed left:% point, so at its old width it could
             // overlap the platform icon row to its left. Text just wraps onto
-            // an extra line instead. Shrunk further still while the notifications
-            // dropdown is open, to match the narrower corner it's anchored to
-            // above; capped to whatever room is actually left of the viewport
-            // edge while the search dropdown is open, since `left` above is a
-            // measured pixel value rather than a corner with known clearance.
-            maxWidth: notificationsOpen
-              ? 'min(calc(100vw - 2rem), 460px)'
+            // an extra line instead. Capped to whatever room is actually left of
+            // the viewport edge while the search dropdown is open, since `left`
+            // above is a measured pixel value rather than a corner with known
+            // clearance.
+            // Credits dropdown open: whatever room is left between the banner's
+            // pinned left edge and the dropdown's left edge (12px gap).
+            maxWidth: headerDropdownShrink
+              ? `${Math.max(200, headerDropdownShrink.dropdownLeft - 12 - headerDropdownShrink.bannerLeft)}px`
               : (searchDropdownOpen && searchDropdownRightEdge != null)
                 ? `min(calc(100vw - ${searchDropdownRightEdge + 12}px - 1rem), 420px)`
-                : 'min(calc(100vw - 2rem), 600px)',
+                : 'min(calc(100vw - 2rem), 580px)',
             backgroundColor: 'rgba(238, 242, 250, 0.96)',
             borderColor: 'rgba(51, 82, 150, 0.28)',
             color: '#335296',

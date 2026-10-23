@@ -166,6 +166,7 @@ const Header = ({
   onAiSuggestionsDismiss,
   onCancelAiSearch,
   onNotifOpenChange,
+  onCreditsOpenChange,
   onSearchDropdownOpenChange,
 }) => {
   const { config } = sdui;
@@ -353,6 +354,16 @@ const Header = ({
   useEffect(() => {
     onNotifOpenChange?.(notifOpen);
   }, [notifOpen, onNotifOpenChange]);
+  // Same for the credits dropdown — it's anchored bottom-end to the credits pill and
+  // is w-80 (320px) wide, so its left edge is the pill's right edge minus 320px. The
+  // banner stops just short of that edge while the dropdown is open.
+  useEffect(() => {
+    const pillRight = creditsButtonRef.current?.getBoundingClientRect().right;
+    onCreditsOpenChange?.(
+      creditsOpen,
+      creditsOpen && pillRight != null ? pillRight - 320 : null,
+    );
+  }, [creditsOpen, onCreditsOpenChange]);
 
   // The search suggestions/categories dropdown (rendered inside AutocompleteFilter)
   // is exactly as wide as this box — reporting its live right edge (rather than a

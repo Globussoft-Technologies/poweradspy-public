@@ -189,6 +189,13 @@ export async function createIndex() {
           destination_url: {
             type: "text",
             analyzer: "custom_analyzer",
+            fields: {
+              keyword: {
+                type: "keyword",
+                normalizer: "lowercase_normalizer",
+                ignore_above: 4096,
+              },
+            },
           },
           video_url: { type: "text", analyzer: "custom_analyzer" },
           likes: { type: "integer" },

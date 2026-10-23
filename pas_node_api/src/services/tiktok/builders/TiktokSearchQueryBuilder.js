@@ -123,10 +123,27 @@ class TiktokSearchQueryBuilder {
   _getDomainEnv() {
     const d = this._params.domain;
     if (!d) return null;
-    let domain = d.replace(/^(https?:\/\/)?/, '');
-    domain = domain.split('/')[0];
-    domain = domain.split('.').slice(0, -1).join('.');
-    return asFilter({ wildcard: { destination_url: { value: `*${domain}*` } } });
+    // Search the non-analyzed keyword subfield so Elasticsearch compares the
+    // actual URL, not edge-ngram tokens produced by the text analyzer.
+    // Keep the TLD: removing it made example.com overly broad and made a
+    // dotless value such as Example generate the match-everything **.
+    let domain = String(d).trim().toLowerCase();
+    domain = domain.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+    domain = domain.replace(/^\/\//, '');
+    domain = domain.split(/[/?#]/, 1)[0];
+    domain = domain.replace(/^[^@]*@/, '');
+    domain = domain.replace(/:\d+$/, '');
+    domain = domain.replace(/^www\./, '').replace(/\.+$/, '');
+
+    // Invalid domain-only input must produce no results, never match_all.
+    if (!domain) return asFilter({ match_none: {} });
+
+    // Escape user-supplied wildcard metacharacters while retaining the outer
+    // substring match needed for schemes, www and subdomains.
+    const wildcardDomain = domain.replace(/([*?\\])/g, '\\$1');
+    return asFilter({
+      wildcard: { 'destination_url.keyword': { value: `*${wildcardDomain}*` } },
+    });
   }
 
   _getIndustryEnv() {
