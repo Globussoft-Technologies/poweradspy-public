@@ -11,13 +11,17 @@
  */
 
 const { lookupIp } = require('../helpers/ipLookup');
+const { getClientIp } = require('../../../utils/geoip');
 
 const DEFAULT_IP = '110.227.200.178';
 
-// req.ip honours trustProxy, so behind Nginx this is the real client IP.
+// getClientIp prefers cf-connecting-ip and skips Cloudflare ranges, so behind
+// Cloudflare this is the visitor's IP rather than the edge server's.
 // Strip the IPv4-mapped IPv6 prefix (::ffff:1.2.3.4) Node adds on dual-stack sockets.
+// Loopback (local development) returns '' so ip-api.com resolves the machine's public IP itself.
 function clientIp(req) {
-  return String(req.ip || '').replace(/^::ffff:/, '');
+  const ip = String(getClientIp(req) || req.ip || '').replace(/^::ffff:/, '');
+  return /^(127\.|::1$)/.test(ip) ? '' : ip;
 }
 
 async function findLoaction(req, res, log) {

@@ -25,7 +25,7 @@ async function lookupIp(ip) {
   }
 
   return {
-    ip,
+    ip: ip || data.query,
     countryName: data.country ?? null,
     countryCode: data.countryCode ?? null,
     regionCode: data.region ?? null,

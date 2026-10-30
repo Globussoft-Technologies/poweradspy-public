@@ -1328,13 +1328,13 @@ paths:
       tags: [Geolocation]
       summary: Location of the caller's IP
       description: |
-        Port of PHP `GET /` (`findLoaction`). Uses the caller's IP (`req.ip`, proxy-aware).
+        Port of PHP `GET /` (`findLoaction`). Uses the caller's IP (Cloudflare and proxy aware).
         The IP is looked up via ip-api.com and the result returned (no database).
         On failure the error message is returned as plain text (same as PHP).
 
-        **Testing locally:** a local call is always `127.0.0.1` (ip-api.com returns "reserved range").
-        Fill `X-Forwarded-For` with a public IP (e.g. 27.56.153.134) to simulate a real caller —
-        in production Nginx sets this header automatically.
+        **Testing locally:** a local call is `127.0.0.1`, so ip-api.com resolves your machine's public IP
+        itself and you get your own location. Fill `X-Forwarded-For` with a public IP
+        (e.g. 27.56.153.134) to simulate a different caller — in production Nginx sets this header automatically.
       security: []
       parameters:
         - in: header
