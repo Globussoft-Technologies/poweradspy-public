@@ -60,6 +60,24 @@ components:
   # ─── Reusable schemas ─────────────────────────────────────
   schemas:
 
+    # Geolocation response — same shape as PHP FindLocationController.
+    GeoLocation:
+      type: object
+      properties:
+        ip: { type: string, example: 27.56.153.134 }
+        countryName: { type: string, nullable: true, example: India }
+        countryCode: { type: string, nullable: true, example: IN }
+        regionCode: { type: string, nullable: true, example: KA }
+        regionName: { type: string, nullable: true, example: Karnataka }
+        cityName: { type: string, nullable: true, example: Bengaluru }
+        zipCode: { type: string, nullable: true, example: '560001' }
+        isoCode: { type: string, nullable: true, example: null }
+        postalCode: { type: string, nullable: true, example: null }
+        latitude: { type: string, nullable: true, example: '12.9634' }
+        longitude: { type: string, nullable: true, example: '77.5855' }
+        metroCode: { type: string, nullable: true, example: null }
+        areaCode: { type: string, nullable: true, example: null }
+
     # Shared payload for every /updateBuiltWith endpoint across networks.
     # `id` is the network-specific ad id (facebook_ad_id, quora_ad_id, …).
     # `status = 1` with any non-empty built_with_* / affiliate_data → row marked
@@ -1296,8 +1314,66 @@ tags:
   - name: ChatGPT Built-With
     description: ChatGPT Ads built-with scrape queue — same contract as Facebook Built-With. Split-table layout — queue status on chatgptads_ad.built_with_status, data + affiliate_status on chatgptads_ad_built_with (upserted). ES = chatgpt_search_mix, updated by _id (ecommerce_platform = built_with, funnel = built_with_analytics_tracking, affiliate_data — keyword arrays).
 
+  - name: Geolocation
+    description: IP → location lookup — port of PHP geolocation.poweradspy.com (FindLocationController). Every request is looked up live via ip-api.com — no database read or write. Public — no auth.
+
 # ─── Paths ──────────────────────────────────────────────────
 paths:
+
+  # ═══════════════════════════════════════════
+  # GEOLOCATION — port of PHP geolocation.poweradspy.com
+  # ═══════════════════════════════════════════
+  /api/v1/geoloacation/:
+    get:
+      tags: [Geolocation]
+      summary: Location of the caller's IP
+      description: |
+        Port of PHP `GET /` (`findLoaction`). Uses the caller's IP (`req.ip`, proxy-aware).
+        The IP is looked up via ip-api.com and the result returned (no database).
+        On failure the error message is returned as plain text (same as PHP).
+
+        **Testing locally:** a local call is always `127.0.0.1` (ip-api.com returns "reserved range").
+        Fill `X-Forwarded-For` with a public IP (e.g. 27.56.153.134) to simulate a real caller —
+        in production Nginx sets this header automatically.
+      security: []
+      parameters:
+        - in: header
+          name: X-Forwarded-For
+          required: false
+          schema: { type: string, example: 27.56.153.134 }
+          description: Optional — simulates the caller's IP for local testing (normally set by Nginx).
+      responses:
+        '200':
+          description: Location data (JSON) — or the error message as plain text on failure
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoLocation' }
+            text/plain:
+              schema: { type: string, example: 'Location lookup failed for 10.0.0.1: private range' }
+
+  /api/v1/geoloacation/get-ip:
+    get:
+      tags: [Geolocation]
+      summary: Location of a given IP
+      description: |
+        Port of PHP `GET /get-ip` (`findLoactionById`). Looks up `?ip=` (defaults to
+        `110.227.200.178`, same as PHP). Looks it up via
+        ip-api.com and returns it (no database). On failure the error message is returned as plain text.
+      security: []
+      parameters:
+        - in: query
+          name: ip
+          required: false
+          schema: { type: string, example: 27.56.153.134 }
+          description: IP address to locate. Defaults to 110.227.200.178.
+      responses:
+        '200':
+          description: Location data (JSON) — or the error message as plain text on failure
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GeoLocation' }
+            text/plain:
+              schema: { type: string, example: 'Location lookup failed for abc: invalid query' }
 
   # ═══════════════════════════════════════════
   # EMAIL — unsubscribe / resubscribe
