@@ -8,7 +8,7 @@
  * implemented elsewhere.
  *
  *   B1  copyright_blocklist, copyright_blocked_attempts
- *   B2  copyright_image_hashes, copyright_review_queue
+ *   B2  copyright_image_hashes, copyright_review_queue, copyright_image_hash_jobs, copyright_image_hash_results
  *   B3  copyright_takedown_runs, copyright_takedown_actions,
  *       copyright_takedown_blocklist_entries                    (requires B1 table)
  *   B6  copyright_complaints, copyright_complaint_items,
@@ -225,10 +225,17 @@ const TABLES = [
     columns: [
       id(), network(),
       count('blocklist_id', false),           // the copyright_blocklist entry that started the job
+      code('entry_type', 32),                 // advertiser | page | ad_id | url | image_url (what the entry blocks)
       str('advertiser_name', 255, false),     // its value, as written
       uuid('complaint_id', true),             // copied from that entry; the image_hash entries get the same one
-      code('status', 32),                     // pending | running | done | no_owner | limit_reached | failed
+      code('status', 32),                     // pending | running | done | no_owner | limit_reached | unresolved | failed
       c('attempts', 'smallint unsigned'),     // times it was claimed; a job that keeps failing ends as failed
+      // Generations: every block of the entry (the first, and each re-block / requeue) is one generation. requested_gen is the newest
+      // one asked for, run_gen the one the current/last run works for, covered_gen the newest one a run completed (done / no_owner).
+      // Work is covered for a block only when covered_gen >= the requested_gen that block made. A run that finishes after a newer
+      // request arrived does not count for it: the job goes back to pending and runs again.
+      c('requested_gen', 'int unsigned'), c('run_gen', 'int unsigned'), c('covered_gen', 'int unsigned'),
+      dt('requested_at', true),               // when requested_gen last changed (NULL until the first re-block)
       code('claimed_by', 128, true), dt('claimed_at', true),
       dt('heartbeat_at', true),               // renewed after every page: an old one means the worker died
       c('progress_seq', 'int unsigned'),      // +1 at every save, so a save always changes the row
@@ -240,6 +247,33 @@ const TABLES = [
       pk('id'),
       uq('uq_hashjob_entry', 'network', 'blocklist_id'),
       ix('idx_hashjob_status', 'network', 'status', 'id'),
+    ],
+  },
+  {
+    owner: 'B2',
+    name: 'copyright_image_hash_results',
+    // What a hash job did with each image it looked at: one row per (job, generation, ad, image). B3 reads it to see which ads and
+    // images were processed, skipped or failed, and why, and to retry. It holds identifiers and outcomes only, never image data.
+    // `generation` is the job's run (copyright_image_hash_jobs.requested_gen when the run started): a requeued job writes new rows
+    // under a new generation and the old rows stay, so the previous run and the current run are told apart by generation.
+    // Written only by the hash job (side job); ingestion never reads it. No delete anywhere.
+    columns: [
+      id(), network(),
+      count('job_id', false), count('blocklist_id', false), c('generation', 'int unsigned'),
+      adId('platform_ad_id', true),                                 // the scraper's ad id; NULL for a media URL hashed on its own
+      adId('internal_ad_id'),                                       // our row id; '' for a media URL hashed on its own
+      c('slot_hash', 'char(40)', { charset: ASCII }),               // sha1 of the stored path / URL: the image inside the ad
+      str('source_url', 2048),                                      // the stored path or URL, as found
+      code('outcome', 16),                                          // hashed | duplicate | skipped | failed
+      str('reason', 128),                                           // why, for skipped / failed (and what a duplicate repeats)
+      c('sha256', 'char(64)', { charset: ASCII, nullable: true }),  // of the image, when it was hashed
+      dt('created_at'), dt('updated_at'),
+    ],
+    indexes: [
+      pk('id'),
+      uq('uq_hashresult_slot', 'job_id', 'generation', 'internal_ad_id', 'slot_hash'),
+      ix('idx_hashresult_ad', 'network', 'platform_ad_id'),
+      ix('idx_hashresult_job', 'job_id', 'generation', 'outcome', 'id'),
     ],
   },
 

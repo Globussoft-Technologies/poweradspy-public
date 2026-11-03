@@ -880,3 +880,194 @@ describe("HashJob > paths that are not image files", () => {
     expect(out.stats.skipped["not an image file"]).toBe(2);
   });
 });
+
+// ═════════════ what each image came to, ad id blocks and URL blocks ═════════════
+const { urlRole } = require("../../../src/compliance/imagematch/job");
+
+/** An ad database that also answers the queries of ad id and URL jobs (platform id, domain, ads of a domain, destination URLs). */
+function makeUrlDb({ domains = [{ id: 7, domain: "shop.example.com" }], ads = [], meta = {}, variants = [] } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async query(text, params) {
+      const t = text.replace(/\s+/g, " ");
+      calls.push({ text: t, params });
+      if (/FROM `facebook_ad_domains`/.test(t)) return domains.filter((d) => params.includes(d.domain)).map((d) => ({ id: d.id }));
+      if (/FROM `facebook_ad_meta_data`/.test(t)) return params.map((id) => ({ ad_id: id, destination_url: meta[id] ?? null }));
+      if (/FROM `facebook_ad` WHERE `ad_id` IN/.test(t)) return ads.filter((a) => params.includes(a.platform)).map((a) => ({ id: a.id }));
+      if (/FROM `facebook_ad` WHERE `domain_id` IN/.test(t)) {
+        const limit = Number(/LIMIT (\d+)$/.exec(t)[1]);
+        const after = params[params.length - 1];
+        const ids = params.slice(0, -1);
+        return ads.filter((a) => ids.includes(a.domain_id) && a.id > after).sort((a, b) => a.id - b.id).slice(0, limit).map((a) => ({ id: a.id }));
+      }
+      if (/FROM `facebook_ad` WHERE `id` IN/.test(t)) return params.map((id) => ({ id, platform_id: ads.find((a) => a.id === id)?.platform ?? null }));
+      if (/FROM `facebook_ad_variants`/.test(t)) return variants.filter((v) => params.includes(v.ad_id));
+      throw new Error(`unexpected query: ${t}`);
+    },
+  };
+}
+const imageOf = (id) => ({ ad_id: id, image_url: `fb/adImage/202610/${id}.jpeg`, image_url_original: "" });
+const cdnUrl = (id) => `${CDN}/fb/adImage/202610/${id}.jpeg`;
+const sinkOf = () => { const rows = []; return { rows, record: vi.fn(async (r) => { rows.push(...r); }) }; };
+
+describe("imagematch/job > the result of each image", () => {
+  it("records hashed, duplicate, skipped and failed images one by one, with the platform ad id and the reason", async () => {
+    const variants = [
+      imageOf(1), imageOf(2), imageOf(3),
+      { ad_id: 4, image_url: "", image_url_original: "" },
+      { ad_id: 5, image_url: "pasvideos/fb/998877", image_url_original: "" },
+      { ad_id: 6, image_url: "fb/adImage/202610/1.jpeg", image_url_original: "" }, // the same file as ad 1
+    ];
+    const client = makeClient((url) => {
+      if (url.endsWith("/2.jpeg")) return { ok: false, outcome: OUTCOME.UNAVAILABLE, reason: "service returned 503" };
+      if (url.endsWith("/3.jpeg")) return { ok: false, outcome: OUTCOME.SKIP, reason: "Image is too small" };
+      return okResult(url);
+    });
+    const { job } = makeJob({ sql: standardDb({ variants }), client });
+    const sink = sinkOf();
+    job.results = sink;
+    const out = await job.run(APPLY);
+
+    expect(out.status).toBe(STATUS.DONE);
+    const by = Object.fromEntries(sink.rows.map((r) => [r.adId, r]));
+    expect(sink.rows).toHaveLength(6);
+    expect(by[1]).toEqual({ adId: 1, platformAdId: "P1", sourceUrl: "fb/adImage/202610/1.jpeg", outcome: "hashed", reason: "", sha256: sha(cdnUrl(1)) });
+    expect(by[2]).toMatchObject({ platformAdId: "P2", outcome: "failed", sha256: null });
+    expect(by[2].reason).toMatch(/unavailable: service returned 503/);
+    expect(by[3]).toMatchObject({ outcome: "skipped", reason: "image is too small" });
+    expect(by[4]).toMatchObject({ outcome: "skipped", reason: "no stored image" });
+    expect(by[5]).toMatchObject({ outcome: "skipped", reason: "not an image file", sourceUrl: "pasvideos/fb/998877" });
+    expect(by[6]).toMatchObject({ outcome: "duplicate", sha256: sha(cdnUrl(1)) }); // same image URL as ad 1: it has its hash, the call was made once
+    expect(client.hashUrl.mock.calls.filter(([u]) => u === cdnUrl(1))).toHaveLength(1);
+    expect(out.stats).toMatchObject({ hashed: 1, failed: 1 });
+  });
+
+  it("a results sink that fails never fails the hashing", async () => {
+    const { job, blocklist } = makeJob();
+    job.results = { record: async () => { throw new Error("results table is gone"); } };
+    const out = await job.run(APPLY);
+    expect(out.status).toBe(STATUS.DONE);
+    expect(blocklist.adds.length).toBeGreaterThan(0);
+  });
+
+  it("a job without a sink works as before", async () => {
+    const { job } = makeJob();
+    expect((await job.run(APPLY)).status).toBe(STATUS.DONE);
+  });
+});
+
+describe("imagematch/job > an ad id block", () => {
+  const ads = [{ id: 11, platform: "P-77", domain_id: 7 }, { id: 12, platform: "P-78", domain_id: 7 }];
+  const db = () => makeUrlDb({ ads, variants: [imageOf(11), imageOf(12)] });
+
+  it("hashes the images of that one ad only, and tells which ad each result is for", async () => {
+    const { job, client } = makeJob({ sql: db() });
+    const sink = sinkOf();
+    job.results = sink;
+    const out = await job.run({ apply: true, jobId: "j9", addedBy: "tester", entry: { type: "ad_id", value: "P-77" }, generation: 3 });
+    expect(out.status).toBe(STATUS.DONE);
+    expect(client.hashUrl.mock.calls.map(([u]) => u)).toEqual([cdnUrl(11)]);
+    expect(sink.rows).toEqual([{ adId: 11, platformAdId: "P-77", sourceUrl: "fb/adImage/202610/11.jpeg", outcome: "hashed", reason: "", sha256: sha(cdnUrl(11)) }]);
+  });
+
+  it("an ad id that no ad has is no_owner, with no hashing", async () => {
+    const { job, client } = makeJob({ sql: db() });
+    const out = await job.run({ apply: true, jobId: "j9", addedBy: "tester", entry: { type: "ad_id", value: "P-404" } });
+    expect(out.status).toBe(STATUS.NO_OWNER);
+    expect(out.message).toMatch(/no ad has this ad id/);
+    expect(client.hashUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe("imagematch/job > a URL block", () => {
+  const ads = [
+    { id: 21, platform: "A21", domain_id: 7 }, { id: 22, platform: "A22", domain_id: 7 },
+    { id: 23, platform: "A23", domain_id: 7 }, { id: 24, platform: "A24", domain_id: 8 },
+  ];
+  const meta = {
+    21: "https://www.shop.example.com/landing?utm=1", 22: "https://shop.example.com/other", 23: "http://shop.example.com/landing/", 24: "https://shop.example.com/landing",
+  };
+  const db = () => makeUrlDb({ ads, meta, variants: [imageOf(21), imageOf(22), imageOf(23), imageOf(24)] });
+  const URL_ENTRY = { type: "url", value: "shop.example.com/landing" };
+
+  it("tells a media URL from a destination URL by more than the entry type", () => {
+    expect(urlRole("image_url", "x.example.com/a")).toBe("media");
+    expect(urlRole("url", "x.example.com/a.JPG")).toBe("media");
+    expect(urlRole("url", "x.example.com/clip.mp4?x=1")).toBe("media");
+    expect(urlRole("url", "shop.example.com/landing")).toBe("destination");
+    expect(urlRole("url", "shop.example.com/page.html")).toBe("destination");
+  });
+
+  it("a destination URL: finds its ads through the host's domain, compares like B1 does, and hashes only their stored images", async () => {
+    const { job, client, sql } = makeJob({ sql: db() });
+    const sink = sinkOf();
+    job.results = sink;
+    const out = await job.run({ apply: true, jobId: "j7", addedBy: "tester", entry: URL_ENTRY });
+    expect(out.status).toBe(STATUS.DONE);
+    // ads 21 (www, query) and 23 (http, trailing slash) are the URL; 22 is another page; 24 is on another domain row
+    expect(client.hashUrl.mock.calls.map(([u]) => u).sort()).toEqual([cdnUrl(21), cdnUrl(23)]);
+    expect(sink.rows.map((r) => r.platformAdId).sort()).toEqual(["A21", "A23"]);
+    // only indexed paths: the domain index, the domain_id index, the primary key of the meta table; never a search in the URL columns
+    for (const { text } of sql.calls) {
+      expect(text).not.toMatch(/\bLIKE\b|destination_url` =|image_url_original` =|OFFSET/i);
+    }
+    expect(sql.calls.some((c) => /FROM `facebook_ad_domains` WHERE `domain` IN/.test(c.text))).toBe(true);
+    expect(sql.calls.some((c) => /FROM `facebook_ad` WHERE `domain_id` IN/.test(c.text))).toBe(true);
+  });
+
+  it("a destination URL whose ads cannot be established is unresolved, not 'nothing found'", async () => {
+    const { job, client } = makeJob({ sql: db() });
+    const unknownHost = await job.run({ apply: true, jobId: "j7", addedBy: "t", entry: { type: "url", value: "unknown.example.org/x" } });
+    expect(unknownHost.status).toBe(STATUS.UNRESOLVED);
+    expect(unknownHost.message).toMatch(/no ad has this host/);
+
+    const small = makeJob({ sql: db(), config: { urlPageSize: 2, maxUrlAds: 2 } });
+    const tooMany = await small.job.run({ apply: true, jobId: "j8", addedBy: "t", entry: URL_ENTRY });
+    expect(tooMany.status).toBe(STATUS.UNRESOLVED);
+    expect(tooMany.message).toMatch(/more than 2 ads/);
+    expect(client.hashUrl).not.toHaveBeenCalled();
+    expect(small.client.hashUrl).not.toHaveBeenCalled();
+  });
+
+  it("a destination URL with no matching ad on a host that has ads is no_owner", async () => {
+    const { job } = makeJob({ sql: db() });
+    const out = await job.run({ apply: true, jobId: "j7", addedBy: "t", entry: { type: "url", value: "shop.example.com/never-used" } });
+    expect(out.status).toBe(STATUS.NO_OWNER);
+  });
+
+  it("a media URL: hashes the file itself and adds its hash, but reports its ads as unresolved (no index finds them)", async () => {
+    for (const entry of [{ type: "image_url", value: "cdn.example.com/a/b.jpg" }, { type: "url", value: "cdn.example.com/a/b.jpg" }]) {
+      const { job, client, blocklist, sql } = makeJob({ sql: db() });
+      const sink = sinkOf();
+      job.results = sink;
+      const out = await job.run({ apply: true, jobId: "j6", addedBy: "tester", reason: "r", complaintId: "11111111-1111-1111-1111-111111111111", entry });
+      expect(out.status).toBe(STATUS.UNRESOLVED);
+      expect(out.message).toMatch(/ads that use it cannot be searched/);
+      expect(client.hashUrl.mock.calls.map(([u]) => u)).toEqual(["https://cdn.example.com/a/b.jpg"]);
+      expect(blocklist.adds[0][0]).toMatchObject({ entryType: "image_hash", imageSha256: sha("https://cdn.example.com/a/b.jpg"), source: "imagematch:job" });
+      expect(JSON.parse(blocklist.adds[0][0].details)).toEqual({ job: "j6", media_url: "cdn.example.com/a/b.jpg" });
+      expect(sink.rows).toEqual([{ adId: "", platformAdId: null, sourceUrl: "cdn.example.com/a/b.jpg", outcome: "hashed", reason: "", sha256: sha("https://cdn.example.com/a/b.jpg") }]);
+      expect(sql.calls).toHaveLength(0); // no ad table was read for it
+    }
+  });
+
+  it("a media URL that is not an image file (a video) is not sent to the service, and is still unresolved", async () => {
+    const { job, client } = makeJob({ sql: db() });
+    const sink = sinkOf();
+    job.results = sink;
+    const out = await job.run({ apply: true, jobId: "j6", addedBy: "t", entry: { type: "url", value: "cdn.example.com/clip.mp4" } });
+    expect(out.status).toBe(STATUS.UNRESOLVED);
+    expect(client.hashUrl).not.toHaveBeenCalled();
+    expect(sink.rows[0]).toMatchObject({ outcome: "skipped", reason: "not an image file" });
+  });
+
+  it("a dry run shows the ads of the URL and writes nothing", async () => {
+    const { job, client, blocklist } = makeJob({ sql: db() });
+    const out = await job.run({ entry: URL_ENTRY });
+    expect(out.status).toBe(STATUS.DRY_RUN);
+    expect(out.owners[0]).toMatchObject({ adsCount: 2 });
+    expect(client.hashUrl).not.toHaveBeenCalled();
+    expect(blocklist.adds).toHaveLength(0);
+  });
+});

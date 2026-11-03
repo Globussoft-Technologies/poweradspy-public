@@ -15,6 +15,9 @@
  *   GET  /api/v1/copyright/review?network=&status=pending&afterId=&limit=      the images held for a person (token required)
  *   POST /api/v1/copyright/review/:id   { network, decision: "allow"|"block", reviewedBy, note? }   decide one (token required)
  *   POST /api/v1/copyright/images/search { network, sha256?, phash?, maxDistance?, limit? }   which stored images are this banned image (token required)
+ *   GET  /api/v1/copyright/jobs?network=&jobId=&blocklistId=&status=&afterId=&limit=           the hash jobs: status, generations, counts (token required)
+ *   GET  /api/v1/copyright/jobs/:id/results?network=&generation=&outcome=&afterId=&limit=       what happened to each image of one run (token required)
+ *   POST /api/v1/copyright/jobs/requeue  { network, blocklistId, mode: "rerun"|"resume" }       run a job again / continue a limit_reached job (token required)
  *   POST /api/v1/copyright/advertiser/block   { name, reason? }
  *        -> 200 { code, message, data: { complaintId, name, found, adsFound } }
  *           400 the name (or reason) cannot be used   401 missing / wrong token   429 too many requests
@@ -62,9 +65,10 @@ const reply = (res, code, message, data = null) => res.status(code).json({ code,
  * @param {Object} [deps.settings]  config.compliance.request
  * @param {Function} [deps.submit]  submitAdvertiser
  */
-function createRouter({ settings = config.compliance?.request || {}, submit, review, search } = {}) {
+function createRouter({ settings = config.compliance?.request || {}, submit, review, search, jobs } = {}) {
   const run = submit || ((input) => require('../compliance/imagematch/worker').submitAdvertiser(input));
   const reviewApi = () => review || require('../compliance/imagematch/worker').review;
+  const jobsApi = () => jobs || require('../compliance/imagematch/worker').jobs;
   const runSearch = search || (async (network, query) => {
     const sql = require('../database/DatabaseManager').getSQL(network);
     if (!sql) return { ok: false, error: 'no_database', message: 'there is no database connection for that network' };
@@ -98,7 +102,7 @@ function createRouter({ settings = config.compliance?.request || {}, submit, rev
     log.warn('copyright review request with a missing or wrong token', { requestId: req.id });
     return reply(res, 401, 'Not authorised.');
   }
-  const STATUS_CODE = { not_found: 404, already_resolved: 409, failed: 503, no_database: 503 };
+  const STATUS_CODE = { not_found: 404, already_resolved: 409, not_resumable: 409, failed: 503, no_database: 503 };
 
   const router = Router();
   router.post('/advertiser/block', limiter, authorize, asyncHandler(async (req, res) => {
@@ -126,6 +130,28 @@ function createRouter({ settings = config.compliance?.request || {}, submit, rev
     const out = await reviewApi().resolve({ network: body.network, id: req.params.id, decision: body.decision, reviewedBy: body.reviewedBy, note: typeof body.note === 'string' ? body.note : undefined });
     if (!out.ok) return reply(res, STATUS_CODE[out.error] || 400, out.message);
     return reply(res, 200, out.message || 'ok', { id: out.id, status: out.status, blocklistAdded: out.blocklistAdded });
+  }));
+
+  // The hand-over to takedown (B3): the hash jobs, what happened to each image of a run, and asking a job to run again.
+  router.get('/jobs', limiter, strictAuth, asyncHandler(async (req, res) => {
+    const q = req.query;
+    const out = await jobsApi().list({ network: q.network, jobId: q.jobId, blocklistId: q.blocklistId, status: q.status, afterId: q.afterId, limit: q.limit });
+    if (!out.ok) return reply(res, STATUS_CODE[out.error] || 400, out.message);
+    return reply(res, 200, 'ok', { items: out.items, next: out.next });
+  }));
+
+  router.get('/jobs/:id/results', limiter, strictAuth, asyncHandler(async (req, res) => {
+    const q = req.query;
+    const out = await jobsApi().results({ network: q.network, jobId: req.params.id, generation: q.generation, outcome: q.outcome, afterId: q.afterId, limit: q.limit });
+    if (!out.ok) return reply(res, STATUS_CODE[out.error] || 400, out.message);
+    return reply(res, 200, 'ok', { job: out.job, generation: out.generation, latestGeneration: out.latestGeneration, items: out.items, next: out.next });
+  }));
+
+  router.post('/jobs/requeue', limiter, strictAuth, asyncHandler(async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const out = await jobsApi().requeue({ network: body.network, blocklistId: body.blocklistId, mode: body.mode });
+    if (!out.ok) return reply(res, STATUS_CODE[out.error] || 400, out.message);
+    return reply(res, 200, 'ok', { mode: out.mode });
   }));
 
   router.post('/images/search', limiter, strictAuth, asyncHandler(async (req, res) => {

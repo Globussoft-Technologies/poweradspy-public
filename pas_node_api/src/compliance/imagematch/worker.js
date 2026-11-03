@@ -22,12 +22,16 @@
  */
 
 const { hasImageExtension } = require('./sources');
+const { slotHash } = require('./job');
 
 const BLOCKLIST_TABLE = 'copyright_blocklist';
 const JOBS_TABLE = 'copyright_image_hash_jobs';
-const ENTRY_TYPES = ['advertiser', 'page'];
+const RESULTS_TABLE = 'copyright_image_hash_results';
+// The blocklist entry types that get a job: an advertiser / page (its ads), one ad id, a URL (its ads, if they can be found).
+const ENTRY_TYPES = ['advertiser', 'page', 'ad_id', 'url', 'image_url'];
 const NAME_MAX = 255;
 const ERROR_MAX = 512;
+const LAST_REAL_ENTRY = 4294967294; // 4294967295 is the backfill cursor row; 0 is the sweep cursor row
 
 const JOB = Object.freeze({
   PENDING: 'pending',
@@ -35,6 +39,7 @@ const JOB = Object.freeze({
   DONE: 'done',
   NO_OWNER: 'no_owner',
   LIMIT_REACHED: 'limit_reached',
+  UNRESOLVED: 'unresolved',
   FAILED: 'failed',
 });
 
@@ -44,38 +49,42 @@ const cut = (value, max) => (value === undefined || value === null ? null : Stri
 const asciiId = (value) => String(value ?? '').replace(/[^\x20-\x7e]/g, '?').slice(0, 128);
 
 /**
- * Blocked advertisers that have no job yet, for one network: its own entries and the 'all' ones.
- * An anti-join on the unique key (network, blocklist_id); one query per scope so each reads the
- * (network, status) index in id order. The blocklist is small, so this is cheap to repeat.
+ * Blocked entries that have no job yet, for one network: its own entries and the 'all' ones. An anti-join on the unique key
+ * (network, blocklist_id). One query per scope and entry type, each an equality on the first two columns of the blocklist's unique key
+ * (network, entry_type, value_sha256): it reads only the few advertiser / page / ad id / URL entries and never walks the image_hash
+ * entries, which are the bulk of the table.
  *
- * @returns {Promise<Array<{ id, value, complaint_id }>>}
+ * @returns {Promise<Array<{ id, value, complaint_id, entry_type }>>}
  */
 async function findNewAdvertisers(sql, network, { limit = 100 } = {}) {
   const n = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
   const out = [];
   const seen = new Set();
   for (const scope of network === 'all' ? ['all'] : [network, 'all']) {
-    const rows = await sql.query(
-      `SELECT b.id AS id, b.value AS value, b.complaint_id AS complaint_id
-         FROM ${BLOCKLIST_TABLE} b
-         LEFT JOIN ${JOBS_TABLE} j ON j.network = ? AND j.blocklist_id = b.id
-        WHERE b.network = ?
-          AND b.status = 'active'
-          AND b.entry_type IN (${ENTRY_TYPES.map(() => '?').join(', ')})
-          AND (b.expires_at IS NULL OR b.expires_at > UTC_TIMESTAMP())
-          AND j.id IS NULL
-        ORDER BY b.id
-        LIMIT ${n}`,
-      [network, scope, ...ENTRY_TYPES]
-    );
-    for (const row of rows) {
-      if (!seen.has(row.id)) {
-        seen.add(row.id);
-        out.push(row);
+    for (const type of ENTRY_TYPES) {
+      if (out.length >= n) return out;
+      const rows = await sql.query(
+        `SELECT b.id AS id, b.value AS value, b.complaint_id AS complaint_id, b.entry_type AS entry_type
+           FROM ${BLOCKLIST_TABLE} b
+           LEFT JOIN ${JOBS_TABLE} j ON j.network = ? AND j.blocklist_id = b.id
+          WHERE b.network = ?
+            AND b.entry_type = ?
+            AND b.status = 'active'
+            AND (b.expires_at IS NULL OR b.expires_at > UTC_TIMESTAMP())
+            AND j.id IS NULL
+          ORDER BY b.id
+          LIMIT ${n}`,
+        [network, scope, type]
+      );
+      for (const row of rows) {
+        if (!seen.has(row.id)) {
+          seen.add(row.id);
+          out.push(row);
+        }
       }
     }
   }
-  return out;
+  return out.slice(0, n);
 }
 
 /** Create the jobs, one per blocklist entry. Idempotent: an entry that already has a job is left alone. */
@@ -86,22 +95,121 @@ async function createJobs(sql, network, entries) {
     // An id is a positive whole number (or its digits as text). Number(null) and Number('') are 0: not an id.
     const id = typeof e.id === 'number' ? e.id : (typeof e.id === 'string' && /^\d+$/.test(e.id) ? Number(e.id) : NaN);
     const name = cut(e.value, NAME_MAX)?.trim();
-    if (Number.isSafeInteger(id) && id > 0 && name) rows.push({ id, name, complaintId: e.complaint_id || null });
+    const type = ENTRY_TYPES.includes(e.entry_type) ? e.entry_type : 'advertiser';
+    if (Number.isSafeInteger(id) && id > 0 && id <= LAST_REAL_ENTRY && name) rows.push({ id, name, type, complaintId: e.complaint_id || null });
   }
   if (!rows.length) return { created: 0 };
   const now = utc();
   const params = [];
   for (const r of rows) {
-    params.push(network, r.id, r.name, r.complaintId, JOB.PENDING, 0, 0, now, now);
+    params.push(network, r.id, r.type, r.name, r.complaintId, JOB.PENDING, 0, 1, 0, 0, 0, now, now);
   }
   const result = await sql.query(
     `INSERT INTO ${JOBS_TABLE}
-       (network, blocklist_id, advertiser_name, complaint_id, status, attempts, progress_seq, created_at, updated_at)
-     VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}
+       (network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, created_at, updated_at)
+     VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}
      ON DUPLICATE KEY UPDATE id = id`,
     params
   );
   return { created: result?.affectedRows ?? rows.length };
+}
+
+/**
+ * Entries that were blocked AGAIN after their job was made: the blocklist upsert of a repeated block sets updated_at, so an active
+ * entry changed after its job last asked for a run (requested_at, or created_at) is a new block. Same per scope / type query shape as
+ * findNewAdvertisers. @returns {Promise<number[]>} blocklist ids
+ */
+async function findReblocked(sql, network, { limit = 100 } = {}) {
+  const n = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
+  const ids = [];
+  for (const scope of network === 'all' ? ['all'] : [network, 'all']) {
+    for (const type of ENTRY_TYPES) {
+      if (ids.length >= n) return ids;
+      const rows = await sql.query(
+        `SELECT b.id AS id
+           FROM ${BLOCKLIST_TABLE} b
+           JOIN ${JOBS_TABLE} j ON j.network = ? AND j.blocklist_id = b.id
+          WHERE b.network = ?
+            AND b.entry_type = ?
+            AND b.status = 'active'
+            AND (b.expires_at IS NULL OR b.expires_at > UTC_TIMESTAMP())
+            AND b.updated_at > COALESCE(j.requested_at, j.created_at)
+          ORDER BY b.id
+          LIMIT ${n}`,
+        [network, scope, type]
+      );
+      for (const row of rows) if (!ids.includes(row.id)) ids.push(row.id);
+    }
+  }
+  return ids.slice(0, n);
+}
+
+/**
+ * A new request for the entry's work (a re-block, or someone asking for a rerun): a new generation. A job that is waiting or finished goes
+ * back to pending with a clean slate (a fresh run, counted from zero). A job that is RUNNING keeps running; the generation is only raised,
+ * and when that run ends finish() sees that a newer generation was asked for and sends the job back to pending instead of closing it,
+ * so an older run is never taken for covering the newer block. The cursor rows (sweep, backfill) are never touched.
+ * @returns {Promise<boolean>} true when a job was found
+ */
+async function requestRun(sql, network, blocklistId) {
+  const now = utc();
+  const result = await sql.query(
+    `UPDATE ${JOBS_TABLE}
+        SET requested_gen = requested_gen + 1, requested_at = ?,
+            state = IF(status = 'running', state, NULL),
+            attempts = IF(status = 'running', attempts, 0),
+            last_error = IF(status = 'running', last_error, NULL),
+            finished_at = IF(status = 'running', finished_at, NULL),
+            claimed_by = IF(status = 'running', claimed_by, NULL),
+            claimed_at = IF(status = 'running', claimed_at, NULL),
+            heartbeat_at = IF(status = 'running', heartbeat_at, NULL),
+            status = IF(status = 'running', 'running', 'pending'),
+            progress_seq = progress_seq + 1, updated_at = ?
+      WHERE network = ? AND blocklist_id = ? AND blocklist_id > 0 AND blocklist_id <= ${LAST_REAL_ENTRY}`,
+    [now, now, network, blocklistId]
+  );
+  return Boolean(result?.affectedRows);
+}
+
+/**
+ * Ask for the re-run of every entry that was blocked again (see findReblocked). A few, each one UPDATE.
+ * @returns {Promise<number>} jobs asked to run again
+ */
+async function requestReblocked(sql, network, options = {}) {
+  let count = 0;
+  for (const id of await findReblocked(sql, network, options)) {
+    if (await requestRun(sql, network, id)) count += 1;
+  }
+  return count;
+}
+
+/**
+ * Continue a job that stopped at its image cap (limit_reached): the SAME generation, from its saved place, with the image counter back at
+ * zero so it gets a new allowance of images. Only a limit_reached job can be resumed.
+ * @returns {Promise<{ ok: boolean, reason?: string }>}
+ */
+async function resumeLimited(sql, network, blocklistId) {
+  const rows = await sql.query(
+    `SELECT id, status, state, progress_seq FROM ${JOBS_TABLE} WHERE network = ? AND blocklist_id = ? AND blocklist_id > 0 AND blocklist_id <= ${LAST_REAL_ENTRY} LIMIT 1`,
+    [network, blocklistId]
+  );
+  const job = rows[0];
+  if (!job) return { ok: false, reason: 'no_job' };
+  if (job.status !== JOB.LIMIT_REACHED) return { ok: false, reason: 'not_limit_reached' };
+  let state = null;
+  try { state = job.state ? JSON.parse(job.state) : null; } catch { state = null; }
+  if (!state || typeof state !== 'object') return { ok: false, reason: 'no_saved_place' };
+  state.stats = { ...(state.stats || {}), requested: 0 };
+  const now = utc();
+  // progress_seq makes this a compare-and-set: if the row changed since it was read nothing is updated.
+  const result = await sql.query(
+    `UPDATE ${JOBS_TABLE}
+        SET status = 'pending', attempts = 0, last_error = NULL, finished_at = NULL, claimed_by = NULL, claimed_at = NULL, heartbeat_at = NULL,
+            state = ?, progress_seq = progress_seq + 1, updated_at = ?
+      WHERE id = ? AND status = 'limit_reached' AND progress_seq = ?`,
+    [JSON.stringify(state), now, job.id, job.progress_seq]
+  );
+  return result?.affectedRows ? { ok: true } : { ok: false, reason: 'changed_meanwhile' };
 }
 
 /**
@@ -116,7 +224,7 @@ async function claimNext(sql, network, workerId, staleBefore) {
   const stale = utc(staleBefore);
   const claimed = await sql.query(
     `UPDATE ${JOBS_TABLE}
-        SET status = 'running', claimed_by = ?, claimed_at = ?, heartbeat_at = ?, attempts = attempts + 1,
+        SET status = 'running', run_gen = requested_gen, claimed_by = ?, claimed_at = ?, heartbeat_at = ?, attempts = attempts + 1,
             progress_seq = progress_seq + 1, updated_at = ?
       WHERE id = (SELECT id FROM (
                     SELECT id FROM ${JOBS_TABLE}
@@ -127,7 +235,7 @@ async function claimNext(sql, network, workerId, staleBefore) {
   );
   if (!claimed?.affectedRows) return null;
   const rows = await sql.query(
-    `SELECT id, network, blocklist_id, advertiser_name, complaint_id, attempts, state
+    `SELECT id, network, blocklist_id, entry_type, advertiser_name, complaint_id, attempts, run_gen, state
        FROM ${JOBS_TABLE}
       WHERE network = ? AND claimed_by = ? AND status = 'running'
       ORDER BY claimed_at DESC, id DESC
@@ -155,14 +263,31 @@ async function saveProgress(sql, jobId, workerId, stateJson) {
   return Boolean(result?.affectedRows);
 }
 
-/** End the job with a final status. @returns {Promise<boolean>} false when this worker no longer holds the job */
+/**
+ * End the job with a final status. covered_gen moves up to the run's generation only for a COMPLETE result (done, no_owner). If a newer
+ * generation was asked for while this run was going (requested_gen > run_gen: a re-block), the result is NOT final for it: the job goes
+ * back to pending with a clean slate, covered_gen stays, and it runs again for the newer block.
+ * (UPDATE assignments are evaluated left to right; none of them changes requested_gen or run_gen, so every IF sees the same values.)
+ * @returns {Promise<boolean>} false when this worker no longer holds the job
+ */
 async function finish(sql, jobId, workerId, status, { error } = {}) {
   const now = utc();
+  const covers = status === JOB.DONE || status === JOB.NO_OWNER ? 1 : 0;
+  const newer = 'requested_gen > run_gen';
   const result = await sql.query(
     `UPDATE ${JOBS_TABLE}
-        SET status = ?, last_error = ?, finished_at = ?, progress_seq = progress_seq + 1, updated_at = ?
+        SET covered_gen = IF(${newer} OR ? = 0, covered_gen, run_gen),
+            state = IF(${newer}, NULL, state),
+            attempts = IF(${newer}, 0, attempts),
+            last_error = IF(${newer}, NULL, ?),
+            finished_at = IF(${newer}, NULL, ?),
+            claimed_by = IF(${newer}, NULL, claimed_by),
+            claimed_at = IF(${newer}, NULL, claimed_at),
+            heartbeat_at = IF(${newer}, NULL, heartbeat_at),
+            status = IF(${newer}, 'pending', ?),
+            progress_seq = progress_seq + 1, updated_at = ?
       WHERE id = ? AND claimed_by = ? AND status = 'running'`,
-    [status, cut(error, ERROR_MAX), now, now, jobId, asciiId(workerId)]
+    [covers, cut(error, ERROR_MAX), now, status, now, jobId, asciiId(workerId)]
   );
   return Boolean(result?.affectedRows);
 }
@@ -176,7 +301,8 @@ async function release(sql, jobId, workerId, { error, refundAttempt = false } = 
   const result = await sql.query(
     `UPDATE ${JOBS_TABLE}
         SET status = 'pending', claimed_by = NULL, claimed_at = NULL, heartbeat_at = NULL,
-            attempts = IF(?, GREATEST(attempts, 1) - 1, attempts),
+            state = IF(requested_gen > run_gen, NULL, state),
+            attempts = IF(requested_gen > run_gen, 0, IF(?, GREATEST(attempts, 1) - 1, attempts)),
             last_error = ?, progress_seq = progress_seq + 1, updated_at = ?
       WHERE id = ? AND claimed_by = ? AND status = 'running'`,
     [refundAttempt ? 1 : 0, cut(error, ERROR_MAX), now, jobId, asciiId(workerId)]
@@ -201,8 +327,8 @@ async function sweepEnsure(sql, network, stateJson, kind = SWEEP) {
   const now = utc();
   await sql.query(
     `INSERT IGNORE INTO ${JOBS_TABLE}
-       (network, blocklist_id, advertiser_name, complaint_id, status, attempts, progress_seq, state, created_at, updated_at)
-     SELECT ?, ${kind.entry}, '${kind.label}', NULL, '${kind.status}', 0, 0, ?, ?, ?
+       (network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, state, created_at, updated_at)
+     SELECT ?, ${kind.entry}, '${kind.status}', '${kind.label}', NULL, '${kind.status}', 0, 0, 0, 0, 0, ?, ?, ?
        FROM DUAL
       WHERE NOT EXISTS (SELECT 1 FROM ${JOBS_TABLE} WHERE network = ? AND blocklist_id = ${kind.entry})`,
     [network, stateJson, now, now, network]
@@ -331,8 +457,71 @@ async function resolveReview(sql, { network, id, status, reviewedBy, note }) {
   return Boolean(result?.affectedRows);
 }
 
+/**
+ * Write what a hash job did with images (copyright_image_hash_results): one row per (job, generation, ad, image). Idempotent: a repeated
+ * page (a resumed job) updates the same rows. Identifiers and outcomes only. @returns {Promise<number>} rows written
+ */
+async function recordJobResults(sql, rows, { network, jobId, blocklistId, generation }) {
+  const list = (rows || []).filter((r) => r && r.outcome && r.sourceUrl !== undefined);
+  if (!list.length) return 0;
+  const now = utc();
+  for (let i = 0; i < list.length; i += 200) {
+    const chunk = list.slice(i, i + 200);
+    const params = [];
+    for (const r of chunk) {
+      params.push(network, jobId, blocklistId, generation, cut(r.platformAdId, 255), cut(r.adId, 255) ?? '', slotHash(r.sourceUrl),
+        cut(r.sourceUrl, 2048) ?? '', r.outcome, cut(r.reason, 128) ?? '', r.sha256 || null, now, now);
+    }
+    await sql.query(
+      `INSERT INTO ${RESULTS_TABLE}
+         (network, job_id, blocklist_id, generation, platform_ad_id, internal_ad_id, slot_hash, source_url, outcome, reason, sha256, created_at, updated_at)
+       VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}
+       ON DUPLICATE KEY UPDATE platform_ad_id = VALUES(platform_ad_id), outcome = VALUES(outcome), reason = VALUES(reason),
+         sha256 = VALUES(sha256), updated_at = VALUES(updated_at)`,
+      params
+    );
+  }
+  return list.length;
+}
+
+/** Jobs of a network by id order (the real ones: not the sweep / backfill cursor rows), optionally one entry or one status. */
+async function listJobs(sql, { network, jobId, blocklistId, status, afterId = 0, limit = 50 } = {}) {
+  const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  const where = ['network = ?', 'id > ?', 'blocklist_id > 0', `blocklist_id <= ${LAST_REAL_ENTRY}`];
+  const params = [network, Number.isSafeInteger(Number(afterId)) && Number(afterId) > 0 ? Number(afterId) : 0];
+  if (jobId !== undefined && jobId !== null && jobId !== '') { where.push('id = ?'); params.push(Number(jobId)); }
+  if (blocklistId !== undefined && blocklistId !== null && blocklistId !== '') { where.push('blocklist_id = ?'); params.push(Number(blocklistId)); }
+  if (status) { where.push('status = ?'); params.push(String(status)); }
+  return sql.query(
+    `SELECT id, network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen,
+            requested_at, last_error, created_at, updated_at, finished_at, state
+       FROM ${JOBS_TABLE}
+      WHERE ${where.join(' AND ')}
+      ORDER BY id
+      LIMIT ${n}`,
+    params
+  );
+}
+
+/** The results of one run (generation) of one job, by id. outcome is optional ('hashed', 'duplicate', 'skipped', 'failed'). */
+async function listJobResults(sql, { network, jobId, generation, outcome, afterId = 0, limit = 200 } = {}) {
+  const n = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1000);
+  const where = ['network = ?', 'job_id = ?', 'generation = ?', 'id > ?'];
+  const params = [network, jobId, generation, Number.isSafeInteger(Number(afterId)) && Number(afterId) > 0 ? Number(afterId) : 0];
+  if (outcome) { where.push('outcome = ?'); params.push(String(outcome)); }
+  return sql.query(
+    `SELECT id, job_id, blocklist_id, generation, platform_ad_id, internal_ad_id, source_url, outcome, reason, sha256, created_at, updated_at
+       FROM ${RESULTS_TABLE}
+      WHERE ${where.join(' AND ')}
+      ORDER BY id
+      LIMIT ${n}`,
+    params
+  );
+}
+
 const jobRepository = {
   findNewAdvertisers, createJobs, claimNext, loadState, saveProgress, finish, release,
+  findReblocked, requestRun, requestReblocked, resumeLimited, recordJobResults, listJobs, listJobResults,
   sweepEnsure, sweepClaim, sweepSave, sweepRelease, queueForReview,
   recordHashes, listReview, getReview, resolveReview,
 };
@@ -431,6 +620,7 @@ const FINAL = new Map([
   [STATUS.DONE, JOB.DONE],
   [STATUS.NO_OWNER, JOB.NO_OWNER],
   [STATUS.LIMIT_REACHED, JOB.LIMIT_REACHED],
+  [STATUS.UNRESOLVED, JOB.UNRESOLVED], // the ads of a URL block could not be found: final, and never counted as covered
 ]);
 
 const workerIdOf = () => `${os.hostname()}:${process.pid}`.replace(/[^\x20-\x7e]/g, '?').slice(0, 128);
@@ -495,6 +685,15 @@ class HashWorker {
           if (swept.pause) this.pause(swept.pause);
           if (this.now().getTime() < this.pauseUntil) { summary.paused = true; break; }
         }
+        // A block repeated after its job was made asks for a new run (a new generation); a failure here never stops the jobs.
+        if (this.repo.requestReblocked) {
+          try {
+            const again = await this.repo.requestReblocked(sql, network);
+            if (again) this.log.info('blocked again: hash jobs asked to run again', { network, count: again });
+          } catch (err) {
+            this.log.warn('could not look for re-blocked entries', { network, error: err.message });
+          }
+        }
         summary.created += await this.discover(network, sql);
         // With a time budget (the cron) several small jobs finish one after another in the same pass; a job cut off by the budget
         // (or lost to another worker) ends the pass. Without a budget one job runs, as before.
@@ -539,7 +738,12 @@ class HashWorker {
     if (!job) return null;
 
     const checkpoint = new DbCheckpoint({ sql, workerId: this.workerId, repo: this.repo });
-    const runner = this.makeJob({ network, sql, checkpoint });
+    // What the run does with each image is written to copyright_image_hash_results under this run's generation.
+    const generation = Number(job.run_gen) > 0 ? Number(job.run_gen) : 1;
+    const results = this.repo.recordJobResults
+      ? { record: (rows) => this.repo.recordJobResults(sql, rows, { network, jobId: job.id, blocklistId: job.blocklist_id, generation }) }
+      : null;
+    const runner = this.makeJob({ network, sql, checkpoint, results });
     this.log.info('hashing the images of a blocked advertiser', { network, jobId: job.id, advertiser: job.advertiser_name, attempt: job.attempts });
     const budgetTimer = deadline === null ? null : setTimeout(() => runner.requestStop(), Math.max(deadline - this.now().getTime(), 0));
     try {
@@ -552,6 +756,8 @@ class HashWorker {
         addedBy: this.config.addedBy,
         reason: `auto: advertiser "${job.advertiser_name}" is blocked`,
         complaintId: job.complaint_id || undefined,
+        entry: { type: job.entry_type || 'advertiser', value: job.advertiser_name },
+        generation,
       });
       return await this.settle(sql, job, result);
     } catch (err) {
@@ -1002,9 +1208,9 @@ function createRunner(deps = {}) {
 
     client = new ImageHashClient({ config: im, log });
     const jobConfig = { ...im.job, maxImages: im.worker.maxImagesPerJob };
-    const makeJob = ({ network, sql, checkpoint }) => new HashJob({
+    const makeJob = ({ network, sql, checkpoint, results }) => new HashJob({
       network, source: sourceFor(network), sql, client, blocklist, cdnBase: config.cdn?.baseUrl || '',
-      hashVersion: im.hashVersion, config: jobConfig, checkpoint, log,
+      hashVersion: im.hashVersion, config: jobConfig, checkpoint, results, log,
     });
     let sweeper = null;
     if (im.sweep && im.sweep.enabled === true) {
@@ -1153,7 +1359,9 @@ function createIntake(deps = {}) {
       // The hashing job is created now, so it is visible at once (the cron would also find the entry; creating it twice is harmless).
       const hashing = await Promise.all(blocked.filter((b) => b.blocklistId && supported.includes(b.network)).map(async (b) => {
         try {
-          await repo.createJobs(getSql(b.network), b.network, [{ id: b.blocklistId, value: clean, complaint_id: complaint }]);
+          await repo.createJobs(getSql(b.network), b.network, [{ id: b.blocklistId, value: clean, complaint_id: complaint, entry_type: 'advertiser' }]);
+          // The same name blocked again after its job finished: the job is asked to run again (a new generation), at once.
+          if (repo.requestReblocked) await repo.requestReblocked(getSql(b.network), b.network).catch(() => {});
           return { network: b.network, queued: true };
         } catch (err) {
           return { network: b.network, queued: false };
@@ -1313,9 +1521,116 @@ async function searchStored(sql, network, { sha256, phash, algo = 'sscd-simhash-
 
 const review = createReview();
 
+// ═══ 8. What B3 reads: the jobs, their results, and asking for a run again ═══
+/**
+ * The hand-over to takedown (B3), on token-protected routes (services/copyrightRequest.js):
+ *
+ *   jobs.list({ network, jobId?, blocklistId?, status?, afterId?, limit? })   the jobs: status, generations, counts, per-owner progress
+ *   jobs.results({ network, jobId, generation?, outcome?, afterId?, limit? }) what happened to each image of one run of one job
+ *   jobs.requeue({ network, blocklistId, mode })                              mode 'rerun': a new generation, from scratch
+ *                                                                              mode 'resume': continue a limit_reached job with a new image allowance
+ *
+ * A job covers the LATEST request for its entry only when coversLatest is true (status done / no_owner and coveredGen >= requestedGen).
+ * generation tells runs apart: a requeue writes its results under a new generation and the previous run's rows stay, so the previous run
+ * and the current run are never mixed. results defaults to the job's latest run. Identifiers and outcomes only; nothing here deletes.
+ */
+function describeJob(row) {
+  let state = null;
+  try { state = row.state ? JSON.parse(row.state) : null; } catch { state = null; }
+  const complete = row.status === JOB.DONE || row.status === JOB.NO_OWNER;
+  return {
+    id: row.id, network: row.network, blocklistId: row.blocklist_id, entryType: row.entry_type, value: row.advertiser_name, complaintId: row.complaint_id || null,
+    status: row.status, attempts: row.attempts,
+    requestedGen: row.requested_gen, runGen: row.run_gen, coveredGen: row.covered_gen,
+    coversLatest: complete && Number(row.covered_gen) >= Number(row.requested_gen),
+    requestedAt: row.requested_at || null, createdAt: row.created_at, updatedAt: row.updated_at, finishedAt: row.finished_at || null,
+    lastError: row.last_error || null,
+    stats: state && state.stats ? state.stats : null,
+    progress: state && state.owners ? state.owners : null,
+  };
+}
+
+function createJobsApi(deps = {}) {
+  const repo = deps.jobRepository || jobRepository;
+  const bad = (error, message) => ({ ok: false, error, message });
+  const sqlOf = (network) => (deps.getSql ? deps.getSql(network) : require('../../database/DatabaseManager').getSQL(network));
+  const slugOf = (network) => (typeof network === 'string' && NETWORK.test(network.trim().toLowerCase()) ? network.trim().toLowerCase() : null);
+  const whole = (v) => (typeof v === 'number' ? v : (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN));
+  const OUTCOMES = ['hashed', 'duplicate', 'skipped', 'failed'];
+
+  async function list({ network, jobId, blocklistId, status, afterId = 0, limit = 50 } = {}) {
+    const slug = slugOf(network);
+    if (!slug) return bad('invalid_network', 'network must be a network slug');
+    for (const [name, v] of [['jobId', jobId], ['blocklistId', blocklistId]]) {
+      if (v !== undefined && v !== null && v !== '' && !(Number.isSafeInteger(whole(v)) && whole(v) > 0)) return bad('invalid_id', `${name} must be a positive whole number`);
+    }
+    if (status !== undefined && status !== null && status !== '' && !Object.values(JOB).includes(status)) return bad('invalid_status', `status must be one of ${Object.values(JOB).join(', ')}`);
+    try {
+      const sql = sqlOf(slug);
+      if (!sql) return bad('no_database', 'there is no database connection for that network');
+      const rows = await repo.listJobs(sql, { network: slug, jobId, blocklistId, status: status || undefined, afterId, limit });
+      return { ok: true, items: rows.map(describeJob), next: rows.length ? rows[rows.length - 1].id : null };
+    } catch (err) {
+      return bad('failed', err.message);
+    }
+  }
+
+  async function results({ network, jobId, generation, outcome, afterId = 0, limit = 200 } = {}) {
+    const slug = slugOf(network);
+    if (!slug) return bad('invalid_network', 'network must be a network slug');
+    const id = whole(jobId);
+    if (!Number.isSafeInteger(id) || id <= 0) return bad('invalid_id', 'jobId must be a positive whole number');
+    if (outcome !== undefined && outcome !== null && outcome !== '' && !OUTCOMES.includes(outcome)) return bad('invalid_outcome', `outcome must be one of ${OUTCOMES.join(', ')}`);
+    try {
+      const sql = sqlOf(slug);
+      if (!sql) return bad('no_database', 'there is no database connection for that network');
+      const [job] = await repo.listJobs(sql, { network: slug, jobId: id, limit: 1 });
+      if (!job) return bad('not_found', 'no such job');
+      const wanted = generation === undefined || generation === null || generation === '' ? Number(job.run_gen) || 1 : whole(generation);
+      if (!Number.isSafeInteger(wanted) || wanted <= 0) return bad('invalid_generation', 'generation must be a positive whole number');
+      const rows = await repo.listJobResults(sql, { network: slug, jobId: id, generation: wanted, outcome: outcome || undefined, afterId, limit });
+      return {
+        ok: true, job: describeJob(job), generation: wanted, latestGeneration: Number(job.run_gen) || 1,
+        items: rows.map((r) => ({
+          id: r.id, platformAdId: r.platform_ad_id, internalAdId: r.internal_ad_id || null, sourceUrl: r.source_url, outcome: r.outcome, reason: r.reason || null, sha256: r.sha256 || null, updatedAt: r.updated_at,
+        })),
+        next: rows.length ? rows[rows.length - 1].id : null,
+      };
+    } catch (err) {
+      return bad('failed', err.message);
+    }
+  }
+
+  async function requeue({ network, blocklistId, mode } = {}) {
+    const slug = slugOf(network);
+    if (!slug) return bad('invalid_network', 'network must be a network slug');
+    const id = whole(blocklistId);
+    if (!Number.isSafeInteger(id) || id <= 0 || id > LAST_REAL_ENTRY) return bad('invalid_id', 'blocklistId must be a positive whole number');
+    if (mode !== 'rerun' && mode !== 'resume') return bad('invalid_mode', 'mode must be "rerun" or "resume"');
+    try {
+      const sql = sqlOf(slug);
+      if (!sql) return bad('no_database', 'there is no database connection for that network');
+      if (mode === 'rerun') {
+        const found = await repo.requestRun(sql, slug, id);
+        return found ? { ok: true, mode } : bad('not_found', 'that entry has no hash job yet (the worker creates it)');
+      }
+      const out = await repo.resumeLimited(sql, slug, id);
+      if (out.ok) return { ok: true, mode };
+      return bad(out.reason === 'no_job' ? 'not_found' : 'not_resumable', out.reason === 'no_job' ? 'that entry has no hash job' : `only a limit_reached job can be resumed (${out.reason})`);
+    } catch (err) {
+      return bad('failed', err.message);
+    }
+  }
+
+  return { list, results, requeue };
+}
+
+const jobs = createJobsApi();
+
 module.exports = {
   HashWorker, DEFAULTS,
   jobRepository, JOB_STATUS: JOB, ENTRY_TYPES, JOBS_TABLE, BLOCKLIST_TABLE,
   DbCheckpoint, ClaimLostError, NewAdSweeper, ImageBackfill, collectImages, SWEEP, BACKFILL, REVIEW_STATUS, createReview, review, searchStored,
   createRunner, inWindow, runImageHashJobs, createIntake, submitAdvertiser, cleanName,
+  createJobsApi, jobs, describeJob,
 };

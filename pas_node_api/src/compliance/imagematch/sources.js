@@ -28,7 +28,12 @@ const IDENTIFIER = /^[a-z][a-z0-9_]{0,63}$/;
 const SOURCES = {
   facebook: {
     owners: { table: 'facebook_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
-    ads: { table: 'facebook_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id' },
+    ads: { table: 'facebook_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    // destination URLs are in facebook_ad_meta_data (primary key facebook_ad_id) and the host in facebook_ad_domains (index on domain);
+    // facebook_ad.domain_id is indexed. There is NO index on destination_url, image_url or image_url_original (checked on dev), so a URL is
+    // never searched for in those columns: its ads are found through the domain (see urlAds in worker/job) or reported unresolved.
+    domains: { table: 'facebook_ad_domains', id: 'id', domain: 'domain' },
+    meta: { table: 'facebook_ad_meta_data', ad: 'facebook_ad_id', destination: 'destination_url' },
     variants: { table: 'facebook_ad_variants', ad: 'facebook_ad_id', image: 'image_url', original: 'image_url_original' },
     carousel: { table: 'facebook_ad_image_video', ad: 'facebook_ad_id', image: 'ad_image_video' },
   },
@@ -156,6 +161,48 @@ async function platformIds(sql, source, ids) {
     list
   );
   return new Map(rows.map((r) => [String(r.id), r.platform_id === null || r.platform_id === undefined || r.platform_id === '' ? null : String(r.platform_id)]));
+}
+
+/** Our row ids of ads by the platform's ad id (the unique-ish ad_id index), at most `limit`. @returns {Promise<number[]>} ids, ascending */
+async function adIdsByPlatformId(sql, source, platformIds, limit = 50) {
+  const list = clampIn((platformIds || []).filter((v) => typeof v === 'string' && v), 20);
+  if (!list.length) return [];
+  const a = source.ads;
+  const rows = await sql.query(
+    `SELECT ${q(a.id)} AS id FROM ${q(a.table)} WHERE ${q(a.platformId)} IN (${marks(list.length)}) ORDER BY ${q(a.id)} LIMIT ${Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200)}`,
+    list
+  );
+  return rows.map((r) => r.id);
+}
+
+/** Ids of the domain rows for some host spellings (the domain index). @returns {Promise<number[]>} */
+async function domainIds(sql, source, hosts) {
+  const list = clampIn((hosts || []).filter((v) => typeof v === 'string' && v), 10);
+  if (!list.length || !source.domains) return [];
+  const d = source.domains;
+  const rows = await sql.query(`SELECT ${q(d.id)} AS id FROM ${q(d.table)} WHERE ${q(d.domain)} IN (${marks(list.length)}) LIMIT 20`, list);
+  return rows.map((r) => r.id);
+}
+
+/** The next `limit` ads (id order) of some domains after `afterId` (the domain_id index). @returns {Promise<number[]>} */
+async function adIdsByDomainPage(sql, source, domainRowIds, afterId, limit) {
+  const ids = clampIn(domainRowIds || [], 20);
+  if (!ids.length || !source.ads.domain) return [];
+  const a = source.ads;
+  const n = Math.min(Math.max(parseInt(limit, 10) || 500, 1), MAX_IN);
+  const rows = await sql.query(
+    `SELECT ${q(a.id)} AS id FROM ${q(a.table)} WHERE ${q(a.domain)} IN (${marks(ids.length)}) AND ${q(a.id)} > ? ORDER BY ${q(a.id)} LIMIT ${n}`,
+    [...ids, afterId ?? 0]
+  );
+  return rows.map((r) => r.id);
+}
+
+/** @returns {Promise<Array<{ad_id, destination_url}>>} the destination URLs of some ads (primary key of the meta table) */
+async function destinationUrls(sql, source, adIds) {
+  const ids = clampIn(adIds || []);
+  if (!ids.length || !source.meta) return [];
+  const m = source.meta;
+  return sql.query(`SELECT ${q(m.ad)} AS ad_id, ${q(m.destination)} AS destination_url FROM ${q(m.table)} WHERE ${q(m.ad)} IN (${marks(ids.length)})`, ids);
 }
 
 /** The newest ad id (0 for none): the last entry of the primary key, so it costs one index read. */
@@ -290,6 +337,7 @@ function toFetchableUrl(stored, cdnBase) {
 module.exports = {
   SOURCES, IDENTIFIER, sourceFor,
   findOwners, ownersByIds, adIdsPage, newAdsPage, maxAdId, platformIds, hasImageExtension, variantImages, carouselImages, MAX_IN, MAX_OWNERS,
+  adIdsByPlatformId, domainIds, adIdsByDomainPage, destinationUrls,
   nameCandidates, MAX_CANDIDATES,
   toFetchableUrl,
 };

@@ -21,15 +21,15 @@ function makeStore(entries = []) {
     jobs,
     async findNewAdvertisers(_sql, network, { limit = 100 } = {}) {
       return entries
-        .filter((e) => (e.network === network || e.network === "all") && e.status === "active" && ["advertiser", "page"].includes(e.entry_type))
+        .filter((e) => (e.network === network || e.network === "all") && e.status === "active" && ["advertiser", "page", "ad_id", "url", "image_url"].includes(e.entry_type))
         .filter((e) => !jobs.some((j) => j.network === network && j.blocklist_id === e.id))
         .slice(0, limit)
-        .map((e) => ({ id: e.id, value: e.value, complaint_id: e.complaint_id || null }));
+        .map((e) => ({ id: e.id, value: e.value, complaint_id: e.complaint_id || null, entry_type: e.entry_type }));
     },
     async createJobs(_sql, network, list) {
       for (const e of list) {
         if (jobs.some((j) => j.network === network && j.blocklist_id === e.id)) continue;
-        jobs.push({ id: nextId++, network, blocklist_id: e.id, advertiser_name: e.value, complaint_id: e.complaint_id || null, status: "pending", attempts: 0, claimed_by: null, heartbeat_at: null, state: null, last_error: null });
+        jobs.push({ id: nextId++, network, blocklist_id: e.id, entry_type: e.entry_type || "advertiser", advertiser_name: e.value, complaint_id: e.complaint_id || null, status: "pending", attempts: 0, claimed_by: null, heartbeat_at: null, state: null, last_error: null });
       }
       return { created: list.length };
     },
@@ -83,7 +83,7 @@ function setup({ entries = [advertiser(1, "Twinkling Tree")], networks = ["faceb
 }
 
 describe("imagematch/worker > finding blocked advertisers", () => {
-  it("makes a job for each blocked advertiser or page, once, from its own entries and the 'all' ones", async () => {
+  it("makes a job for each blocked advertiser, page, ad id or URL, once, from its own entries and the 'all' ones", async () => {
     const entries = [
       advertiser(1, "Twinkling Tree"),
       advertiser(2, "Blue Moon", { entry_type: "page" }),
@@ -95,9 +95,10 @@ describe("imagematch/worker > finding blocked advertisers", () => {
     ];
     const t = setup({ entries });
     await t.worker.discover("facebook", {});
-    expect(t.jobs.map((j) => j.advertiser_name).sort()).toEqual(["Blue Moon", "Everywhere Ltd", "Twinkling Tree"]);
+    expect(t.jobs.map((j) => j.advertiser_name).sort()).toEqual(["A url", "An ad", "Blue Moon", "Everywhere Ltd", "Twinkling Tree"]);
+    expect(Object.fromEntries(t.jobs.map((j) => [j.advertiser_name, j.entry_type]))).toMatchObject({ "A url": "url", "An ad": "ad_id", "Twinkling Tree": "advertiser", "Blue Moon": "page" });
     await t.worker.discover("facebook", {});
-    expect(t.jobs).toHaveLength(3); // a repeat adds nothing
+    expect(t.jobs).toHaveLength(5); // a repeat adds nothing
   });
 
   it("an advertiser added later is picked up on a later pass, with its complaint id", async () => {
@@ -120,6 +121,7 @@ describe("imagematch/worker > running a job", () => {
     expect(t.runners[0].run).toHaveBeenCalledWith({
       names: ["Twinkling Tree"], apply: true, jobId: "1", resume: false, addedBy: "imagematch-worker",
       reason: 'auto: advertiser "Twinkling Tree" is blocked', complaintId: "11111111-1111-1111-1111-111111111111",
+      entry: { type: "advertiser", value: "Twinkling Tree" }, generation: 1,
     });
   });
 
@@ -596,15 +598,21 @@ const noDestructive = (text) => expect(text).not.toMatch(/\b(DELETE|DROP|TRUNCAT
 
 describe("jobRepository > findNewAdvertisers", () => {
   it("looks, for the network's own entries and then the 'all' ones, for advertisers without a job (anti-join on the unique key)", async () => {
-    const sql = fakeSql((text, params) => (params[1] === "reddit" ? [{ id: 5, value: "A", complaint_id: null }] : [{ id: 9, value: "B", complaint_id: "c" }]));
+    const sql = fakeSql((text, params) => {
+      if (params[2] !== "advertiser") return [];
+      return params[1] === "reddit" ? [{ id: 5, value: "A", complaint_id: null }] : [{ id: 9, value: "B", complaint_id: "c" }];
+    });
     const out = await repo.findNewAdvertisers(sql, "reddit", { limit: 50 });
     expect(out.map((r) => r.id)).toEqual([5, 9]);
 
-    expect(sql.calls).toHaveLength(2);
-    expect(sql.calls.map((c) => c.params)).toEqual([["reddit", "reddit", "advertiser", "page"], ["reddit", "all", "advertiser", "page"]]);
+    // one query per scope and entry type, each an equality on (network, entry_type): it never walks the image_hash entries
+    const types = ["advertiser", "page", "ad_id", "url", "image_url"];
+    expect(sql.calls).toHaveLength(10);
+    expect(sql.calls.map((c) => c.params)).toEqual([...types.map((t) => ["reddit", "reddit", t]), ...types.map((t) => ["reddit", "all", t])]);
     for (const { text } of sql.calls) {
       expect(text).toMatch(/FROM copyright_blocklist b LEFT JOIN copyright_image_hash_jobs j ON j\.network = \? AND j\.blocklist_id = b\.id/);
-      expect(text).toMatch(/WHERE b\.network = \? AND b\.status = 'active' AND b\.entry_type IN \(\?, \?\)/);
+      expect(text).toMatch(/WHERE b\.network = \? AND b\.entry_type = \? AND b\.status = 'active'/);
+      expect(text).not.toMatch(/entry_type IN/);
       expect(text).toMatch(/b\.expires_at IS NULL OR b\.expires_at > UTC_TIMESTAMP\(\)/);
       expect(text).toMatch(/AND j\.id IS NULL ORDER BY b\.id LIMIT 50$/);
       expect(text).not.toMatch(/OFFSET|SELECT \*/i);
@@ -617,7 +625,7 @@ describe("jobRepository > findNewAdvertisers", () => {
     expect(await repo.findNewAdvertisers(dup, "reddit")).toHaveLength(1);
     const all = fakeSql();
     await repo.findNewAdvertisers(all, "all");
-    expect(all.calls).toHaveLength(1);
+    expect(all.calls).toHaveLength(5); // one scope, five entry types
   });
 
   it("keeps the page size in range", async () => {
@@ -635,11 +643,12 @@ describe("jobRepository > createJobs", () => {
     const out = await repo.createJobs(sql, "reddit", [{ id: 5, value: "  Twinkling Tree ", complaint_id: "c1" }, { id: "6", value: "Blue Moon" }]);
     expect(out).toEqual({ created: 2 });
     const { text, params } = sql.calls[0];
-    expect(text).toMatch(/^INSERT INTO copyright_image_hash_jobs \(network, blocklist_id, advertiser_name, complaint_id, status, attempts, progress_seq, created_at, updated_at\) VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?\), \(/);
+    expect(text).toMatch(/^INSERT INTO copyright_image_hash_jobs \(network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, created_at, updated_at\) VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?\), \(/);
     expect(text).toMatch(/ON DUPLICATE KEY UPDATE id = id$/);
-    expect(params.slice(0, 7)).toEqual(["reddit", 5, "Twinkling Tree", "c1", "pending", 0, 0]);
-    expect(params[9 + 1]).toBe(6);
-    expect(params[9 + 3]).toBeNull(); // no complaint id
+    // a new job starts at generation 1, not yet run (run_gen 0) and not yet covered (covered_gen 0)
+    expect(params.slice(0, 11)).toEqual(["reddit", 5, "advertiser", "Twinkling Tree", "c1", "pending", 0, 1, 0, 0, 0]);
+    expect(params[13 + 1]).toBe(6);
+    expect(params[13 + 4]).toBeNull(); // no complaint id
     expect(params.includes(undefined)).toBe(false); // the driver rejects undefined binds
     noDestructive(text);
   });
@@ -659,7 +668,7 @@ describe("jobRepository > createJobs", () => {
   it("cuts a name to the column size", async () => {
     const sql = fakeSql(() => ({ affectedRows: 1 }));
     await repo.createJobs(sql, "reddit", [{ id: 1, value: "x".repeat(400) }]);
-    expect(sql.calls[0].params[2]).toHaveLength(255);
+    expect(sql.calls[0].params[3]).toHaveLength(255);
   });
 });
 
@@ -671,7 +680,7 @@ describe("jobRepository > claimNext", () => {
     expect(job).toMatchObject({ id: 3, advertiser_name: "A" });
 
     const { text, params } = sql.calls[0];
-    expect(text).toMatch(/^UPDATE copyright_image_hash_jobs SET status = 'running', claimed_by = \?/);
+    expect(text).toMatch(/^UPDATE copyright_image_hash_jobs SET status = 'running', run_gen = requested_gen, claimed_by = \?/); // the run takes the newest generation asked for
     expect(text).toMatch(/attempts = attempts \+ 1/);
     expect(text).toMatch(/WHERE id = \(SELECT id FROM \( SELECT id FROM copyright_image_hash_jobs WHERE network = \? AND \(status = 'pending' OR \(status = 'running' AND heartbeat_at < \?\)\) ORDER BY updated_at, id LIMIT 1\) AS pick\)/);
     // the job that has waited longest goes first: a big advertiser's job, put back after its time slice, does not starve new ones
@@ -717,11 +726,20 @@ describe("jobRepository > writes are guarded by the claim", () => {
   it("finish sets a final status, with the error cut to the column size, only for the holder", async () => {
     const sql = fakeSql(() => ({ affectedRows: 1 }));
     expect(await repo.finish(sql, 7, "me", "done")).toBe(true);
-    expect(sql.calls[0].text).toMatch(/SET status = \?, last_error = \?, finished_at = \?.* WHERE id = \? AND claimed_by = \? AND status = 'running'$/);
-    expect(sql.calls[0].params[0]).toBe("done");
+    // [covers, error, finished_at, status, updated_at, id, worker]
+    expect(sql.calls[0].text).toMatch(/SET covered_gen = IF\(requested_gen > run_gen OR \? = 0, covered_gen, run_gen\).* status = IF\(requested_gen > run_gen, 'pending', \?\).* WHERE id = \? AND claimed_by = \? AND status = 'running'$/);
+    expect(sql.calls[0].params[0]).toBe(1); // done covers the generation the run worked for
+    expect(sql.calls[0].params[3]).toBe("done");
     expect(sql.calls[0].params[1]).toBeNull();
     await repo.finish(sql, 7, "me", "failed", { error: "e".repeat(900) });
     expect(sql.calls[1].params[1]).toHaveLength(512);
+    expect(sql.calls[1].params[0]).toBe(0); // only done / no_owner cover; failed, limit_reached and unresolved never do
+    for (const status of ["limit_reached", "unresolved"]) {
+      await repo.finish(sql, 7, "me", status);
+      expect(sql.calls[sql.calls.length - 1].params[0]).toBe(0);
+    }
+    await repo.finish(sql, 7, "me", "no_owner");
+    expect(sql.calls[sql.calls.length - 1].params[0]).toBe(1);
     expect(await repo.finish(fakeSql(() => ({ affectedRows: 0 })), 7, "other", "done")).toBe(false);
   });
 
@@ -729,8 +747,8 @@ describe("jobRepository > writes are guarded by the claim", () => {
     const sql = fakeSql(() => ({ affectedRows: 1 }));
     expect(await repo.release(sql, 7, "me", { error: "boom", refundAttempt: true })).toBe(true);
     const { text, params } = sql.calls[0];
-    expect(text).toMatch(/SET status = 'pending', claimed_by = NULL, claimed_at = NULL, heartbeat_at = NULL, attempts = IF\(\?, GREATEST\(attempts, 1\) - 1, attempts\)/);
-    expect(text).not.toMatch(/state = /); // the saved place is kept
+    expect(text).toMatch(/SET status = 'pending', claimed_by = NULL, claimed_at = NULL, heartbeat_at = NULL, state = IF\(requested_gen > run_gen, NULL, state\), attempts = IF\(requested_gen > run_gen, 0, IF\(\?, GREATEST\(attempts, 1\) - 1, attempts\)\)/);
+    expect(text).not.toMatch(/state = \?/); // the saved place is kept, unless a newer generation was asked for (then the run starts clean)
     expect(text).toMatch(/WHERE id = \? AND claimed_by = \? AND status = 'running'$/);
     expect(params[0]).toBe(1);
     await repo.release(sql, 7, "me");
@@ -1133,7 +1151,7 @@ describe("submitAdvertiser (the landing-page entry point)", () => {
     });
     expect(calls.add[0]).toEqual([{ entryType: "advertiser", value: "Twinkling Tree", network: "all", addedBy: "landing-form", reason: 'requested for "Twinkling Tree"', complaintId: COMPLAINT, source: "intake" }]);
     expect(calls.find[0]).toEqual({ network: "facebook", names: ["twinkling tree", "twinklingtree"] });
-    expect(calls.jobs).toEqual([{ network: "facebook", list: [{ id: 40, value: "Twinkling Tree", complaint_id: COMPLAINT }] }]);
+    expect(calls.jobs).toEqual([{ network: "facebook", list: [{ id: 40, value: "Twinkling Tree", complaint_id: COMPLAINT, entry_type: "advertiser" }] }]);
   });
 
   it("makes a complaint id when none is given, and keeps the one that is", async () => {
@@ -1794,4 +1812,289 @@ describe("the review and search routes (services/copyrightRequest.js)", () => {
     expect((await t.call("POST", "/images/search", { network: "bad net!", sha256: "a".repeat(64) })).status).toBe(400);
     expect(t.search).toHaveBeenCalledTimes(1);
   }));
+});
+
+// ═════════════ generations, requeue, the results hand-over to B3 ═════════════
+describe("generations and requeue (jobRepository)", () => {
+  const { jobRepository: real, describeJob, createJobsApi } = require("../../../src/compliance/imagematch/worker");
+  const crypto = require("node:crypto");
+
+  function sqlOf(handler = () => ({ affectedRows: 1 })) {
+    const calls = [];
+    return { calls, async query(text, params) { calls.push({ text: text.replace(/\s+/g, " ").trim(), params }); return handler(text.replace(/\s+/g, " ").trim(), params, calls.length); } };
+  }
+  const safe = (text) => expect(text).not.toMatch(/\b(DELETE|DROP|TRUNCATE|ALTER)\b/i);
+
+  it("requestRun raises the generation; a waiting or finished job starts clean, a RUNNING one only gets the new generation", async () => {
+    const sql = sqlOf();
+    expect(await real.requestRun(sql, "facebook", 12)).toBe(true);
+    const { text, params } = sql.calls[0];
+    expect(text).toMatch(/^UPDATE copyright_image_hash_jobs SET requested_gen = requested_gen \+ 1, requested_at = \?/);
+    expect(text).toMatch(/state = IF\(status = 'running', state, NULL\)/);
+    expect(text).toMatch(/attempts = IF\(status = 'running', attempts, 0\)/);
+    expect(text).toMatch(/status = IF\(status = 'running', 'running', 'pending'\)/);
+    // status is assigned last, so every IF before it still sees the old status (UPDATE assignments run left to right)
+    expect(text.indexOf("status = IF(status = 'running', 'running'")).toBeGreaterThan(text.indexOf("heartbeat_at = IF"));
+    // never the cursor rows of the sweep (0) and the backfill (4294967295)
+    expect(text).toMatch(/WHERE network = \? AND blocklist_id = \? AND blocklist_id > 0 AND blocklist_id <= 4294967294$/);
+    expect(params.slice(2)).toEqual(["facebook", 12]);
+    expect(await real.requestRun(sqlOf(() => ({ affectedRows: 0 })), "facebook", 99)).toBe(false);
+    safe(text);
+  });
+
+  it("finish never lets an older run stand for a newer request: the job goes back to pending and covered_gen stays", async () => {
+    const sql = sqlOf();
+    await real.finish(sql, 5, "w1", "done");
+    const { text } = sql.calls[0];
+    expect(text).toMatch(/status = IF\(requested_gen > run_gen, 'pending', \?\)/);
+    expect(text).toMatch(/covered_gen = IF\(requested_gen > run_gen OR \? = 0, covered_gen, run_gen\)/);
+    expect(text).toMatch(/state = IF\(requested_gen > run_gen, NULL, state\)/);
+    expect(text).toMatch(/finished_at = IF\(requested_gen > run_gen, NULL, \?\)/);
+    expect(text).not.toMatch(/SET .*requested_gen = /); // finish never changes what was asked for
+    expect(text).not.toMatch(/SET .*\brun_gen = /);
+    safe(text);
+  });
+
+  it("finds the entries blocked again: active, changed after the job last asked for a run, one indexed query per scope and type", async () => {
+    const sql = sqlOf((text, params) => (params[2] === "advertiser" && params[1] === "facebook" ? [{ id: 5 }] : []));
+    expect(await real.findReblocked(sql, "facebook")).toEqual([5]);
+    expect(sql.calls).toHaveLength(10);
+    for (const { text } of sql.calls) {
+      expect(text).toMatch(/FROM copyright_blocklist b JOIN copyright_image_hash_jobs j ON j\.network = \? AND j\.blocklist_id = b\.id WHERE b\.network = \? AND b\.entry_type = \? AND b\.status = 'active'/);
+      expect(text).toMatch(/AND b\.updated_at > COALESCE\(j\.requested_at, j\.created_at\) ORDER BY b\.id LIMIT 100$/);
+      safe(text);
+    }
+  });
+
+  it("requestReblocked asks each re-blocked entry for a new run and counts them", async () => {
+    const sql = sqlOf((text, params) => {
+      if (/^SELECT/.test(text)) return params[2] === "advertiser" ? [{ id: 5 }, { id: 6 }] : [];
+      return { affectedRows: 1 };
+    });
+    expect(await real.requestReblocked(sql, "facebook")).toBe(2);
+    expect(sql.calls.filter((c) => /^UPDATE/.test(c.text)).map((c) => c.params[3])).toEqual([5, 6]);
+  });
+
+  it("resumeLimited continues only a limit_reached job: same generation, saved place kept, image counter back to zero, compare-and-set", async () => {
+    const state = JSON.stringify({ owners: { 1: { lastAdId: 900, done: false } }, stats: { requested: 10000, hashed: 9000 } });
+    const sql = sqlOf((text) => (/^SELECT/.test(text) ? [{ id: 3, status: "limit_reached", state, progress_seq: 9 }] : { affectedRows: 1 }));
+    expect(await real.resumeLimited(sql, "facebook", 7)).toEqual({ ok: true });
+    const update = sql.calls[1];
+    expect(update.text).toMatch(/SET status = 'pending', attempts = 0, last_error = NULL, finished_at = NULL, claimed_by = NULL/);
+    expect(update.text).toMatch(/WHERE id = \? AND status = 'limit_reached' AND progress_seq = \?$/);
+    expect(update.text).not.toMatch(/requested_gen|run_gen|covered_gen/); // the same generation goes on
+    expect(JSON.parse(update.params[0])).toEqual({ owners: { 1: { lastAdId: 900, done: false } }, stats: { requested: 0, hashed: 9000 } });
+    expect(update.params.slice(2)).toEqual([3, 9]);
+
+    const other = (status, st = state) => sqlOf(() => [{ id: 3, status, state: st, progress_seq: 1 }]);
+    expect(await real.resumeLimited(other("done"), "facebook", 7)).toEqual({ ok: false, reason: "not_limit_reached" });
+    expect(await real.resumeLimited(sqlOf(() => []), "facebook", 7)).toEqual({ ok: false, reason: "no_job" });
+    expect(await real.resumeLimited(other("limit_reached", null), "facebook", 7)).toEqual({ ok: false, reason: "no_saved_place" });
+    expect(await real.resumeLimited(sqlOf((t) => (/^SELECT/.test(t) ? [{ id: 3, status: "limit_reached", state, progress_seq: 9 }] : { affectedRows: 0 })), "facebook", 7))
+      .toEqual({ ok: false, reason: "changed_meanwhile" });
+  });
+
+  it("recordJobResults writes identifiers and outcomes, idempotently, in chunks", async () => {
+    const sql = sqlOf();
+    const rows = Array.from({ length: 450 }, (_, i) => ({ adId: i + 1, platformAdId: `P${i + 1}`, sourceUrl: `fb/adImage/${i + 1}.jpeg`, outcome: i % 2 ? "skipped" : "hashed", reason: i % 2 ? "no stored image" : "", sha256: i % 2 ? null : "a".repeat(64) }));
+    rows.push({ adId: "", platformAdId: null, sourceUrl: "cdn.example.com/a.jpg", outcome: "hashed", reason: "", sha256: "b".repeat(64) });
+    expect(await real.recordJobResults(sql, rows, { network: "facebook", jobId: 8, blocklistId: 3, generation: 2 })).toBe(451);
+    expect(sql.calls).toHaveLength(3); // 200 + 200 + 51
+    const { text, params } = sql.calls[0];
+    expect(text).toMatch(/^INSERT INTO copyright_image_hash_results \(network, job_id, blocklist_id, generation, platform_ad_id, internal_ad_id, slot_hash, source_url, outcome, reason, sha256, created_at, updated_at\) VALUES/);
+    expect(text).toMatch(/ON DUPLICATE KEY UPDATE platform_ad_id = VALUES\(platform_ad_id\), outcome = VALUES\(outcome\)/);
+    expect(params.slice(0, 8)).toEqual(["facebook", 8, 3, 2, "P1", "1", crypto.createHash("sha1").update("fb/adImage/1.jpeg").digest("hex"), "fb/adImage/1.jpeg"]);
+    const last = sql.calls[2].params.slice(-13);
+    expect(last.slice(4, 6)).toEqual([null, ""]); // a media URL hashed on its own: no ad
+    expect(params.includes(undefined)).toBe(false);
+    expect(await real.recordJobResults(sql, [], { network: "x", jobId: 1, blocklistId: 1, generation: 1 })).toBe(0);
+    expect(sql.calls).toHaveLength(3);
+    safe(text);
+  });
+
+  it("listJobs and listJobResults read by key with a limit, and never return the cursor rows of the sweep and the backfill", async () => {
+    const sql = sqlOf(() => []);
+    await real.listJobs(sql, { network: "facebook", blocklistId: "7", status: "done", afterId: 4, limit: 99999 });
+    const jobs = sql.calls[0];
+    expect(jobs.text).toMatch(/WHERE network = \? AND id > \? AND blocklist_id > 0 AND blocklist_id <= 4294967294 AND blocklist_id = \? AND status = \? ORDER BY id LIMIT 200$/);
+    expect(jobs.params).toEqual(["facebook", 4, 7, "done"]);
+    await real.listJobResults(sql, { network: "facebook", jobId: 8, generation: 2, outcome: "failed", afterId: 0, limit: 5 });
+    const results = sql.calls[1];
+    expect(results.text).toMatch(/FROM copyright_image_hash_results WHERE network = \? AND job_id = \? AND generation = \? AND id > \? AND outcome = \? ORDER BY id LIMIT 5$/);
+    expect(results.params).toEqual(["facebook", 8, 2, 0, "failed"]);
+    for (const { text } of sql.calls) { safe(text); expect(text).not.toMatch(/OFFSET|SELECT \*/i); }
+  });
+
+  it("describeJob says whether a job covers the LATEST request: only done / no_owner with covered_gen >= requested_gen", () => {
+    const row = (over) => ({ id: 1, network: "facebook", blocklist_id: 3, entry_type: "advertiser", advertiser_name: "A", status: "done", attempts: 1, requested_gen: 2, run_gen: 2, covered_gen: 2, state: JSON.stringify({ stats: { hashed: 4, failed: 0, skipped: { "no stored image": 1 } }, owners: { 1: { lastAdId: 50, done: true } } }), ...over });
+    expect(describeJob(row())).toMatchObject({ coversLatest: true, coveredGen: 2, requestedGen: 2, entryType: "advertiser", stats: { hashed: 4 }, progress: { 1: { lastAdId: 50, done: true } } });
+    expect(describeJob(row({ status: "no_owner" })).coversLatest).toBe(true);
+    expect(describeJob(row({ covered_gen: 1 })).coversLatest).toBe(false);   // an older run only
+    expect(describeJob(row({ requested_gen: 3, run_gen: 2 })).coversLatest).toBe(false); // blocked again while it was running
+    for (const status of ["pending", "running", "failed", "limit_reached", "unresolved"]) expect(describeJob(row({ status })).coversLatest).toBe(false);
+    expect(describeJob(row({ state: "{not json" })).stats).toBeNull();
+  });
+
+  describe("the jobs API", () => {
+    const job = { id: 8, network: "facebook", blocklist_id: 3, entry_type: "url", advertiser_name: "shop.example.com/landing", status: "unresolved", requested_gen: 2, run_gen: 2, covered_gen: 1, state: null };
+    const api = (over = {}) => {
+      const repo = {
+        listJobs: vi.fn(async (_sql, q) => (q.jobId === 404 ? [] : [job])),
+        listJobResults: vi.fn(async () => [{ id: 11, platform_ad_id: "A21", internal_ad_id: "21", source_url: "fb/a.jpeg", outcome: "failed", reason: "unavailable: 503", sha256: null, updated_at: "2026-11-03 10:00:00" }]),
+        requestRun: vi.fn(async () => true),
+        resumeLimited: vi.fn(async () => ({ ok: true })),
+        ...over,
+      };
+      return { api: createJobsApi({ jobRepository: repo, getSql: () => ({ fake: true }) }), repo };
+    };
+
+    it("lists jobs with their generations, and checks its input", async () => {
+      const { api: a, repo } = api();
+      const out = await a.list({ network: "Facebook", blocklistId: "3", status: "unresolved" });
+      expect(out).toMatchObject({ ok: true, next: 8, items: [{ id: 8, entryType: "url", status: "unresolved", requestedGen: 2, coveredGen: 1, coversLatest: false }] });
+      expect(repo.listJobs.mock.calls[0][1]).toMatchObject({ network: "facebook", blocklistId: "3", status: "unresolved" });
+      for (const bad of [{ network: "bad net" }, { network: "facebook", jobId: "x" }, { network: "facebook", blocklistId: -1 }, { network: "facebook", status: "nope" }]) {
+        expect((await a.list(bad)).ok).toBe(false);
+      }
+    });
+
+    it("results default to the job's latest run, can ask for an older one, and tell the run apart", async () => {
+      const { api: a, repo } = api();
+      const latest = await a.results({ network: "facebook", jobId: "8" });
+      expect(repo.listJobResults.mock.calls[0][1]).toMatchObject({ jobId: 8, generation: 2 });
+      expect(latest).toMatchObject({ ok: true, generation: 2, latestGeneration: 2, items: [{ platformAdId: "A21", internalAdId: "21", outcome: "failed", reason: "unavailable: 503" }], next: 11 });
+      const older = await a.results({ network: "facebook", jobId: 8, generation: "1", outcome: "failed" });
+      expect(repo.listJobResults.mock.calls[1][1]).toMatchObject({ generation: 1, outcome: "failed" });
+      expect(older).toMatchObject({ generation: 1, latestGeneration: 2 });
+      expect((await a.results({ network: "facebook", jobId: 404 })).error).toBe("not_found");
+      expect((await a.results({ network: "facebook", jobId: 8, outcome: "weird" })).error).toBe("invalid_outcome");
+      expect((await a.results({ network: "facebook", jobId: 8, generation: "0" })).error).toBe("invalid_generation");
+      expect((await a.results({ network: "facebook", jobId: "nope" })).error).toBe("invalid_id");
+    });
+
+    it("requeue: rerun asks for a new generation; resume only continues a limit_reached job; both check their input", async () => {
+      const { api: a, repo } = api();
+      expect(await a.requeue({ network: "facebook", blocklistId: 3, mode: "rerun" })).toEqual({ ok: true, mode: "rerun" });
+      expect(repo.requestRun).toHaveBeenCalledWith({ fake: true }, "facebook", 3);
+      expect(await a.requeue({ network: "facebook", blocklistId: "3", mode: "resume" })).toEqual({ ok: true, mode: "resume" });
+      expect((await a.requeue({ network: "facebook", blocklistId: 3, mode: "again" })).error).toBe("invalid_mode");
+      expect((await a.requeue({ network: "facebook", blocklistId: 0, mode: "rerun" })).error).toBe("invalid_id");
+      expect((await a.requeue({ network: "facebook", blocklistId: 4294967295, mode: "rerun" })).error).toBe("invalid_id"); // the backfill cursor row
+      const none = api({ requestRun: vi.fn(async () => false), resumeLimited: vi.fn(async () => ({ ok: false, reason: "not_limit_reached" })) }).api;
+      expect((await none.requeue({ network: "facebook", blocklistId: 3, mode: "rerun" })).error).toBe("not_found");
+      expect((await none.requeue({ network: "facebook", blocklistId: 3, mode: "resume" })).error).toBe("not_resumable");
+    });
+  });
+});
+
+describe("imagematch/worker > generations in the pass", () => {
+  it("passes the entry, the generation and a results sink bound to this run to the job", async () => {
+    const t = setup({ entries: [advertiser(1, "shop.example.com/landing", { entry_type: "url" })] });
+    const claim = t.repo.claimNext;
+    t.repo.claimNext = async (...a) => { const j = await claim(...a); return j && { ...j, run_gen: 4, entry_type: "url" }; };
+    t.repo.findNewAdvertisers = async () => [{ id: 1, value: "shop.example.com/landing", complaint_id: null, entry_type: "url" }];
+    const original = t.repo.createJobs;
+    t.repo.createJobs = async (sql, network, list) => original(sql, network, list);
+    t.repo.recordJobResults = vi.fn(async () => 2);
+    await t.worker.tick();
+    expect(t.runners[0].run.mock.calls[0][0]).toMatchObject({ entry: { type: "url", value: "shop.example.com/landing" }, generation: 4 });
+    await t.makeJob.mock.calls[0][0].results.record([{ outcome: "hashed" }]);
+    expect(t.repo.recordJobResults).toHaveBeenCalledWith({ fake: true }, [{ outcome: "hashed" }], { network: "facebook", jobId: 1, blocklistId: 1, generation: 4 });
+  });
+
+  it("an unresolved job is final (it is not retried) and keeps the reason", async () => {
+    const t = setup({ script: () => ({ status: STATUS.UNRESOLVED, network: "facebook", message: "media URL: the ads cannot be searched" }) });
+    const out = await t.worker.tick();
+    expect(t.jobs[0]).toMatchObject({ status: "unresolved", last_error: "media URL: the ads cannot be searched" });
+    expect(out.ran[0].outcome).toBe("unresolved");
+    expect((await t.worker.tick()).ran).toHaveLength(0);
+  });
+
+  it("looks for re-blocked entries before it makes new jobs, and a failure of that never stops the jobs", async () => {
+    const order = [];
+    const t = setup();
+    const find = t.repo.findNewAdvertisers;
+    t.repo.findNewAdvertisers = async (...a) => { order.push("discover"); return find(...a); };
+    t.repo.requestReblocked = vi.fn(async () => { order.push("reblocked"); return 1; });
+    await t.worker.tick();
+    expect(order).toEqual(["reblocked", "discover"]);
+
+    const broken = setup();
+    broken.repo.requestReblocked = vi.fn(async () => { throw new Error("no such column: requested_at"); });
+    const out = await broken.worker.tick();
+    expect(out.ran).toHaveLength(1);
+  });
+});
+
+describe("the job routes (services/copyrightRequest.js)", () => {
+  const expressLib = require("express");
+  const { createRouter: makeRouter } = require("../../../src/services/copyrightRequest");
+
+  async function serve(opts = {}) {
+    const jobs = opts.jobs || {
+      list: vi.fn(async () => ({ ok: true, items: [{ id: 8 }], next: 8 })),
+      results: vi.fn(async () => ({ ok: true, job: { id: 8 }, generation: 2, latestGeneration: 2, items: [{ id: 11 }], next: 11 })),
+      requeue: vi.fn(async (q) => ({ ok: true, mode: q.mode })),
+    };
+    const app = expressLib();
+    app.use(expressLib.json());
+    app.use("/c", makeRouter({ settings: { token: "s3cret", rateLimit: { windowMs: 60000, max: 100 }, ...(opts.settings || {}) }, submit: vi.fn(), review: {}, search: vi.fn(), jobs }));
+    const server = await new Promise((resolve) => { const s2 = app.listen(0, "127.0.0.1", () => resolve(s2)); });
+    const base = `http://127.0.0.1:${server.address().port}/c`;
+    const call = (method, path, body, headers = { "x-copyright-token": "s3cret" }) => fetch(base + path, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { call, jobs, close: () => new Promise((r) => server.close(r)) };
+  }
+  const using = (opts, fn) => async () => { const t = await serve(opts); try { await fn(t); } finally { await t.close(); } };
+
+  it("GET /jobs lists the jobs", using({}, async (t) => {
+    const res = await t.call("GET", "/jobs?network=facebook&blocklistId=3&status=done&afterId=2&limit=10");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ code: 200, message: "ok", data: { items: [{ id: 8 }], next: 8 } });
+    expect(t.jobs.list).toHaveBeenCalledWith({ network: "facebook", jobId: undefined, blocklistId: "3", status: "done", afterId: "2", limit: "10" });
+  }));
+
+  it("GET /jobs/:id/results gives the images of one run, with the generation", using({}, async (t) => {
+    const res = await t.call("GET", "/jobs/8/results?network=facebook&generation=1&outcome=failed");
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toEqual({ job: { id: 8 }, generation: 2, latestGeneration: 2, items: [{ id: 11 }], next: 11 });
+    expect(t.jobs.results).toHaveBeenCalledWith({ network: "facebook", jobId: "8", generation: "1", outcome: "failed", afterId: undefined, limit: undefined });
+  }));
+
+  it("POST /jobs/requeue asks for a rerun or a resume", using({}, async (t) => {
+    const res = await t.call("POST", "/jobs/requeue", { network: "facebook", blocklistId: 3, mode: "resume" });
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toEqual({ mode: "resume" });
+    expect(t.jobs.requeue).toHaveBeenCalledWith({ network: "facebook", blocklistId: 3, mode: "resume" });
+  }));
+
+  it("maps the answers to statuses: 404 no such job, 409 not resumable, 400 bad input, 503 a failure", async () => {
+    for (const [error, code] of [["not_found", 404], ["not_resumable", 409], ["invalid_mode", 400], ["failed", 503], ["no_database", 503]]) {
+      const t = await serve({ jobs: { list: vi.fn(), results: vi.fn(), requeue: vi.fn(async () => ({ ok: false, error, message: `m ${error}` })) } });
+      try {
+        const res = await t.call("POST", "/jobs/requeue", { network: "facebook", blocklistId: 3, mode: "rerun" });
+        expect(res.status).toBe(code);
+        expect((await res.json()).message).toBe(`m ${error}`);
+      } finally { await t.close(); }
+    }
+  });
+
+  it("needs the token even where the advertiser route is knowingly open (allowPublic)", async () => {
+    const open = await serve({ settings: { token: "", allowPublic: true } });
+    try {
+      for (const [m, p, b] of [["GET", "/jobs?network=facebook"], ["GET", "/jobs/8/results?network=facebook"], ["POST", "/jobs/requeue", { network: "facebook", blocklistId: 3, mode: "rerun" }]]) {
+        expect((await open.call(m, p, b, {})).status).toBe(503);
+      }
+    } finally { await open.close(); }
+    const t = await serve();
+    try {
+      for (const headers of [{}, { "x-copyright-token": "wrong" }]) {
+        expect((await t.call("GET", "/jobs?network=facebook", undefined, headers)).status).toBe(401);
+        expect((await t.call("GET", "/jobs/8/results?network=facebook", undefined, headers)).status).toBe(401);
+        expect((await t.call("POST", "/jobs/requeue", { network: "facebook", blocklistId: 3, mode: "rerun" }, headers)).status).toBe(401);
+      }
+      expect(t.jobs.list).not.toHaveBeenCalled();
+      expect(t.jobs.results).not.toHaveBeenCalled();
+      expect(t.jobs.requeue).not.toHaveBeenCalled();
+    } finally { await t.close(); }
+  });
 });

@@ -267,7 +267,7 @@ describe("workflow > the landing-page entry point on the real service", () => {
 
     const out = await submit({ name: "Twinkling Tree", addedBy: "landing-form" });
     expect(out).toMatchObject({ ok: true, totalAds: 5000, failed: [], blocked: [{ network: "reddit" }, { network: "quora" }] });
-    expect(jobs).toEqual([{ network: "reddit", list: [{ id: out.blocked[0].blocklistId, value: "Twinkling Tree", complaint_id: out.complaintId }] }]);
+    expect(jobs).toEqual([{ network: "reddit", list: [{ id: out.blocked[0].blocklistId, value: "Twinkling Tree", complaint_id: out.complaintId, entry_type: "advertiser" }] }]);
 
     for (const network of ["reddit", "quora"]) {
       expect(blocklist.guard({ ad_id: "n2", post_owner: "TWINKLING TREE" }, network)).toMatchObject({ code: 422 });

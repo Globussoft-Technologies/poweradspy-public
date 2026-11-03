@@ -11,17 +11,18 @@ Team plan and work split: [COPYRIGHT_COMPLIANCE_ARCHITECTURE.md](COPYRIGHT_COMPL
 | --- | --- | --- | --- | --- |
 | B1: check at collection (12 networks + TikTok), spelling variants, attempts log | yes | yes | no | committed in `cca001735` (PR #1649, branch `copyright`) |
 | B2: DS client, matcher, hash job, worker, cron (`imageHashJobs`) | yes | yes | no | uncommitted |
-| B2: schema (13 tables, 256-bit hash, `copyright_image_hash_jobs`) | yes | dry-run rendered offline | no | no table exists on dev yet |
+| B2: schema (14 tables, 256-bit hash, `copyright_image_hash_jobs`, `copyright_image_hash_results`) | yes | dry-run rendered offline | no | no table exists on dev yet |
 | B2: entry point for a name from the landing page (`submitAdvertiser`) and its route (`POST /api/v1/copyright/advertiser/block`) | yes | yes (function also on the real service; route with a local HTTP server) | no | route is off by default; the approval step in front of it is future work |
 | B2: exact-copy check of every downloaded image / video thumbnail at ingestion (`guardFile`, hooked in `fetchPrimaryMedia`) | yes | yes (real download from a local server) | no | off by default (`compliance.imageMatch.enabled`); Facebook, Instagram, ChatGPT Ads, AdMob pipelines |
 | B2: review queue (list, allow / block; a block adds the image to the blocklist) and search of the stored hashes, on token-protected routes | yes | yes | no | 13.14 |
 | B2: hash of every image stored (`copyright_image_hashes`: new images by the sweep, old ones by the backfill job) | yes | yes | no | both off by default (13.13) |
+| B2 for B3: job generations, requeue (rerun / resume), per-image results (`copyright_image_hash_results`), jobs for ad id and URL blocks, `unresolved` | yes | yes | no | 13.15; the URL part is limited by missing indexes |
 | B2 stage 4: check of NEW ads (sweep) | yes | yes | no | exact copies only; uncommitted |
 | B2: near-copy distances | — | — | no | **not tuned**, so near-copy matching stays off |
 | B3 takedown, B6 audit | — | — | — | Anij's; they only read what B1/B2 write |
 | Intake (form / agent), Oracle seed, other networks' images, TikTok images | no | — | — | later |
 
-Tests: `npx vitest run tests/compliance tests/insertion/InsertionEngine tests/app tests/admin tests/jobs` → 28 files, 661 tests pass. The whole
+Tests: `npx vitest run tests/compliance tests/insertion/InsertionEngine tests/app tests/admin tests/jobs` → 28 files, 784 tests pass. The whole
 `pas_node_api` suite still has the same 170 failing tests in 46 files as before this work.
 
 ## The compliance flow today (B1 → B2 → B3 → B6)
@@ -345,7 +346,7 @@ as `CHAR(64)` hex and in memory as a `Uint32Array` of 8 words (`src/compliance/i
 
 ### `scripts/apply-copyright-schema.js` (team script; covers B1, B2, B3 and B6)
 
-Creates and validates the 13 copyright tables in every distinct SQL database. Dry-run by default; existing tables are validated
+Creates and validates the 14 copyright tables in every distinct SQL database. Dry-run by default; existing tables are validated
 (columns, types, nullability, character set and collation, indexes), never altered; no foreign keys; one failing database never stops
 the others. Every text column names its collation explicitly, so the post-create validation passes.
 
@@ -594,7 +595,7 @@ Not covered: an ad whose image is stored only after the pass that looked at it; 
 
 ### 13.8 Rollout of B2 (in this order)
 
-1. Dev: `node scripts/apply-copyright-schema.js --networks=facebook --apply --confirm-prod` (dry-run first). Creates the 13 tables.
+1. Dev: `node scripts/apply-copyright-schema.js --networks=facebook --apply --confirm-prod` (dry-run first). Creates the 14 tables.
 2. Environment: `IMAGE_HASH_API_URL` and `IMAGE_HASH_API_KEY` (the key only in the environment).
 3. `config.json`: `compliance.blocklist.enabled: true`, then `crons.jobs.imageHashJobs.enabled: true` (hashing of blocked advertisers).
 4. Try one test advertiser: add it with `add()`; read its row in `copyright_image_hash_jobs` until `done`; check the `image_hash` entries it made.
@@ -742,3 +743,48 @@ POST /api/v1/copyright/review/:id    { "network": "facebook", "decision": "allow
   exact copy of it is refused at ingestion from then on. The decision is saved first: if adding the image fails the answer says so (`blocklistAdded: false`) and nothing is undone; add it again.
   Deleting the ad that was found is B3's work.
 - A decision is never overwritten (409 for an item already decided, 404 for a missing one, 400 for bad input). Nothing here deletes.
+
+### 13.15 The hand-over to B3: what a finished job guarantees, generations, results, ad id and URL blocks
+
+Asked for by B3 (takedown), who must not delete an image before B2 has hashed it. Everything here is read-only for the ad tables and never deletes.
+
+**What a job starts from** (the worker finds these entries by itself, one job per entry and network):
+
+| Entry type | What the job hashes |
+| --- | --- |
+| `advertiser`, `page` | the images of every ad of the owner (the name and its usual spellings), as before |
+| `ad_id` | the images of the ad(s) with that platform ad id (index on `facebook_ad.ad_id`); none found ends `no_owner` |
+| `url`, `image_url` | depends on what the URL is (below). The entry type alone does not say: B1 matches both through the same family |
+
+**Statuses.** `done` and `no_owner` are the only ones that cover a block; `limit_reached` (image cap, incomplete), `failed`, `unresolved`, `pending` and `running` never do.
+`done` does not mean every image was hashed: skipped and failed images are in the results (below), and B3 treats them as needing review.
+
+**Generations: telling the runs apart, and a re-block while a job runs.** Every block of an entry is one generation. `copyright_image_hash_jobs` has
+`requested_gen` (the newest asked for), `run_gen` (the one the current or last run works for) and `covered_gen` (the newest a run completed as `done` / `no_owner`), and `requested_at`.
+
+- A repeated block (the blocklist upsert sets `updated_at`; the cron pass compares it with the job's `requested_at`, or `created_at`; `submitAdvertiser` does it at once) raises `requested_gen`.
+  A job that is waiting or finished goes back to `pending` and starts clean (a full new run). A job that is **running** keeps running; when it ends, `finish` sees `requested_gen > run_gen`, does
+  **not** close the job, leaves `covered_gen` as it was, and sends it back to `pending` to run again. So an older run is never taken for covering the newer block.
+- **The rule for B3:** a job covers the latest block only when `coversLatest` is true: status `done` or `no_owner` and `covered_gen >= requested_gen`. Read the requested generation at the time of the block and compare.
+- **Resume a `limit_reached` job:** same generation, saved place kept, the image counter back at zero (a new allowance). Only a `limit_reached` job can be resumed.
+
+**Results: what happened to each image** (`copyright_image_hash_results`, written by the job, identifiers and outcomes only, never image data). One row per (job, generation, ad, image):
+network, `job_id`, `blocklist_id`, `generation`, platform ad id (the scraper's), our row id, the stored path or URL, `outcome` and `reason`, and the SHA-256 when hashed.
+Outcomes: `hashed`; `duplicate` (the same image URL or file as one already hashed in the run: it carries that hash); `skipped` (no stored image, not an image file, or the service says it cannot be hashed: too small / large / unreadable); `failed` (service or network error, with its kind and reason).
+A rerun writes under the **new generation** and the old rows stay, so the previous run and the current run are never mixed. A repeated page of the same run updates the same rows. Retry = rerun.
+
+**Routes** (token always required, like the review routes): `GET /api/v1/copyright/jobs?network=&jobId=&blocklistId=&status=` (status, the three generations, `coversLatest`, counts, per-owner progress),
+`GET /api/v1/copyright/jobs/:id/results?network=&generation=&outcome=` (defaults to the job's latest run; says the latest generation), `POST /api/v1/copyright/jobs/requeue` with `{ network, blocklistId, mode: "rerun" | "resume" }`.
+
+**URL blocks.** The role is decided by the URL, not the type alone: an `image_url` entry, or a URL ending in an image or video file name, is **media**; anything else is a **destination**.
+B2 and B3 must use the same matching: B3 should act on the ads listed in the results of the covered generation, not search again by itself.
+
+- **Destination URL:** the ads are found through the host: the domain index (`facebook_ad_domains.domain`) → the ads of that domain (`facebook_ad.domain_id` index) → their `destination_url` by primary key, compared with B1's normalization
+  (scheme, `www.`, port, query, fragment and trailing slashes ignored). Then their stored images are hashed like any ad's. Limits, each reported as **`unresolved`** rather than guessed: the host has no domain row (it may be a media URL, or never stored);
+  more than 20,000 ads on the host. Coverage depends on `domain_id` having been set from the same destination when the ad was inserted; an ad with another or no `domain_id` is missed.
+- **Media URL:** the file at the URL is hashed and added to the blocklist (so a copy is caught from now on), but its **ads cannot be found**: there is **no index** on `destination_url`, `image_url` or `image_url_original` (`SHOW INDEX` on dev, 2026-11-03),
+  and a search there would scan billions of rows. The job ends `unresolved`. Finding those ads safely needs a side table filled at ingestion (or the search index); not built, and no index is added to a production table by this work.
+  B1 also matches an ad whose image field equals a `url` entry; a destination job does not search those fields for the same reason.
+
+**Not checked on a real database yet:** the schema is applied nowhere; the generation updates rely on MySQL evaluating the assignments of one `UPDATE` from left to right (documented, and none of them changes `requested_gen` or `run_gen`); the tests use fakes and
+check the statements' text. The jobs table definition changed in place (new columns); the schema script validates and never alters, so a database that already has the earlier table would report a mismatch (none does).
