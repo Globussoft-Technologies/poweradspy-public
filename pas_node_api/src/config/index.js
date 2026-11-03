@@ -53,6 +53,11 @@ const validatedInt = (value, fallback, allowZero = false) => {
   const valid = Number.isFinite(parsed) && (allowZero ? parsed >= 0 : parsed > 0);
   return valid ? parsed : fallback;
 };
+// Integer clamped to [min, max]; anything unparseable falls back to `fallback`.
+const boundedInt = (value, fallback, min, max) => {
+  const parsed = toInt(value);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, min), max) : fallback;
+};
 const toStringArray = (v) => {
   if (Array.isArray(v)) return v.map((item) => String(item).trim()).filter(Boolean);
   if (typeof v !== 'string') return [];
@@ -370,6 +375,161 @@ const config = {
       adgptInsertionUrl: getVal(fileConfig.insertion?.api?.adgptInsertionUrl, 'ADGPT_INSERTION_API') || '',
       adgptTimeoutMs: getVal(fileConfig.insertion?.api?.adgptTimeoutMs, 'ADGPT_TIMEOUT_MS', toInt) || 100,
       timeoutMs: getVal(fileConfig.insertion?.api?.timeoutMs, 'INSERTION_API_TIMEOUT_MS', toInt) || 15000,
+    },
+  },
+
+  // ─── Copyright compliance: B1 blocklist (src/compliance/blocklist) ───
+  // OFF by default, so deploying the code before the tables exist cannot stop insertion.
+  // failMode 'closed' (default): a network whose blocklist could not be loaded rejects ads with 503.
+  // failMode 'open': such a network lets ads through (loudly logged). Any other value means 'closed'.
+  // Invalid numbers fall back to / are clamped to safe values.
+  compliance: {
+    blocklist: {
+      enabled: getVal(fileConfig.compliance?.blocklist?.enabled, 'BLOCKLIST_ENABLED', toBool) === true,
+      failMode: String(getVal(fileConfig.compliance?.blocklist?.failMode, 'BLOCKLIST_FAIL_MODE') || 'closed').toLowerCase() === 'open'
+        ? 'open'
+        : 'closed',
+      refreshSeconds: boundedInt(getVal(fileConfig.compliance?.blocklist?.refreshSeconds, 'BLOCKLIST_REFRESH_SECONDS'), 30, 5, 3600),
+      // The banned images (B2) can be tens of thousands: after the first load only the NEW ones are read, every imageRefreshSeconds;
+      // every imageFullReloadSeconds they are all read again (picks up removals and expiries; a revoke does it at once).
+      imageRefreshSeconds: boundedInt(fileConfig.compliance?.blocklist?.imageRefreshSeconds, 60, 5, 86400),
+      imageFullReloadSeconds: boundedInt(fileConfig.compliance?.blocklist?.imageFullReloadSeconds, 900, 60, 86400),
+      // Random extra delay (0..N % of refreshSeconds) per process, so a cluster's workers do not all read the databases in the same second.
+      refreshJitterPercent: boundedInt(fileConfig.compliance?.blocklist?.refreshJitterPercent, 20, 0, 50),
+      // With failMode 'open', log "ads are NOT being checked" at most once per this many seconds per network.
+      openWarnSeconds: boundedInt(fileConfig.compliance?.blocklist?.openWarnSeconds, 60, 5, 3600),
+      // Most URLs checked from one ad (a huge carousel is cut here); bounds the work per ad.
+      maxUrlsPerAd: boundedInt(fileConfig.compliance?.blocklist?.maxUrlsPerAd, 200, 1, 1000),
+      // Shortest advertiser name (letters and digits only) indexed for the spelling-proof match.
+      compactMinLength: boundedInt(fileConfig.compliance?.blocklist?.compactMinLength, 4, 2, 20),
+      loadTimeoutMs: boundedInt(fileConfig.compliance?.blocklist?.loadTimeoutMs, 5000, 500, 60000),
+      pageSize: boundedInt(fileConfig.compliance?.blocklist?.pageSize, 5000, 100, 50000),
+      // A refresh returning 0 rows after a non-empty list is treated as a failure (keeps the last good list).
+      emptyRefreshGuard: fileConfig.compliance?.blocklist?.emptyRefreshGuard !== false,
+      // Networks covered by the blocklist; empty = every insertion network that has a SQL connection.
+      networks: toStringArray(fileConfig.compliance?.blocklist?.networks).map((n) => n.toLowerCase()),
+      response: {
+        code: boundedInt(fileConfig.compliance?.blocklist?.response?.code, 422, 400, 499),
+        message: fileConfig.compliance?.blocklist?.response?.message || 'Ad rejected: this content is not allowed.',
+      },
+      unavailable: {
+        code: boundedInt(fileConfig.compliance?.blocklist?.unavailable?.code, 503, 500, 599),
+        message: fileConfig.compliance?.blocklist?.unavailable?.message || 'Ad insertion is temporarily unavailable for this network.',
+      },
+      attempts: {
+        batchSize: boundedInt(fileConfig.compliance?.blocklist?.attempts?.batchSize, 100, 1, 1000),
+        flushSeconds: boundedInt(fileConfig.compliance?.blocklist?.attempts?.flushSeconds, 5, 1, 300),
+        maxQueue: boundedInt(fileConfig.compliance?.blocklist?.attempts?.maxQueue, 10000, 100, 1000000),
+      },
+      // Last good list is saved here so a restart while the database is down can still enforce it.
+      snapshot: {
+        enabled: fileConfig.compliance?.blocklist?.snapshot?.enabled !== false,
+        dir: path.resolve(getVal(fileConfig.compliance?.blocklist?.snapshot?.dir, 'BLOCKLIST_SNAPSHOT_DIR')
+          || path.join(__dirname, '../../data/compliance-blocklist')),
+      },
+      rules: {
+        adId: fileConfig.compliance?.blocklist?.rules?.adId !== false,
+        advertiser: fileConfig.compliance?.blocklist?.rules?.advertiser !== false,
+        // Also match an advertiser written with other spacing / punctuation / accents ("twinkling tree" = "TwinklingTree").
+        advertiserVariant: fileConfig.compliance?.blocklist?.rules?.advertiserVariant !== false,
+        url: fileConfig.compliance?.blocklist?.rules?.url !== false,
+        domain: fileConfig.compliance?.blocklist?.rules?.domain !== false,
+      },
+      // Per-network payload field overrides: { "*": {...}, "<network>": { adId: [...], advertiser: [...], ... } }
+      fields: fileConfig.compliance?.blocklist?.fields && typeof fileConfig.compliance.blocklist.fields === 'object'
+        ? fileConfig.compliance.blocklist.fields
+        : {},
+    },
+
+    // ─── Copyright compliance: B2 image matching (src/compliance/imagematch) ───
+    // Uses the image-hashing service (SSCD Hash API). OFF by default. The API key is read from
+    // the environment only (IMAGE_HASH_API_KEY): do not put it in config.json.
+    imageMatch: {
+      // The exact-copy check at ingestion: every primary image (or video thumbnail) that is downloaded is looked up by its SHA-256 in the
+      // banned images, in memory; a match is refused with the same answer as a blocked name. OFF by default. Needs compliance.blocklist.enabled.
+      enabled: getVal(fileConfig.compliance?.imageMatch?.enabled, 'IMAGE_MATCH_ENABLED', toBool) === true,
+      baseUrl: String(getVal(fileConfig.compliance?.imageMatch?.baseUrl, 'IMAGE_HASH_API_URL') || '').trim().replace(/\/+$/, ''),
+      apiKey: String(process.env.IMAGE_HASH_API_KEY || '').trim(),
+      // The service allows 20 s to download a URL, so a call can legitimately take longer than that.
+      timeoutMs: boundedInt(fileConfig.compliance?.imageMatch?.timeoutMs, 30000, 1000, 120000),
+      // Calls in flight at once (one image per call): keeps a job from flooding the service.
+      concurrency: boundedInt(fileConfig.compliance?.imageMatch?.concurrency, 4, 1, 32),
+      // 0 = off (always exactly `concurrency` calls at once). Above `concurrency`: the client starts at `concurrency`, adds one call at a time
+      // while the service keeps answering, and halves the number when it answers 429 / 5xx / times out, never above this. Set it once the
+      // hashing service's team has said how many calls it can take.
+      maxConcurrency: boundedInt(fileConfig.compliance?.imageMatch?.maxConcurrency, 0, 0, 64),
+      retries: boundedInt(fileConfig.compliance?.imageMatch?.retries, 2, 0, 5),
+      retryDelayMs: boundedInt(fileConfig.compliance?.imageMatch?.retryDelayMs, 500, 50, 10000),
+      // Images larger than this are not uploaded (the service rejects more than 50 MB).
+      maxFileBytes: boundedInt(fileConfig.compliance?.imageMatch?.maxFileBytes, 50 * 1024 * 1024, 1024, 50 * 1024 * 1024),
+      // Hashes made by another version cannot be compared with these: the service's /health must report this one.
+      hashVersion: String(fileConfig.compliance?.imageMatch?.hashVersion || 'sscd-simhash-v1').toLowerCase(),
+      // Near-copy matching (resized, recompressed, lightly cropped copies). OFF until the distances are tuned on
+      // real altered copies: with it off only an exact copy (same sha256) is caught. Distances are in bits, 0..256
+      // (0 = identical hash). Up to rejectDistance the image is rejected; up to reviewDistance it is held for a person.
+      perceptual: {
+        enabled: fileConfig.compliance?.imageMatch?.perceptual?.enabled === true,
+        rejectDistance: boundedInt(fileConfig.compliance?.imageMatch?.perceptual?.rejectDistance, 0, 0, 256),
+        reviewDistance: boundedInt(fileConfig.compliance?.imageMatch?.perceptual?.reviewDistance, 0, 0, 256),
+      },
+      // The job that hashes the images of one blocked advertiser (src/compliance/imagematch/job.js, run by the cron).
+      // It reads the ad tables page by page, so these keep it gentle on the database and on the hashing service.
+      job: {
+        pageSize: boundedInt(fileConfig.compliance?.imageMatch?.job?.pageSize, 200, 10, 500), // ads per page
+        pageDelayMs: boundedInt(fileConfig.compliance?.imageMatch?.job?.pageDelayMs, 200, 0, 60000), // pause between pages
+        maxImages: boundedInt(fileConfig.compliance?.imageMatch?.job?.maxImages, 10000, 1, 1000000), // images hashed per job
+        // The extra (carousel) images of an ad. OFF until the index on that table has been checked.
+        includeCarousel: fileConfig.compliance?.imageMatch?.job?.includeCarousel === true,
+        // Stop when this many calls in a row fail (the service is down): do not hammer it.
+        maxConsecutiveFailures: boundedInt(fileConfig.compliance?.imageMatch?.job?.maxConsecutiveFailures, 20, 1, 1000),
+        addBatchSize: boundedInt(fileConfig.compliance?.imageMatch?.job?.addBatchSize, 200, 1, 1000), // entries per blocklist write
+        maxOwners: boundedInt(fileConfig.compliance?.imageMatch?.job?.maxOwners, 20, 1, 200), // owners one run may cover
+      },
+      // The worker that hashes the images of every blocked advertiser by itself. The cron job crons.jobs.imageHashJobs
+      // (config.json) switches it on; these are its settings. It uses the `job` settings above for the pace of each job.
+      worker: {
+        // Networks it covers; empty = every network the job supports that has SQL enabled.
+        networks: toStringArray(fileConfig.compliance?.imageMatch?.worker?.networks).map((n) => n.toLowerCase()),
+        staleClaimMinutes: boundedInt(fileConfig.compliance?.imageMatch?.worker?.staleClaimMinutes, 60, 5, 1440), // a job with no sign of life this long is taken over
+        maxAttempts: boundedInt(fileConfig.compliance?.imageMatch?.worker?.maxAttempts, 3, 1, 20), // tries before a job is marked failed
+        pauseSeconds: boundedInt(fileConfig.compliance?.imageMatch?.worker?.pauseSeconds, 300, 10, 3600), // wait after a service / key problem
+        newJobsPerTick: boundedInt(fileConfig.compliance?.imageMatch?.worker?.newJobsPerTick, 100, 1, 500),
+        // Most jobs one pass may start (a pass has a time budget too): small advertisers finish one after another in the same pass.
+        maxJobsPerTick: boundedInt(fileConfig.compliance?.imageMatch?.worker?.maxJobsPerTick, 20, 1, 200),
+        maxImagesPerJob: boundedInt(fileConfig.compliance?.imageMatch?.worker?.maxImagesPerJob, 50000, 1, 1000000), // images hashed for one advertiser
+        addedBy: String(fileConfig.compliance?.imageMatch?.worker?.addedBy || 'imagematch-worker').slice(0, 128),
+      },
+      // Stage 4: the check of NEW ads (added after it was switched on) against the banned images, run inside the same cron job.
+      // A match goes to copyright_review_queue for a person; nothing is deleted or blocked. Only exact copies match until
+      // `perceptual` above is enabled.
+      sweep: {
+        enabled: fileConfig.compliance?.imageMatch?.sweep?.enabled === true,
+        // Also hash and RECORD every new image (copyright_image_hashes), even while nothing is banned: what a later complaint is searched
+        // against. OFF by default: it costs one call of the hashing service (about 6 per second in total) for every new image.
+        recordHashes: fileConfig.compliance?.imageMatch?.sweep?.recordHashes === true,
+        pageSize: boundedInt(fileConfig.compliance?.imageMatch?.sweep?.pageSize, 100, 1, 500), // ads per page
+        budgetShare: Math.min(Math.max(Number(fileConfig.compliance?.imageMatch?.sweep?.budgetShare) || 0.4, 0.1), 0.9), // part of a pass's time budget the sweep may use
+      },
+      // Hash and record every image already stored (copyright_image_hashes), in the time a cron pass has left after the sweep and the hashing
+      // jobs. OFF by default. The service takes about 6 images per second in total: a million images is about two days of that spare time.
+      backfill: {
+        enabled: fileConfig.compliance?.imageMatch?.backfill?.enabled === true,
+        pageSize: boundedInt(fileConfig.compliance?.imageMatch?.backfill?.pageSize, 100, 1, 500), // ads per page
+        fromId: boundedInt(fileConfig.compliance?.imageMatch?.backfill?.fromId, 0, 0, Number.MAX_SAFE_INTEGER), // start after this ad id (0 = from the first ad)
+      },
+    },
+    // The landing-page form's route (services/copyrightRequest.js, mounted at /api/v1/copyright). OFF by default, and even when
+    // enabled it is mounted only with a token or an explicit allowPublic. The token is read from the environment only
+    // (COPYRIGHT_REQUEST_TOKEN): do not put it in config.json.
+    request: {
+      enabled: fileConfig.compliance?.request?.enabled === true,
+      token: String(process.env.COPYRIGHT_REQUEST_TOKEN || '').trim(),
+      allowPublic: fileConfig.compliance?.request?.allowPublic === true, // knowingly open to anyone who can reach the route
+      addedBy: String(fileConfig.compliance?.request?.addedBy || 'landing-form').trim().slice(0, 128) || 'landing-form', // recorded as who asked
+      rateLimit: {
+        windowMs: boundedInt(fileConfig.compliance?.request?.rateLimit?.windowMs, 60000, 1000, 3600000),
+        max: boundedInt(fileConfig.compliance?.request?.rateLimit?.max, 10, 1, 1000), // requests per address per window
+      },
     },
   },
 

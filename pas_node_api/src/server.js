@@ -128,6 +128,9 @@ if (cluster.isPrimary && config.cluster.enabled) {
           // Disconnect cache (Redis + SQLite)
           // await cacheStore.disconnect();
 
+          // Write any pending blocked-attempt rows before the databases close
+          await require('./compliance/blocklist/service').shutdown().catch(() => {});
+
           // Disconnect all databases
           await databaseManager.disconnectAll();
 

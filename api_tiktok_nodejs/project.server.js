@@ -17,6 +17,7 @@ import Logger from "./resources/logs/logger.log.js";
 import DbConnect from "./resources/database/mysql.connection.js";
 import { SwaggerAuth } from "./utils/authentication.js";
 import { runCronJob } from "./utils/cronJob.js";
+import blocklist from "./core/blocklist/blocklist.service.js";
 const app = express();
 const server = Server(app);
 
@@ -99,7 +100,9 @@ const dbConnect = new DbConnect();
 
 dbConnect
   .initialize()
-  .then(() => {
+  .then(async () => {
+    // Copyright blocklist (B1): off unless compliance.blocklist.enabled is set.
+    await blocklist.init();
     new Routes(app);
     return startServer();
   })

@@ -42,6 +42,9 @@ const REGISTRY = {
     }),
   admobEsOutbox: (jobCfg) => runAdmobEsOutbox(jobCfg),
   chatgptadsEsOutbox: (jobCfg) => runChatgptadsEsOutbox(jobCfg),
+  // Copyright (B2): hashes the images of every blocked advertiser by itself, a short pass per tick
+  // (src/compliance/imagematch/worker.js). Loaded on first run, so a disabled job costs nothing.
+  imageHashJobs: (jobCfg) => require('../compliance/imagematch/worker').runImageHashJobs(jobCfg),
   imageGenStuckJobSweep: (jobCfg) => runImageGenStuckJobSweep(jobCfg),
   imageGenNasCleanupSweep: (jobCfg) => runImageGenNasCleanupSweep(jobCfg),
   // Decoupled from keywordStatsRefresh's own ad-corpus sweep completion —

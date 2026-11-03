@@ -110,6 +110,10 @@ async function createApp() {
 
   await databaseManager.connectAll(networksConfig);
 
+  // Copyright blocklist (B1): needs the SQL connections above; disabled unless
+  // compliance.blocklist.enabled is set in config.json.
+  await require('./compliance/blocklist/service').init();
+
   serviceRegistry.loadAll();
 
 
@@ -146,6 +150,19 @@ async function createApp() {
 
   // Email service — unsubscribe / resubscribe (public; aMember + SendGrid global suppression)
   app.use('/api/v1/email', require('./services/email/routes/emailRoutes'));
+
+  // Copyright request: the landing-page form's connection to the blocklist (single-file, additive). OFF unless
+  // compliance.request.enabled, and then only with a token or an explicit allowPublic; the module is not even required when off.
+  const copyrightRequest = config.compliance?.request;
+  if (copyrightRequest?.enabled) {
+    if (copyrightRequest.token || copyrightRequest.allowPublic) {
+      app.use('/api/v1/copyright', require('./services/copyrightRequest'));
+      log.info('✓ Copyright request mounted at /api/v1/copyright', { protectedByToken: Boolean(copyrightRequest.token) });
+      if (!copyrightRequest.token) log.warn('Copyright request route is OPEN (allowPublic): anyone who can reach it can block a name');
+    } else {
+      log.error('compliance.request.enabled is set but there is no COPYRIGHT_REQUEST_TOKEN and allowPublic is off; the route is NOT mounted');
+    }
+  }
 
 
   // SDUI Service (ported from Go SDUI-Backend — kept on /api, no versioning yet)

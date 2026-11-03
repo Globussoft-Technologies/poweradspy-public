@@ -157,6 +157,7 @@ async function insertPath(ctx, rawAd, { userId, translation, network }) {
     { type: n.type, imageUrl: n.image_video_url, videoUrl: n.image_video_url, thumbnailUrl: n.thumbnail_url },
     network,
   );
+  if (fetched.rejection) return fetched.rejection; // a banned image (compliance): refused like any blocklisted ad
   if (!fetched.ok) {
     return rejected(422, fetched.reason === 'thumbnail'
       ? 'The video thumbnail could not be downloaded, so the ad was not inserted.'

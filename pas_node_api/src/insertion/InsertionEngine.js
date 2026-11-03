@@ -21,6 +21,7 @@
 const config = require('../config');
 const logger = require('../logger');
 const { rejectConfiguredAd } = require('./helpers/postOwnerRejection');
+const blocklist = require('../compliance/blocklist/service');
 
 /**
  * Run a platform pipeline over one ad or an array of ads.
@@ -75,8 +76,18 @@ async function safeProcess(processOne, ad, index, opts = {}) {
     // Delete flows pass applyPostOwnerRejection:false and skip all of them.
     const ownerRejection = opts.applyPostOwnerRejection === false
       ? null
+
       : rejectConfiguredAd(ad, network);
-    const r = ownerRejection || await processOne(ad, index);
+    // Copyright blocklist (B1): in-memory check, no DB call. Skipped for the
+    // same callers that skip the owner deny-list (delete endpoints).
+    const blocklistRejection = ownerRejection || opts.applyPostOwnerRejection === false
+      ? null
+      : blocklist.guard(ad, network, { source: `insertion:${network || 'unknown'}` });
+    const r = ownerRejection || blocklistRejection || await processOne(ad, index);
+
+      
+    
+
     if (r.code >= 400 || r.status === 'rejected' || r.status === 'server_error') {
       const logPayload = {
         ad_id: ad?.ad_id ?? null,

@@ -23,6 +23,7 @@ import {
   getAllESAdId,
 } from "../../utils/elasticSearch.js";
 import languageTranslation from "../../utils/languageAPI.js";
+import blocklist from "../blocklist/blocklist.service.js";
 
 // Models
 const {
@@ -42,6 +43,9 @@ class TikTokService {
   // Create ads
   async create(req, res) {
     const data = req?.body;
+    // Copyright blocklist (B1): in-memory check before any DB, ES or NAS work.
+    const blocked = blocklist.guard(data, "insertion:tiktok:create");
+    if (blocked) return res.send(blocked);
     const transaction = await db.sequelize.transaction();
     try {
         if (!data) {
@@ -273,6 +277,9 @@ class TikTokService {
   // Update ads
   async update(req, res) {
     const data = req?.body;
+    // Copyright blocklist (B1): a blocked ad must not be updated either.
+    const blocked = blocklist.guard(data, "insertion:tiktok:update");
+    if (blocked) return res.send(blocked);
     const transaction = await db.sequelize.transaction();
 
     try {

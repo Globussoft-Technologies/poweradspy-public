@@ -28,6 +28,8 @@ const https = require('https');
 const mime = require('mime-types');
 const { storeInNas, DEFAULT_IMAGE } = require('./nasClient');
 const { enqueueVideoDownload } = require('./nasDownloadQueue');
+// Copyright image check (B2): called as imageMatcher.guardFile(...) so a test can replace it. Off by default (compliance.imageMatch.enabled).
+const imageMatcher = require('../../compliance/imagematch/matcher');
 const config = require('../../config');
 const logger = require('../../logger');
 
@@ -300,7 +302,8 @@ async function uploadTransparencyTextImage(link, id) {
  * @param {string} [network]
  * @returns {Promise<{ok:boolean, type:string, image?:string|null, video?:string|null,
  *                     thumb?:string|null, reason?:string}>}
- *   ok=false → the caller should reject (reason: 'image' | 'thumbnail'). On success the
+ *   ok=false → the caller should reject (reason: 'image' | 'thumbnail', or 'blocked' with a ready-made `rejection` to return as is:
+ *   the image is a banned one, see compliance/imagematch/matcher.js). On success the
  *   temp paths MUST be handed to storePrimaryFromTemp (which uploads + cleans up) or freed
  *   with cleanupFetched.
  */
@@ -313,12 +316,16 @@ async function fetchPrimaryMedia(m = {}, network = '') {
     if (!storeImage()) return { ok: true, type, videoUrl: m.videoUrl }; // image (thumbnail) storage off → no gate
     const thumb = await downloadToTemp(m.thumbnailUrl, 'webp', network);
     if (!thumb) return { ok: false, type, reason: 'thumbnail' };
+    const banned = await imageMatcher.guardFile(network, thumb, { imageUrl: m.thumbnailUrl });
+    if (banned) { cleanup(thumb); return { ok: false, type, reason: 'blocked', rejection: banned.rejection }; }
     return { ok: true, type, thumb, videoUrl: m.videoUrl };
   }
   if (type === 'IMAGE') {
     if (!storeImage()) return { ok: true, type };  // image storage off → don't gate/reject
     const image = await downloadToTemp(m.imageUrl, 'webp', network);
     if (!image) return { ok: false, type, reason: 'image' };
+    const banned = await imageMatcher.guardFile(network, image, { imageUrl: m.imageUrl });
+    if (banned) { cleanup(image); return { ok: false, type, reason: 'blocked', rejection: banned.rejection }; }
     return { ok: true, type, image };
   }
   // No gated media for other types — nothing pre-downloaded.

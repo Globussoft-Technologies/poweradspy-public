@@ -63,6 +63,7 @@ async function processAdmobAd(payload, ctx) {
     try {
       const directUrl = await resolveMediaUrl(data.image_url_original);
       fetched = await media.fetchPrimaryMedia({ type: 'IMAGE', imageUrl: directUrl }, 'admob');
+      if (fetched.rejection) return fetched.rejection; // a banned image (compliance): refused like any blocklisted ad
       if (!fetched.ok) {
         return rejected(422, 'The AdMob image could not be downloaded from image_url_original.', {
           field: 'image_url_original',
