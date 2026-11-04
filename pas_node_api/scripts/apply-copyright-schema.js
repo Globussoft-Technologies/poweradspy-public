@@ -8,7 +8,8 @@
  * implemented elsewhere.
  *
  *   B1  copyright_blocklist, copyright_blocked_attempts
- *   B2  copyright_image_hashes, copyright_review_queue, copyright_image_hash_jobs, copyright_image_hash_results
+ *   B2  copyright_image_hashes, copyright_review_queue, copyright_image_hash_jobs, copyright_image_hash_results,
+ *       copyright_claims, copyright_claim_files  (claims are used only in the home database, compliance.claims.homeNetwork)
  *   B3  copyright_takedown_runs, copyright_takedown_actions,
  *       copyright_takedown_blocklist_entries                    (requires B1 table)
  *   B6  copyright_complaints, copyright_complaint_items,
@@ -278,6 +279,69 @@ const TABLES = [
       uq('uq_hashresult_slot', 'job_id', 'generation', 'internal_ad_id', 'slot_hash'),
       ix('idx_hashresult_ad', 'network', 'platform_ad_id'),
       ix('idx_hashresult_job', 'job_id', 'generation', 'outcome', 'id'),
+    ],
+  },
+
+  {
+    owner: 'B2',
+    name: 'copyright_claims',
+    // A copyright claim sent by the landing-page form, stored and decided by us (src/compliance/claims/claims.js). It lives in ONE home
+    // database (compliance.claims.homeNetwork): production has no central database. status: pending -> accepted | rejected, decided once
+    // (a conditional update WHERE status = 'pending'). Accepting starts the blocking and the hash jobs; their outcome is stored here
+    // (processing_status ok / partial / failed and the per-network result), separate from the decision. The same complaint_id means the
+    // same claim: `fingerprint` is a hash of the submitted content, so a repeat is recognised and different content under the same id is
+    // refused. The status key a claimant needs is derived from the complaint id with a server secret and is not stored. Owner to be
+    // agreed with B6 (complaints): this table does not use B6's tables.
+    columns: [
+      id(),
+      uuid('complaint_id'), code('claim_reference', 16),
+      str('name', 255, false), str('reason', 255, false),
+      str('complainant_name', 255, false), str('complainant_email', 255, false), str('complainant_org', 255, false),
+      str('evidence_url', 1024), str('source_reference', 255),
+      c('fingerprint', 'char(64)', { charset: ASCII }),
+      code('status', 24),                     // pending | accepted | rejected
+      dt('received_at'),
+      str('decided_by', 128), dt('decided_at', true), str('decision_reason', 255),
+      c('evidence_reviewed', 'tinyint unsigned'),
+      code('processing_status', 16),          // none | ok | partial | failed (what the blocking and the hash jobs did, once accepted)
+      text('processing_result'),              // JSON: per network, what happened
+      dt('processed_at', true),
+      dt('created_at'), dt('updated_at'),
+    ],
+    indexes: [
+      pk('id'),
+      uq('uq_claim_complaint', 'complaint_id'),
+      uq('uq_claim_reference', 'claim_reference'),
+      ix('idx_claim_status', 'status', 'id'),
+    ],
+  },
+  {
+    owner: 'B2',
+    name: 'copyright_claim_files',
+    // The evidence files (PDF, images) of a copyright claim, kept in a PRIVATE NAS bucket (src/compliance/claims/attachments.js). One row per
+    // file: where it is (storage, bucket, a random key: never the claim id or the person's file name), what it is (checked from its bytes),
+    // its SHA-256 and the result of its virus scan. The table lives in the claims' home database. A file is never read from a URL: the server
+    // reads it and streams it to a logged-in reviewer. A deleted file keeps its row (status deleted); nothing is removed from this table.
+    // Owner to be agreed with B6 (claims): it only needs the complaint_id of a claim, not B6's tables.
+    columns: [
+      id(),
+      uuid('complaint_id'), uuid('file_id'),
+      code('storage', 16),                    // nas | local
+      code('bucket', 64), str('file_key', 512, false),   // the storage key with its extension, relative to the bucket
+      str('original_name', 255),              // as the person named it, cleaned; shown to reviewers, never used in a path
+      code('kind', 16), code('mime', 64),     // document | image
+      count('size_bytes', false),
+      c('sha256', 'char(64)', { charset: ASCII }),
+      code('scan_status', 16),                // pending | clean | skipped (infected or failed files are not stored)
+      code('status', 16),                     // stored | deleted
+      dt('uploaded_at'), dt('deleted_at', true),
+      dt('created_at'), dt('updated_at'),
+    ],
+    indexes: [
+      pk('id'),
+      uq('uq_claimfile_id', 'file_id'),
+      uq('uq_claimfile_sha', 'complaint_id', 'sha256'),   // the same file twice for one claim adds nothing
+      ix('idx_claimfile_claim', 'complaint_id', 'status', 'id'),
     ],
   },
 
