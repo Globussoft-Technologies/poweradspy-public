@@ -48,7 +48,7 @@ function buildSql(table, limit) {
            DATE_FORMAT(${table}.first_seen, '%Y-%m-%d') AS first_seen,
            DATE_FORMAT(${table}.last_seen, '%Y-%m-%d') AS last_seen
     FROM ${table}
-    WHERE ${table}.post_owner_id = ?
+    WHERE ${table}.post_owner_id = ?${require('../../copyrightVerification/status').sqlPredicate(table)}
     ORDER BY ${table}.first_seen ASC, ${table}.id ASC
     ${limit ? `LIMIT ${Math.max(1, Math.trunc(limit))}` : ''}`.trim();
 }

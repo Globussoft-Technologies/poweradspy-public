@@ -45,6 +45,9 @@ const REGISTRY = {
   // Copyright (B2): hashes the images of every blocked advertiser by itself, a short pass per tick
   // (src/compliance/imagematch/worker.js). Loaded on first run, so a disabled job costs nothing.
   imageHashJobs: (jobCfg) => require('../compliance/imagematch/worker').runImageHashJobs(jobCfg),
+  // copyright_status: verify pending ads / remove failed ads (src/services/copyrightVerification/service.js).
+  copyrightVerification: (jobCfg) => require('../services/copyrightVerification/service').runVerification(jobCfg),
+  copyrightCleanup: (jobCfg) => require('../services/copyrightVerification/service').runCleanup(jobCfg),
   imageGenStuckJobSweep: (jobCfg) => runImageGenStuckJobSweep(jobCfg),
   imageGenNasCleanupSweep: (jobCfg) => runImageGenNasCleanupSweep(jobCfg),
   // Decoupled from keywordStatsRefresh's own ad-corpus sweep completion —

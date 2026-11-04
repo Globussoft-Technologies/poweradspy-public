@@ -554,6 +554,8 @@ class GoogleSearchQueryBuilder {
   build() {
     const envelopes = this._collectEnvelopes();
     const buckets = bucketize(envelopes);
+    const copyrightFilter = require('../../copyrightVerification/status').searchFilter();
+    if (copyrightFilter) buckets.filter.push(copyrightFilter);
 
     // NAS image filter — IMAGE ads without a valid NAS URL are excluded.
     buckets.must_not.push(IMAGE_MUST_NOT);

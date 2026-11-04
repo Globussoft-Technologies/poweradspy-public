@@ -643,14 +643,26 @@ describe("jobRepository > createJobs", () => {
     const out = await repo.createJobs(sql, "reddit", [{ id: 5, value: "  Twinkling Tree ", complaint_id: "c1" }, { id: "6", value: "Blue Moon" }]);
     expect(out).toEqual({ created: 2 });
     const { text, params } = sql.calls[0];
-    expect(text).toMatch(/^INSERT INTO copyright_image_hash_jobs \(network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, created_at, updated_at\) VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?\), \(/);
+    expect(text).toMatch(/^INSERT INTO copyright_image_hash_jobs \(network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, created_at, updated_at, identifier_namespace\) VALUES \(\?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?, \?\), \(/);
     expect(text).toMatch(/ON DUPLICATE KEY UPDATE id = id$/);
     // a new job starts at generation 1, not yet run (run_gen 0) and not yet covered (covered_gen 0)
     expect(params.slice(0, 11)).toEqual(["reddit", 5, "advertiser", "Twinkling Tree", "c1", "pending", 0, 1, 0, 0, 0]);
-    expect(params[13 + 1]).toBe(6);
-    expect(params[13 + 4]).toBeNull(); // no complaint id
+    expect(params[13]).toBe("none"); // advertiser entries carry namespace none
+    expect(params[14 + 1]).toBe(6);
+    expect(params[14 + 4]).toBeNull(); // no complaint id
     expect(params.includes(undefined)).toBe(false); // the driver rejects undefined binds
     noDestructive(text);
+  });
+
+  it("keeps the ad_id namespace on the job and skips an ad_id entry without one", async () => {
+    const sql = fakeSql(() => ({ affectedRows: 1 }));
+    await repo.createJobs(sql, "reddit", [
+      { id: 7, value: "123", entry_type: "ad_id", identifier_namespace: "internal" },
+      { id: 8, value: "456", entry_type: "ad_id" },
+    ]);
+    expect(sql.calls).toHaveLength(1);
+    expect(sql.calls[0].params).toHaveLength(14);
+    expect(sql.calls[0].params[13]).toBe("internal");
   });
 
   it("skips entries without a usable id or name, and makes no query for nothing", async () => {

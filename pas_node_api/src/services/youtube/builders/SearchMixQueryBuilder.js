@@ -460,6 +460,8 @@ class SearchMixQueryBuilder {
   build() {
     const envelopes = this._collectEnvelopes();
     const buckets = bucketize(envelopes);
+    const copyrightFilter = require('../../copyrightVerification/status').searchFilter();
+    if (copyrightFilter) buckets.filter.push(copyrightFilter);
 
     // Exclude ads with empty ad_type (invalid YouTube ads)
     buckets.must_not.push({ term: { 'ad_type.keyword': '' } });

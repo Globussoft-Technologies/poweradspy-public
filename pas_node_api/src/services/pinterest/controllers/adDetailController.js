@@ -63,7 +63,7 @@ async function getAdDetails(req, db, logger) {
   if (!db.sql) return { code: 503, message: 'SQL database connection not available' };
 
   try {
-    const rows = await db.sql.query(AD_DETAIL_SQL, [p.ad_id]);
+    const rows = await db.sql.query(require('../../copyrightVerification/status').detailQuery(AD_DETAIL_SQL, 'pinterest'), [p.ad_id]);
     if (!rows || rows.length === 0) return { code: 404, message: 'Ad not found', data: null };
 
     const adData = { ...rows[0] };

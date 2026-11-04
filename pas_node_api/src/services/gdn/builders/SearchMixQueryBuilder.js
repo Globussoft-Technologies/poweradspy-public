@@ -497,6 +497,8 @@ class SearchMixQueryBuilder {
   build() {
     const envelopes = this._collectEnvelopes();
     const buckets = bucketize(envelopes);
+    const copyrightFilter = require('../../copyrightVerification/status').searchFilter();
+    if (copyrightFilter) buckets.filter.push(copyrightFilter);
     buckets.filter.push(...EXTRA_CONDITION);
 
     // Default exclusion: drop scraper placeholder ads whose creative text is

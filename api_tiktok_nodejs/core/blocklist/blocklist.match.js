@@ -33,6 +33,11 @@ export function buildSnapshot(rows, options = {}) {
   };
 
   for (const row of rows || []) {
+    // Incoming ad_id values are platform IDs, never internal SQL IDs.
+    if (row?.entry_type === "ad_id" && row.identifier_namespace && row.identifier_namespace !== "platform") {
+      ignored += 1;
+      continue;
+    }
     const family = TYPE_TO_FAMILY[row?.entry_type];
     const key = family ? normalizeByFamily(family, row.value) : "";
     if (!key) {

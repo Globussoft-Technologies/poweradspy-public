@@ -42,7 +42,7 @@ export async function loadActive({ pageSize = 5000 } = {}) {
     let lastId = 0;
     for (;;) {
       const page = await run(
-        `SELECT id, entry_type, value
+        `SELECT id, entry_type, value, identifier_namespace
            FROM ${BLOCKLIST_TABLE}
           WHERE network = ?
             AND status = 'active'

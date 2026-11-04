@@ -131,7 +131,7 @@ export class BlocklistCache {
       const body = JSON.stringify({
         network: NETWORK,
         savedAt: Date.now(),
-        rows: rows.map((r) => ({ id: r.id, entry_type: r.entry_type, value: r.value })),
+        rows: rows.map((r) => ({ id: r.id, entry_type: r.entry_type, value: r.value, identifier_namespace: r.identifier_namespace })),
       });
       await fs.promises.writeFile(tmp, body, "utf8");
       await fs.promises.rename(tmp, file); // atomic swap: a reader never sees a half-written file
@@ -145,6 +145,8 @@ export class BlocklistCache {
     try {
       const parsed = JSON.parse(await fs.promises.readFile(this.filePath(), "utf8"));
       if (!parsed || parsed.network !== NETWORK || !Array.isArray(parsed.rows)) return null;
+      // A snapshot without namespaces cannot safely distinguish equal-looking IDs.
+      if (parsed.rows.some((row) => row.entry_type === "ad_id" && !["internal", "platform"].includes(row.identifier_namespace))) return null;
       return { rows: parsed.rows, savedAt: Number(parsed.savedAt) || Date.now() };
     } catch {
       return null;

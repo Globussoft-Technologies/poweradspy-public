@@ -268,7 +268,7 @@ class BlocklistCache {
       const body = JSON.stringify({
         network,
         savedAt: Date.now(),
-        rows: rows.map((r) => ({ id: r.id, entry_type: r.entry_type, value: r.value })),
+        rows: rows.map((r) => ({ id: r.id, entry_type: r.entry_type, value: r.value, identifier_namespace: r.identifier_namespace })),
         // A typed array is not useful as JSON: the 256-bit perceptual hash is saved as its 64 hex characters.
         imageHashesLoaded: Boolean(state?.imageHashesLoaded),
         imageHashes: (state?.snapshot?.imageHashes || []).map((h) => ({
@@ -291,6 +291,8 @@ class BlocklistCache {
     try {
       const parsed = JSON.parse(await fs.promises.readFile(file, 'utf8'));
       if (!parsed || parsed.network !== network || !Array.isArray(parsed.rows)) return null;
+      // An old snapshot without namespaces cannot safely distinguish equal-looking IDs.
+      if (parsed.rows.some((row) => row.entry_type === 'ad_id' && !['internal', 'platform'].includes(row.identifier_namespace))) return null;
       const stored = Array.isArray(parsed.imageHashes) ? parsed.imageHashes : [];
       return {
         rows: parsed.rows,

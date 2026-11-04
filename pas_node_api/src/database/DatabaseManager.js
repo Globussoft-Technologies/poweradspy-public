@@ -395,7 +395,11 @@ class DatabaseManager {
         search: (params, options) => client.search(params, options),
         analyze:(params, options) => client.indices.analyze(params, options),
         count:  (params, options) => client.count(params, options),
-        index:  (params, options) => client.index(params, options),
+        index: (params, options) => {
+          if (!config.compliance?.copyrightVerification?.enabled) return client.index(params, options);
+          return require('../services/copyrightVerification/status').indexDocument(slug, elasticConfig.index, params, () => this.getSQL(slug))
+            .then((guarded) => client.index(guarded, options));
+        },
         update: (params, options) => client.update(params, options),
         delete: (params, options) => client.delete(params, options),
         bulk:   (params, options) => client.bulk(params, options),

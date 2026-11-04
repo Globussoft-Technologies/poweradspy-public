@@ -384,6 +384,27 @@ const config = {
   // failMode 'open': such a network lets ads through (loudly logged). Any other value means 'closed'.
   // Invalid numbers fall back to / are clamped to safe values.
   compliance: {
+    // copyright_status verification (src/services/copyrightVerification). Master switch for the
+    // search filter, the ES status hook and both crons. Turn on only after
+    // `node src/services/copyrightVerification/migrate.js --apply` has added the column.
+    // Schedules live in crons.jobs.copyrightVerification / crons.jobs.copyrightCleanup.
+    copyrightVerification: {
+      enabled: getVal(fileConfig.compliance?.copyrightVerification?.enabled, 'COPYRIGHT_VERIFICATION_ENABLED', toBool) === true,
+      // Networks to process; empty = all supported (TikTok is never included).
+      networks: toStringArray(fileConfig.compliance?.copyrightVerification?.networks).map((n) => n.toLowerCase()),
+      batchSize: boundedInt(fileConfig.compliance?.copyrightVerification?.batchSize, 200, 1, 1000),      // pending ads per network per tick
+      workers: boundedInt(fileConfig.compliance?.copyrightVerification?.workers, 2, 1, 16),             // worker threads for hash comparison
+      hashConcurrency: boundedInt(fileConfig.compliance?.copyrightVerification?.hashConcurrency, 4, 1, 32), // image-hash calls at once
+      maxHashAttempts: boundedInt(fileConfig.compliance?.copyrightVerification?.maxHashAttempts, 5, 1, 100),
+      // What to do with an ad whose images still cannot be hashed after maxHashAttempts: 'pending' (stay hidden) | 'approve'.
+      afterMaxAttempts: fileConfig.compliance?.copyrightVerification?.afterMaxAttempts === 'approve' ? 'approve' : 'pending',
+      cleanupBatchSize: boundedInt(fileConfig.compliance?.copyrightVerification?.cleanupBatchSize, 50, 1, 500),
+      nasConcurrency: boundedInt(fileConfig.compliance?.copyrightVerification?.nasConcurrency, 2, 1, 16),
+      maxNasAttempts: boundedInt(fileConfig.compliance?.copyrightVerification?.maxNasAttempts, 3, 1, 50),
+      // Also block the advertiser of a failed ad (not only the ad id).
+      blockAdvertiser: fileConfig.compliance?.copyrightVerification?.blockAdvertiser === true,
+      audit: fileConfig.compliance?.copyrightVerification?.audit !== false,
+    },
     blocklist: {
       enabled: getVal(fileConfig.compliance?.blocklist?.enabled, 'BLOCKLIST_ENABLED', toBool) === true,
       failMode: String(getVal(fileConfig.compliance?.blocklist?.failMode, 'BLOCKLIST_FAIL_MODE') || 'closed').toLowerCase() === 'open'

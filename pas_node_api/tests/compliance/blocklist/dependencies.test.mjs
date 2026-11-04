@@ -37,7 +37,7 @@ function setup({ enforcement = true, networks = ["reddit", "quora"], noSql = [],
     upsertEntries: vi.fn(async () => ({ affected: 1 })),
     findIds: vi.fn(async (sql, rows) => {
       const ids = new Map();
-      rows.forEach((r, i) => ids.set(idKey(r.network, r.entry_type, r.value_sha256), 100 + i));
+      rows.forEach((r, i) => ids.set(idKey(r.network, r.entry_type, r.value_sha256, r.identifier_namespace), 100 + i));
       return ids;
     }),
     revokeEntries: vi.fn(async (sql, ids) => ({ affected: ids.length })),
@@ -54,13 +54,24 @@ function setup({ enforcement = true, networks = ["reddit", "quora"], noSql = [],
 const entry = (over = {}) => ({ entryType: "ad_id", value: "42", addedBy: "tester", ...over });
 
 describe("dependencies > add() writes and returns ids", () => {
+  it("validates namespaces and defaults source ad IDs to platform", async () => {
+    const { service, repository } = setup({ networks: ["reddit"] });
+    const result = await service.add([
+      entry({ value: "1", network: "reddit" }),
+      entry({ value: "2", identifierNamespace: "internal", network: "reddit" }),
+      entry({ value: "3", identifierNamespace: "none", network: "reddit" }),
+      entry({ entryType: "domain", value: "example.com", identifierNamespace: "internal", network: "reddit" }),
+    ]);
+    expect(result.rejected).toHaveLength(2);
+    expect(repository.upsertEntries.mock.calls[0][1].map((r) => r.identifier_namespace)).toEqual(["platform", "internal"]);
+  });
   it("writes an 'all' entry to every managed network and reports each result with the entry ids", async () => {
     const { service, repository, refreshNetwork } = setup({ noSql: ["quora"] });
     const out = await service.add([entry({ reason: "t" })]);
     expect(out.rejected).toEqual([]);
     expect(out.results[0]).toMatchObject({ network: "reddit", ok: true, count: 1 });
     expect(out.results[0].entries).toEqual([
-      { entryType: "ad_id", value: "42", valueSha256: sha("ad_id:42"), blocklistId: 100 },
+      { entryType: "ad_id", identifierNamespace: "platform", value: "42", valueSha256: sha("ad_id:42"), blocklistId: 100 },
     ]);
     expect(out.results[1]).toEqual({ network: "quora", ok: false, count: 1, error: "no SQL connection", entries: [] });
     expect(repository.upsertEntries).toHaveBeenCalledTimes(1);

@@ -123,6 +123,8 @@ function buildSearchMixDoc(columns, row, opts = {}) {
 
   // Caller-supplied extra fields (Thumbnail, impression, s3_path, etc.) win.
   if (opts.extra) Object.assign(body, opts.extra);
+  // Carry the SQL status into search so pending and failed ads can be hidden.
+  if (row.copyright_status !== undefined && row.copyright_status !== null) body.copyright_status = Number(row.copyright_status);
 
   return { index, type: 'doc', body };
 }

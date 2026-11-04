@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 const Builder = require("../../../../src/services/facebook/builders/SearchMixQueryBuilder");
+const config = require("../../../../src/config");
 
 let b;
 beforeEach(() => {
@@ -62,6 +63,13 @@ describe("Facebook builder > construction + setters", () => {
 });
 
 describe("Facebook builder > build() defaults", () => {
+  it("hides pending and failed ads when verification is enabled", () => {
+    const previous = config.compliance.copyrightVerification.enabled;
+    config.compliance.copyrightVerification.enabled = true;
+    try {
+      expect(b.build().body.query.bool.filter).toContainEqual({ bool: { must_not: { terms: { copyright_status: [0, 2] } } } });
+    } finally { config.compliance.copyrightVerification.enabled = previous; }
+  });
   it("emits EXTRA_CONDITION filter", () => {
     const out = b.build();
     expect(out.body.query.bool.filter.length).toBeGreaterThanOrEqual(1);

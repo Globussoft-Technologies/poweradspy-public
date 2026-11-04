@@ -234,6 +234,13 @@ class BlocklistService {
   /** One validated table row for an entry, or { error }. */
   buildRow(entry) {
     const addedBy = typeof entry?.addedBy === 'string' ? entry.addedBy.trim() : '';
+    // ad_id defaults to platform; internal = our SQL row id (it cannot block a newly arriving ad by itself).
+    const namespace = entry?.identifierNamespace === undefined
+      ? (entry?.entryType === 'ad_id' ? 'platform' : 'none')
+      : String(entry.identifierNamespace).trim().toLowerCase();
+    if (entry?.entryType === 'ad_id' ? !['internal', 'platform'].includes(namespace) : namespace !== 'none') {
+      return { error: 'identifierNamespace must be internal or platform for ad_id, and none for other entry types' };
+    }
     let fields;
 
     if (entry?.entryType === IMAGE_HASH) {
@@ -274,6 +281,7 @@ class BlocklistService {
       row: {
         network: String(entry.network || 'all').toLowerCase(),
         entry_type: entry.entryType,
+        identifier_namespace: namespace,
         added_by: addedBy,
         reason: entry.reason,
         source: entry.source,
@@ -288,7 +296,7 @@ class BlocklistService {
   /**
    * Add entries to the blocklist.
    *
-   * entry: { entryType, value, addedBy, network? ('all' or a network slug; default 'all'),
+   * entry: { entryType, value, addedBy, identifierNamespace?, network? ('all' or a network slug; default 'all'),
    *          reason?, source?, complaintId?, expiresAt?, details? }
    *   entryType 'image_hash' (B2): { entryType, imageSha256, imagePhash?, imagePhashAlgo?, addedBy, ... }
    *   `value` is not used for image_hash; imagePhash is the 64-hex-character hash and imagePhashAlgo its version.
@@ -339,9 +347,10 @@ class BlocklistService {
           count: rows.length,
           entries: rows.map((r) => ({
             entryType: r.entry_type,
+            identifierNamespace: r.identifier_namespace,
             value: r.value,
             valueSha256: r.value_sha256,
-            blocklistId: ids.get(idKey(r.network, r.entry_type, r.value_sha256)) ?? null,
+            blocklistId: ids.get(idKey(r.network, r.entry_type, r.value_sha256, r.identifier_namespace)) ?? null,
           })),
         });
         // Only the new banned images are read again (an add never removes one); see BlocklistCache.
@@ -527,6 +536,11 @@ async function listActive(network) {
   return requireInstance().listActive(network);
 }
 
+// Metadata match without the insertion side effects (used by copyright verification).
+function match(ad, network) {
+  return instance && instance.appliesTo(network) ? instance.match(ad, network) : null;
+}
+
 function getImageHashes(network) {
   return instance
     ? instance.getImageHashes(network)
@@ -560,6 +574,7 @@ module.exports = {
   defaultNetworks,
   init,
   guard,
+  match,
   add,
   revoke,
   listActive,

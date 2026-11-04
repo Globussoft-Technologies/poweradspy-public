@@ -167,8 +167,19 @@ class HashJob {
   // ── what a job starts from: advertiser / page (the owner's ads), one ad id, or a URL ──
 
   /** The one ad with this platform ad id (or the few, if the platform id repeats). */
-  async ownersOfAdId(value) {
-    const ids = await repo.adIdsByPlatformId(this.sql, this.source, [String(value || '').trim()]);
+  async ownersOfAdId(value, namespace = 'platform') {
+    const id = String(value || '').trim();
+    let ids;
+    if (namespace === 'internal') {
+      // Do not let MySQL coerce malformed or imprecise IDs into another ad.
+      if (!/^\d+$/.test(id) || !Number.isSafeInteger(Number(id)) || String(Number(id)) !== id) throw new Error('invalid internal ad ID');
+      const found = await repo.platformIds(this.sql, this.source, [id]);
+      ids = found.has(id) ? [Number(id)] : [];
+    } else if (namespace === 'platform') {
+      ids = await repo.adIdsByPlatformId(this.sql, this.source, [id]);
+    } else {
+      throw new Error('invalid ad ID namespace');
+    }
     return ids.length ? [{ id: `ad_id:${value}`, name: String(value), adsCount: ids.length, fixedAdIds: ids.map(Number) }] : [];
   }
 
@@ -253,7 +264,7 @@ class HashJob {
     let role = null;
     try {
       if (isAd) {
-        owners = await this.ownersOfAdId(entry.value);
+        owners = await this.ownersOfAdId(entry.value, entry.identifierNamespace || 'platform');
       } else if (isUrl) {
         const found = await this.ownersOfUrl(entry);
         role = found.role;

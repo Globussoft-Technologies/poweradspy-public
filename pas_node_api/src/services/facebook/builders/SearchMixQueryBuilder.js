@@ -29,6 +29,7 @@ require("dotenv").config();
  */
 
 const { facebook: fbNet } = require('../../../config/networks');
+const { searchFilter } = require('../../copyrightVerification/status');
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 const {
   relativeWords,
@@ -812,6 +813,8 @@ class SearchMixQueryBuilder {
 
     // The NAS image filter is always applied — append to filter context.
     buckets.filter.push(...EXTRA_CONDITION);
+    const copyrightFilter = searchFilter();
+    if (copyrightFilter) buckets.filter.push(copyrightFilter);
 
     // Popularity sort = "show ads ranked by popularity score, highest first".
     // Without this, docs that have no popularity score still match and sort to

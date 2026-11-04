@@ -526,6 +526,8 @@ class NativeSearchQueryBuilder {
   build() {
     const envelopes = this._collectEnvelopes();
     const buckets = bucketize(envelopes);
+    const copyrightFilter = require('../../copyrightVerification/status').searchFilter();
+    if (copyrightFilter) buckets.filter.push(copyrightFilter);
     buckets.filter.push(...EXTRA_CONDITION);
 
     const nc = this._getNotCountryClause();

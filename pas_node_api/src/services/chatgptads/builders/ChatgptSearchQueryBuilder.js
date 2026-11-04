@@ -215,13 +215,14 @@ class ChatgptSearchQueryBuilder {
   }
 
   build() {
+    const copyrightFilter = require('../../copyrightVerification/status').searchFilter();
     return {
       index: this.index,
       body: {
         from: this.from,
         size: this.size,
         track_total_hits: true,
-        query: { bool: { must: this.must, filter: this.filter } },
+        query: { bool: { must: this.must, filter: copyrightFilter ? [...this.filter, copyrightFilter] : this.filter } },
         // `id` tie-breaker keeps pagination stable when many ads share a sort value
         // (e.g. hits = 1 or days_running = 1 for every brand-new ad).
         sort: [

@@ -273,6 +273,7 @@ async function resolveSessionScope(db, sessionId) {
 }
 
 async function runElasticSearch(db, { must, filter, sortField, page, size }) {
+  const copyrightFilter = require('../../copyrightVerification/status').searchFilter();
   const response = await db.elastic.search({
     index: db.elastic.indexName || 'mob_search_mix',
     body: {
@@ -284,7 +285,7 @@ async function runElasticSearch(db, { must, filter, sortField, page, size }) {
       // which broke both the total badge and infinite scroll (hasMore stuck
       // at false). Do not change this back to false.
       track_total_hits: true,
-      query: { bool: { must, filter } },
+      query: { bool: { must, filter: copyrightFilter ? [...filter, copyrightFilter] : filter } },
       sort: [{ [sortField]: { order: 'desc', missing: '_last' } }, { id: 'desc' }],
     },
   });
@@ -381,7 +382,7 @@ async function resolveAdRecord(sql, input) {
     const rows = await sql.query(
       `SELECT id, ad_id, first_seen, last_seen
        FROM mob_ads
-       WHERE id = ?
+       WHERE id = ?${require('../../copyrightVerification/status').sqlPredicate('mob_ads')}
        LIMIT 1`,
       [internalId]
     );
@@ -393,7 +394,7 @@ async function resolveAdRecord(sql, input) {
   const rows = await sql.query(
     `SELECT id, ad_id, first_seen, last_seen
      FROM mob_ads
-     WHERE LOWER(TRIM(ad_id)) = ?
+     WHERE LOWER(TRIM(ad_id)) = ?${require('../../copyrightVerification/status').sqlPredicate('mob_ads')}
      LIMIT 1`,
     [publicAdId]
   );

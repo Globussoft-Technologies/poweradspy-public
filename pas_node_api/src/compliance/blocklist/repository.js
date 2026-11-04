@@ -38,8 +38,8 @@ function ascii(value, max) {
   return String(value).replace(/[^\x20-\x7e]/g, '?').slice(0, max);
 }
 
-function idKey(network, entryType, valueSha256) {
-  return `${network}|${entryType}|${valueSha256}`;
+function idKey(network, entryType, valueSha256, namespace = entryType === 'ad_id' ? 'platform' : 'none') {
+  return `${network}|${entryType}|${namespace}|${valueSha256}`;
 }
 
 /**
@@ -85,7 +85,7 @@ async function pageThrough(sql, network, pageSize, { columns, typeOperator, type
  */
 function loadActive(sql, network, { pageSize = 5000 } = {}) {
   return pageThrough(sql, network, pageSize, {
-    columns: 'id, entry_type, value',
+    columns: 'id, entry_type, value, identifier_namespace',
     typeOperator: '<>',
     typeValue: IMAGE_HASH_TYPE,
   });
@@ -110,7 +110,7 @@ function loadImageHashes(sql, network, { pageSize = 5000, afterId = 0 } = {}) {
 
 /**
  * Add entries in one multi-row statement. The unique key
- * (network, entry_type, value_sha256) makes this idempotent: an existing entry
+ * (network, entry_type, identifier_namespace, value_sha256) makes this idempotent: an existing entry
  * is re-activated (its removal marks are cleared), never duplicated. Rows are
  * never deleted. `added_by` is NOT NULL in the table, so every entry must have it.
  *
@@ -121,21 +121,22 @@ function loadImageHashes(sql, network, { pageSize = 5000, afterId = 0 } = {}) {
 async function upsertEntries(sql, entries) {
   if (!entries.length) return { affected: 0 };
   const now = utcNow();
-  const placeholders = entries.map(() => `(${Array(16).fill('?').join(', ')})`).join(', ');
+  const placeholders = entries.map(() => `(${Array(17).fill('?').join(', ')})`).join(', ');
   const params = [];
   for (const e of entries) {
     params.push(
       ascii(e.network, 32), ascii(e.entry_type, 32), cut(e.value, VALUE_MAX), e.value_sha256,
       cut(e.reason, 255), ascii(e.source, 64), e.complaint_id || null,
       'active', e.expires_at || null, e.details || null, now, now, cut(e.added_by, 128),
-      e.image_sha256 || null, ascii(e.image_phash_algo, 16), e.image_phash ?? null
+      e.image_sha256 || null, ascii(e.image_phash_algo, 16), e.image_phash ?? null,
+      ascii(e.identifier_namespace || (e.entry_type === 'ad_id' ? 'platform' : 'none'), 16)
     );
   }
   const result = await sql.query(
     `INSERT INTO ${BLOCKLIST_TABLE}
        (network, entry_type, value, value_sha256, reason, source, complaint_id,
         status, expires_at, details, created_at, updated_at, added_by,
-        image_sha256, image_phash_algo, image_phash)
+        image_sha256, image_phash_algo, image_phash, identifier_namespace)
      VALUES ${placeholders}
      ON DUPLICATE KEY UPDATE
        status = 'active', reason = VALUES(reason), source = VALUES(source),
@@ -158,24 +159,25 @@ async function upsertEntries(sql, entries) {
 async function findIds(sql, rows) {
   const groups = new Map();
   for (const r of rows) {
-    const key = `${r.network}\u0000${r.entry_type}`;
+    const namespace = r.identifier_namespace || (r.entry_type === 'ad_id' ? 'platform' : 'none');
+    const key = `${r.network}\u0000${r.entry_type}\u0000${namespace}`;
     if (!groups.has(key)) groups.set(key, new Set());
     groups.get(key).add(r.value_sha256);
   }
   const ids = new Map();
   for (const [key, hashSet] of groups) {
-    const [network, entryType] = key.split('\u0000');
+    const [network, entryType, namespace] = key.split('\u0000');
     const hashes = [...hashSet];
     for (let i = 0; i < hashes.length; i += IN_CHUNK) {
       const chunk = hashes.slice(i, i + IN_CHUNK);
       const found = await sql.query(
         `SELECT id, value_sha256
            FROM ${BLOCKLIST_TABLE}
-          WHERE network = ? AND entry_type = ?
+          WHERE network = ? AND entry_type = ? AND identifier_namespace = ?
             AND value_sha256 IN (${chunk.map(() => '?').join(', ')})`,
-        [network, entryType, ...chunk]
+        [network, entryType, namespace, ...chunk]
       );
-      for (const f of found) ids.set(idKey(network, entryType, f.value_sha256), Number(f.id));
+      for (const f of found) ids.set(idKey(network, entryType, f.value_sha256, namespace), Number(f.id));
     }
   }
   return ids;

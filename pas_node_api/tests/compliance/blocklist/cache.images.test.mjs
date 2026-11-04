@@ -14,7 +14,7 @@ const { parseHash } = require("../../../src/compliance/imagematch/matcher");
 // Banned image hashes (B2) travel with the list but never endanger it.
 
 const log = { info() {}, warn() {}, error() {} };
-const ROWS = [{ id: 1, entry_type: "ad_id", value: "1" }, { id: 2, entry_type: "domain", value: "bad.com" }];
+const ROWS = [{ id: 1, entry_type: "ad_id", value: "1", identifier_namespace: "platform" }, { id: 2, entry_type: "domain", value: "bad.com" }];
 const SHA = "a".repeat(64);
 const PHASH = "460e931b54bbbb9667c97c9459eed7c8f2439b62c259c021fefb559058f57304"; // 256 bits, 64 hex characters
 const ALGO = "sscd-simhash-v1";

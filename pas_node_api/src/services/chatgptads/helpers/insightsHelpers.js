@@ -31,12 +31,13 @@ function readHits(esResult) {
 
 /** One ad's ES document (`_source`) by internal id, limited to `fields`. null when not found. */
 async function fetchAdSource(elastic, adId, fields) {
+  const copyrightFilter = require('../../copyrightVerification/status').searchFilter();
   const esResult = await elastic.search({
     index: ES_INDEX,
     body: {
       size: 1,
       _source: fields,
-      query: { bool: { filter: { term: { id: adId } } } },
+      query: { bool: { filter: copyrightFilter ? [{ term: { id: adId } }, copyrightFilter] : { term: { id: adId } } } },
     },
   });
   const hits = readHits(esResult);

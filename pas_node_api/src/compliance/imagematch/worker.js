@@ -64,7 +64,7 @@ async function findNewAdvertisers(sql, network, { limit = 100 } = {}) {
     for (const type of ENTRY_TYPES) {
       if (out.length >= n) return out;
       const rows = await sql.query(
-        `SELECT b.id AS id, b.value AS value, b.complaint_id AS complaint_id, b.entry_type AS entry_type
+        `SELECT b.id AS id, b.value AS value, b.complaint_id AS complaint_id, b.entry_type AS entry_type, b.identifier_namespace AS identifier_namespace
            FROM ${BLOCKLIST_TABLE} b
            LEFT JOIN ${JOBS_TABLE} j ON j.network = ? AND j.blocklist_id = b.id
           WHERE b.network = ?
@@ -96,18 +96,21 @@ async function createJobs(sql, network, entries) {
     const id = typeof e.id === 'number' ? e.id : (typeof e.id === 'string' && /^\d+$/.test(e.id) ? Number(e.id) : NaN);
     const name = cut(e.value, NAME_MAX)?.trim();
     const type = ENTRY_TYPES.includes(e.entry_type) ? e.entry_type : 'advertiser';
-    if (Number.isSafeInteger(id) && id > 0 && id <= LAST_REAL_ENTRY && name) rows.push({ id, name, type, complaintId: e.complaint_id || null });
+    const namespace = e.identifier_namespace || (type === 'ad_id' ? null : 'none');
+    // Never guess an ad-ID namespace.
+    const validNamespace = type === 'ad_id' ? ['internal', 'platform'].includes(namespace) : namespace === 'none';
+    if (Number.isSafeInteger(id) && id > 0 && id <= LAST_REAL_ENTRY && name && validNamespace) rows.push({ id, name, type, namespace, complaintId: e.complaint_id || null });
   }
   if (!rows.length) return { created: 0 };
   const now = utc();
   const params = [];
   for (const r of rows) {
-    params.push(network, r.id, r.type, r.name, r.complaintId, JOB.PENDING, 0, 1, 0, 0, 0, now, now);
+    params.push(network, r.id, r.type, r.name, r.complaintId, JOB.PENDING, 0, 1, 0, 0, 0, now, now, r.namespace);
   }
   const result = await sql.query(
     `INSERT INTO ${JOBS_TABLE}
-       (network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, created_at, updated_at)
-     VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}
+       (network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, created_at, updated_at, identifier_namespace)
+     VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ')}
      ON DUPLICATE KEY UPDATE id = id`,
     params
   );
@@ -242,7 +245,7 @@ async function claimNext(sql, network, workerId, staleBefore) {
   );
   if (!claimed?.affectedRows) return null;
   const rows = await sql.query(
-    `SELECT id, network, blocklist_id, entry_type, advertiser_name, complaint_id, attempts, run_gen, state
+    `SELECT id, network, blocklist_id, entry_type, identifier_namespace, advertiser_name, complaint_id, attempts, run_gen, state
        FROM ${JOBS_TABLE}
       WHERE network = ? AND claimed_by = ? AND status = 'running'
       ORDER BY claimed_at DESC, id DESC
@@ -334,8 +337,8 @@ async function sweepEnsure(sql, network, stateJson, kind = SWEEP) {
   const now = utc();
   await sql.query(
     `INSERT IGNORE INTO ${JOBS_TABLE}
-       (network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, state, created_at, updated_at)
-     SELECT ?, ${kind.entry}, '${kind.status}', '${kind.label}', NULL, '${kind.status}', 0, 0, 0, 0, 0, ?, ?, ?
+       (network, blocklist_id, entry_type, identifier_namespace, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen, progress_seq, state, created_at, updated_at)
+     SELECT ?, ${kind.entry}, '${kind.status}', 'none', '${kind.label}', NULL, '${kind.status}', 0, 0, 0, 0, 0, ?, ?, ?
        FROM DUAL
       WHERE NOT EXISTS (SELECT 1 FROM ${JOBS_TABLE} WHERE network = ? AND blocklist_id = ${kind.entry})`,
     [network, stateJson, now, now, network]
@@ -500,7 +503,7 @@ async function listJobs(sql, { network, jobId, blocklistId, status, afterId = 0,
   if (blocklistId !== undefined && blocklistId !== null && blocklistId !== '') { where.push('blocklist_id = ?'); params.push(Number(blocklistId)); }
   if (status) { where.push('status = ?'); params.push(String(status)); }
   return sql.query(
-    `SELECT id, network, blocklist_id, entry_type, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen,
+    `SELECT id, network, blocklist_id, entry_type, identifier_namespace, advertiser_name, complaint_id, status, attempts, requested_gen, run_gen, covered_gen,
             requested_at, last_error, created_at, updated_at, finished_at, state
        FROM ${JOBS_TABLE}
       WHERE ${where.join(' AND ')}
@@ -763,7 +766,7 @@ class HashWorker {
         addedBy: this.config.addedBy,
         reason: `auto: advertiser "${job.advertiser_name}" is blocked`,
         complaintId: job.complaint_id || undefined,
-        entry: { type: job.entry_type || 'advertiser', value: job.advertiser_name },
+        entry: { type: job.entry_type || 'advertiser', identifierNamespace: job.identifier_namespace, value: job.advertiser_name },
         generation,
       });
       return await this.settle(sql, job, result);
@@ -1546,7 +1549,7 @@ function describeJob(row) {
   try { state = row.state ? JSON.parse(row.state) : null; } catch { state = null; }
   const complete = row.status === JOB.DONE || row.status === JOB.NO_OWNER;
   return {
-    id: row.id, network: row.network, blocklistId: row.blocklist_id, entryType: row.entry_type, value: row.advertiser_name, complaintId: row.complaint_id || null,
+    id: row.id, network: row.network, blocklistId: row.blocklist_id, entryType: row.entry_type, identifierNamespace: row.identifier_namespace || null, value: row.advertiser_name, complaintId: row.complaint_id || null,
     status: row.status, attempts: row.attempts,
     requestedGen: row.requested_gen, runGen: row.run_gen, coveredGen: row.covered_gen,
     coversLatest: complete && Number(row.covered_gen) >= Number(row.requested_gen),

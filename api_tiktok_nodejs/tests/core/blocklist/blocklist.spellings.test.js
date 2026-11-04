@@ -42,6 +42,10 @@ describe("blocklist spellings > compactName", () => {
 });
 
 describe("blocklist spellings > buildSnapshot", () => {
+  it("does not compare an internal SQL id against an incoming platform ad id", () => {
+    const snapshot = buildSnapshot([{ id: 1, entry_type: "ad_id", value: "42", identifier_namespace: "internal" }]);
+    expect(evaluate({ adIds: ["42"], advertisers: [], urls: [], domains: [] }, snapshot, {})).toBeNull();
+  });
   it("indexes advertiser and page entries under their compact name, without inflating the count", () => {
     const snap = buildSnapshot([
       { id: 1, entry_type: "advertiser", value: "Twinkling Tree" },

@@ -166,7 +166,7 @@ async function getAdDetails(req, db, logger) {
 
   try {
     // ─── Step 1: Get base ad data from MySQL ────────────
-    const rows = await db.sql.query(AD_DETAIL_SQL, [p.ad_id]);
+    const rows = await db.sql.query(require('../../copyrightVerification/status').detailQuery(AD_DETAIL_SQL, 'instagram'), [p.ad_id]);
 
     if (!rows || rows.length === 0) {
       return { code: 404, message: 'Ad not found', data: null };

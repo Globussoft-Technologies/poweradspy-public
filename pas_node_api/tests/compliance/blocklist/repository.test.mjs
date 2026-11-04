@@ -200,14 +200,15 @@ describe("compliance/blocklist > repository writes", () => {
     const { text, params } = sql.calls[0];
     expect(text).toMatch(/ON DUPLICATE KEY UPDATE/);
     expect(text).toMatch(/status = 'active'/);
-    expect(params).toHaveLength(32);
+    expect(params).toHaveLength(34);
     expect(params.filter((v) => v === "active")).toHaveLength(2);
     expect(text).toMatch(/added_by/);
     expect(text).toMatch(/removed_at = NULL, removed_by = NULL/);
-    const oneRow = `(${Array(16).fill("?").join(", ")})`;
-    expect(text.split(oneRow).length - 1).toBe(2); // 16 placeholders per entry, 2 entries
+    const oneRow = `(${Array(17).fill("?").join(", ")})`;
+    expect(text.split(oneRow).length - 1).toBe(2); // 17 placeholders per entry, 2 entries
     expect(params[12]).toBe("tester");
-    expect(params[28]).toHaveLength(128); // added_by is cut to the column size
+    expect(params[29]).toHaveLength(128); // added_by is cut to the column size
+    expect([params[16], params[33]]).toEqual(["platform", "none"]);
     expect(params.includes(undefined)).toBe(false); // the driver rejects undefined binds
   });
 
@@ -240,7 +241,7 @@ describe("compliance/blocklist > repository.findIds", () => {
     const sql = fakeSql();
     sql.query.mockImplementation(async (text, params) => {
       sql.calls.push({ text, params });
-      return [{ id: 7, value_sha256: params[2] }];
+      return [{ id: 7, value_sha256: params[3] }];
     });
     const ids = await repo.findIds(sql, [rowOf("all", "ad_id", 1), rowOf("all", "domain", 2), rowOf("reddit", "ad_id", 3)]);
     expect(sql.calls).toHaveLength(3);
@@ -257,7 +258,7 @@ describe("compliance/blocklist > repository.findIds", () => {
     const sql = fakeSql();
     sql.query.mockImplementation(async (text, params) => { sql.calls.push({ text, params }); return []; });
     await repo.findIds(sql, Array.from({ length: 1200 }, (_, i) => rowOf("all", "ad_id", i)));
-    expect(sql.calls.map((c) => c.params.length - 2)).toEqual([500, 500, 200]);
+    expect(sql.calls.map((c) => c.params.length - 3)).toEqual([500, 500, 200]);
   });
 
   it("returns ids as numbers and ignores duplicate rows in the input", async () => {
@@ -265,6 +266,18 @@ describe("compliance/blocklist > repository.findIds", () => {
     sql.query.mockImplementation(async () => [{ id: "42", value_sha256: rowOf("all", "ad_id", 1).value_sha256 }]);
     const ids = await repo.findIds(sql, [rowOf("all", "ad_id", 1), rowOf("all", "ad_id", 1)]);
     expect(ids.get(repo.idKey("all", "ad_id", rowOf("all", "ad_id", 1).value_sha256))).toBe(42);
+  });
+
+  it("keeps equal-looking internal and platform ids separate when finding row IDs", async () => {
+    const hash = "a".repeat(64);
+    const sql = { query: vi.fn(async (_text, params) => [{ id: params[2] === "internal" ? 11 : 22, value_sha256: hash }]) };
+    const ids = await repo.findIds(sql, [
+      { network: "facebook", entry_type: "ad_id", identifier_namespace: "internal", value_sha256: hash },
+      { network: "facebook", entry_type: "ad_id", identifier_namespace: "platform", value_sha256: hash },
+    ]);
+    expect(ids.get(repo.idKey("facebook", "ad_id", hash, "internal"))).toBe(11);
+    expect(ids.get(repo.idKey("facebook", "ad_id", hash, "platform"))).toBe(22);
+    expect(sql.query).toHaveBeenCalledTimes(2);
   });
 });
 

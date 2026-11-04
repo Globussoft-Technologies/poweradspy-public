@@ -10,7 +10,7 @@ import { makeConfig } from "./helpers.mjs";
 const { STATUS } = require("../../../src/compliance/blocklist/constants");
 
 const log = { info() {}, warn() {}, error() {} };
-const ROWS = [{ id: 1, entry_type: "ad_id", value: "1" }, { id: 2, entry_type: "domain", value: "bad.com" }];
+const ROWS = [{ id: 1, entry_type: "ad_id", value: "1", identifier_namespace: "platform" }, { id: 2, entry_type: "domain", value: "bad.com" }];
 
 let dir;
 let cache;
@@ -45,6 +45,12 @@ describe("compliance/blocklist > BlocklistCache", () => {
     const c = await begin(makeCache({ loadActive: async () => { throw new Error("db down"); } }));
     expect(c.get("reddit")).toMatchObject({ status: STATUS.FROM_FILE, lastError: "db down" });
     expect(c.get("reddit").snapshot.count).toBe(2);
+  });
+
+  it("does not use a saved ad-ID snapshot without namespace information", async () => {
+    fs.writeFileSync(path.join(dir, "blocklist-reddit.json"), JSON.stringify({ network: "reddit", rows: [{ id: 1, entry_type: "ad_id", value: "42" }] }));
+    const c = await begin(makeCache({ loadActive: async () => { throw new Error("db down"); } }));
+    expect(c.get("reddit").status).toBe(STATUS.UNAVAILABLE);
   });
 
   it("is unavailable when the database is down and no copy exists", async () => {

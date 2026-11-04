@@ -97,6 +97,9 @@ const TABLES = [
       // ad_id | advertiser | page | url | image_url | domain  (matched at ingestion by B1)
       // image_hash                                             (B2 only; ignored by B1)
       code('entry_type', 32),
+      // ad_id: 'platform' (scraper ad id) or 'internal' (our SQL row id); 'none' for every other type.
+      // Equal-looking ids can be different ads, so B1 matches only 'platform' at insertion.
+      code('identifier_namespace', 16),
       // For entry_type = image_hash, B1 and B2 writers both use value = image_sha256
       // (lowercase hex) and value_sha256 = sha256(value), so uq_blocklist_entry
       // allows one row per banned image per network.
@@ -123,7 +126,7 @@ const TABLES = [
     ],
     indexes: [
       pk('id'),
-      uq('uq_blocklist_entry', 'network', 'entry_type', 'value_sha256'),
+      uq('uq_blocklist_entry', 'network', 'entry_type', 'identifier_namespace', 'value_sha256'),
       ix('idx_blocklist_status', 'network', 'status'),
       ix('idx_blocklist_complaint', 'complaint_id'),
       ix('idx_blocklist_image_sha256', 'image_sha256'),
@@ -226,6 +229,7 @@ const TABLES = [
       id(), network(),
       count('blocklist_id', false),           // the copyright_blocklist entry that started the job
       code('entry_type', 32),                 // advertiser | page | ad_id | url | image_url (what the entry blocks)
+      code('identifier_namespace', 16),       // copied from the entry: internal | platform for ad_id; none otherwise
       str('advertiser_name', 255, false),     // its value, as written
       uuid('complaint_id', true),             // copied from that entry; the image_hash entries get the same one
       code('status', 32),                     // pending | running | done | no_owner | limit_reached | unresolved | failed

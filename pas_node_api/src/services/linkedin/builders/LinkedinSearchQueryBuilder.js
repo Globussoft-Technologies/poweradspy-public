@@ -477,6 +477,8 @@ class LinkedinSearchQueryBuilder {
   build() {
     const envelopes = this._collectEnvelopes();
     const buckets = bucketize(envelopes);
+    const copyrightFilter = require('../../copyrightVerification/status').searchFilter();
+    if (copyrightFilter) buckets.filter.push(copyrightFilter);
     buckets.filter.push(...EXTRA_CONDITION);
 
     // Popularity sort = "show ads ranked by popularity score, highest first".
