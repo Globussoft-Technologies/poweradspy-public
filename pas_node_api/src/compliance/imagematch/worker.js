@@ -115,33 +115,38 @@ async function createJobs(sql, network, entries) {
 }
 
 /**
- * Entries that were blocked AGAIN after their job was made: the blocklist upsert of a repeated block sets updated_at, so an active
- * entry changed after its job last asked for a run (requested_at, or created_at) is a new block. Same per scope / type query shape as
- * findNewAdvertisers. @returns {Promise<number[]>} blocklist ids
+ * Entries that were blocked AGAIN after their job was made. A block is identified by its complaint id:
+ *   - the entry carries a complaint id the job does not have (a new complaint on the same advertiser) -> a new block;
+ *   - the same complaint id again (a retry of the same request, for example after a timeout) -> NOT a new block, whatever updated_at says;
+ *   - an entry with no complaint id at all (added by a script) counts as a new block only when it changed after the job last asked for a
+ *     run (updated_at > requested_at, or created_at).
+ * Same per scope / type query shape as findNewAdvertisers (an equality on the first two columns of the blocklist's unique key).
+ * @returns {Promise<Array<{ id: number, complaint_id: ?string }>>}
  */
 async function findReblocked(sql, network, { limit = 100 } = {}) {
   const n = Math.min(Math.max(parseInt(limit, 10) || 100, 1), 500);
-  const ids = [];
+  const found = [];
   for (const scope of network === 'all' ? ['all'] : [network, 'all']) {
     for (const type of ENTRY_TYPES) {
-      if (ids.length >= n) return ids;
+      if (found.length >= n) return found;
       const rows = await sql.query(
-        `SELECT b.id AS id
+        `SELECT b.id AS id, b.complaint_id AS complaint_id
            FROM ${BLOCKLIST_TABLE} b
            JOIN ${JOBS_TABLE} j ON j.network = ? AND j.blocklist_id = b.id
           WHERE b.network = ?
             AND b.entry_type = ?
             AND b.status = 'active'
             AND (b.expires_at IS NULL OR b.expires_at > UTC_TIMESTAMP())
-            AND b.updated_at > COALESCE(j.requested_at, j.created_at)
+            AND ((b.complaint_id IS NOT NULL AND NOT (b.complaint_id <=> j.complaint_id))
+              OR (b.complaint_id IS NULL AND b.updated_at > COALESCE(j.requested_at, j.created_at)))
           ORDER BY b.id
           LIMIT ${n}`,
         [network, scope, type]
       );
-      for (const row of rows) if (!ids.includes(row.id)) ids.push(row.id);
+      for (const row of rows) if (!found.some((f) => f.id === row.id)) found.push({ id: row.id, complaint_id: row.complaint_id || null });
     }
   }
-  return ids.slice(0, n);
+  return found.slice(0, n);
 }
 
 /**
@@ -149,13 +154,15 @@ async function findReblocked(sql, network, { limit = 100 } = {}) {
  * back to pending with a clean slate (a fresh run, counted from zero). A job that is RUNNING keeps running; the generation is only raised,
  * and when that run ends finish() sees that a newer generation was asked for and sends the job back to pending instead of closing it,
  * so an older run is never taken for covering the newer block. The cursor rows (sweep, backfill) are never touched.
+ * `complaintId` (the new block's complaint) replaces the job's, so the next run tags its image hashes with the complaint that asked for it
+ * and the same complaint arriving again is recognised as a repeat (see findReblocked); null leaves the job's complaint as it is.
  * @returns {Promise<boolean>} true when a job was found
  */
-async function requestRun(sql, network, blocklistId) {
+async function requestRun(sql, network, blocklistId, complaintId = null) {
   const now = utc();
   const result = await sql.query(
     `UPDATE ${JOBS_TABLE}
-        SET requested_gen = requested_gen + 1, requested_at = ?,
+        SET requested_gen = requested_gen + 1, requested_at = ?, complaint_id = COALESCE(?, complaint_id),
             state = IF(status = 'running', state, NULL),
             attempts = IF(status = 'running', attempts, 0),
             last_error = IF(status = 'running', last_error, NULL),
@@ -166,19 +173,19 @@ async function requestRun(sql, network, blocklistId) {
             status = IF(status = 'running', 'running', 'pending'),
             progress_seq = progress_seq + 1, updated_at = ?
       WHERE network = ? AND blocklist_id = ? AND blocklist_id > 0 AND blocklist_id <= ${LAST_REAL_ENTRY}`,
-    [now, now, network, blocklistId]
+    [now, cut(complaintId, 36), now, network, blocklistId]
   );
   return Boolean(result?.affectedRows);
 }
 
 /**
- * Ask for the re-run of every entry that was blocked again (see findReblocked). A few, each one UPDATE.
+ * Ask for the re-run of every entry that was blocked again (see findReblocked), each with the complaint that blocked it. A few, each one UPDATE.
  * @returns {Promise<number>} jobs asked to run again
  */
 async function requestReblocked(sql, network, options = {}) {
   let count = 0;
-  for (const id of await findReblocked(sql, network, options)) {
-    if (await requestRun(sql, network, id)) count += 1;
+  for (const row of await findReblocked(sql, network, options)) {
+    if (await requestRun(sql, network, row.id, row.complaint_id)) count += 1;
   }
   return count;
 }

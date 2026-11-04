@@ -531,6 +531,49 @@ const config = {
         max: boundedInt(fileConfig.compliance?.request?.rateLimit?.max, 10, 1, 1000), // requests per address per window
       },
     },
+    // ─── Copyright claims: the evidence files (src/compliance/claims/attachments.js) ───
+    // PDFs and images kept in a PRIVATE NAS bucket: never the public media bucket (insertion.nas), whose files the CDN serves to anyone with
+    // the URL. OFF by default. The token is read from the environment only (COPYRIGHT_CLAIMS_NAS_TOKEN): do not put it in config.json.
+    // The bucket, the endpoint and the paths come from the infrastructure team (the defaults below were checked on the real private bucket).
+    // The CDN in front of the NAS caches authorized reads for 7 days; the code works around it (see attachments.js, createHttpTransport.get).
+    claims: {
+      // The claims themselves (src/compliance/claims/claims.js, routes in src/services/copyrightClaimsRoutes.js, mounted under /api/v1/copyright
+      // only when this is on AND compliance.request is on). OFF by default. Claims are stored in ONE home database (a network's SQL
+      // database); production has no central database. Two secrets, from the environment only, and they must DIFFER:
+      //   COPYRIGHT_REQUEST_TOKEN        the WordPress server: it may submit a claim and read its status, nothing else
+      //   COPYRIGHT_CLAIMS_ADMIN_TOKEN   the admin panel's backend: list, read, accept, reject, download files. WordPress must never have it,
+      //                                  or the site could approve its own claims.
+      //   COPYRIGHT_CLAIMS_STATUS_SECRET makes the status key a claimant needs to read a claim's status (a complaint id alone is no proof)
+      enabled: fileConfig.compliance?.claims?.enabled === true,
+      homeNetwork: String(fileConfig.compliance?.claims?.homeNetwork || 'facebook').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'facebook',
+      adminToken: String(process.env.COPYRIGHT_CLAIMS_ADMIN_TOKEN || '').trim(),
+      statusSecret: String(process.env.COPYRIGHT_CLAIMS_STATUS_SECRET || '').trim(),
+      // Accept needs the reviewer to confirm that the supporting documents were looked at.
+      requireEvidenceReviewed: fileConfig.compliance?.claims?.requireEvidenceReviewed !== false,
+      attachments: {
+        enabled: fileConfig.compliance?.claims?.attachments?.enabled === true,
+        baseUrl: String(fileConfig.compliance?.claims?.attachments?.baseUrl || '').trim().replace(/\/+$/, ''),
+        bucket: String(fileConfig.compliance?.claims?.attachments?.bucket || '').trim().replace(/[^A-Za-z0-9._-]/g, ''),
+        token: String(process.env.COPYRIGHT_CLAIMS_NAS_TOKEN || '').trim(),
+        uploadPath: String(fileConfig.compliance?.claims?.attachments?.uploadPath || '/{bucket}/upload'),
+        // Checked on the real bucket pas-copyright-doc (media.globussoft.com): the upload answer gives the stored path /<bucket>/stream/<key>.<ext>;
+        // that same path is read (with the token) and deleted. /<bucket>/<key>.<ext> answers 404 for both.
+        readPath: String(fileConfig.compliance?.claims?.attachments?.readPath || '/{bucket}/stream/{key}'),
+        deletePath: String(fileConfig.compliance?.claims?.attachments?.deletePath || '/{bucket}/stream/{key}'),
+        // Check the NAS's certificate. Turn off only for an endpoint that is a bare IP address (no valid certificate), like the media origin.
+        verifyTls: fileConfig.compliance?.claims?.attachments?.verifyTls !== false,
+        timeoutMs: boundedInt(fileConfig.compliance?.claims?.attachments?.timeoutMs, 30000, 1000, 300000),
+        maxFiles: boundedInt(fileConfig.compliance?.claims?.attachments?.maxFiles, 5, 1, 20), // files per claim
+        maxFileBytes: boundedInt(fileConfig.compliance?.claims?.attachments?.maxFileBytes, 5 * 1024 * 1024, 1024, 25 * 1024 * 1024),
+        // Only these types (checked from the file's bytes, not its name): pdf, jpg, png, webp.
+        allowedTypes: (Array.isArray(fileConfig.compliance?.claims?.attachments?.allowedTypes)
+          ? fileConfig.compliance.claims.attachments.allowedTypes : ['pdf', 'jpg', 'png', 'webp'])
+          .map((t) => String(t).toLowerCase()).filter((t) => ['pdf', 'jpg', 'png', 'webp'].includes(t)),
+        // A virus scan. With required on (the default) a file is readable only after a scan said "clean"; with no scanner connected it stays
+        // "pending" and cannot be downloaded. Turn it off only after deciding that no scan is acceptable.
+        scan: { required: fileConfig.compliance?.claims?.attachments?.scan?.required !== false },
+      },
+    },
   },
 
   amember: {

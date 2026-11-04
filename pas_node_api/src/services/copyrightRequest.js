@@ -65,7 +65,7 @@ const reply = (res, code, message, data = null) => res.status(code).json({ code,
  * @param {Object} [deps.settings]  config.compliance.request
  * @param {Function} [deps.submit]  submitAdvertiser
  */
-function createRouter({ settings = config.compliance?.request || {}, submit, review, search, jobs } = {}) {
+function createRouter({ settings = config.compliance?.request || {}, submit, review, search, jobs, claimsRouter } = {}) {
   const run = submit || ((input) => require('../compliance/imagematch/worker').submitAdvertiser(input));
   const reviewApi = () => review || require('../compliance/imagematch/worker').review;
   const jobsApi = () => jobs || require('../compliance/imagematch/worker').jobs;
@@ -163,6 +163,10 @@ function createRouter({ settings = config.compliance?.request || {}, submit, rev
     if (!out.ok) return reply(res, STATUS_CODE[out.error] || 503, out.message || 'the search could not be done');
     return reply(res, 200, 'ok', { matches: out.matches, scanned: out.scanned, complete: out.complete });
   }));
+
+  // Claims stored and decided by us (services/copyrightClaimsRoutes.js, its own two tokens): only when compliance.claims.enabled.
+  const claimsRoutes = claimsRouter || (config.compliance?.claims?.enabled ? require('./copyrightClaimsRoutes').createClaimsRouter({ requestSettings: settings }) : null);
+  if (claimsRoutes) router.use(claimsRoutes);
 
   return router;
 }

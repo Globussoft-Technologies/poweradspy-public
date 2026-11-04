@@ -19,6 +19,7 @@ const competitorEmailDetails = require("./competitor-email-details")
 const emailAnalytics = require("./email-analytics")
 const domainRegistrationStats = require("./domain-registration-stats")
 const aiMetaStats = require("./ai-meta-stats")
+const copyrightClaims = require("./copyright-claims")
 const app = express();
 
 app.use("/networks-countries", countriesAnalytics);
@@ -47,4 +48,6 @@ app.use("/affiliate_data",affiliateDate)
  app.use("/email-analytics", emailAnalytics)
  app.use("/domain-registration-stats", domainRegistrationStats)
  app.use("/ai-meta-stats", aiMetaStats)
+ // Copyright claims (review, accept, reject): every route checks the admin login and an allowlist of reviewers (routes/copyright-claims.js).
+ app.use("/copyright-claims", copyrightClaims)
 module.exports = app;

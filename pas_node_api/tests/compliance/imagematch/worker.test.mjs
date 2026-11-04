@@ -1837,7 +1837,13 @@ describe("generations and requeue (jobRepository)", () => {
     expect(text.indexOf("status = IF(status = 'running', 'running'")).toBeGreaterThan(text.indexOf("heartbeat_at = IF"));
     // never the cursor rows of the sweep (0) and the backfill (4294967295)
     expect(text).toMatch(/WHERE network = \? AND blocklist_id = \? AND blocklist_id > 0 AND blocklist_id <= 4294967294$/);
-    expect(params.slice(2)).toEqual(["facebook", 12]);
+    expect(params.slice(3)).toEqual(["facebook", 12]);
+    // the complaint of the new block replaces the job's (so the next run tags its hashes with it); none given leaves it as it is
+    expect(text).toMatch(/requested_at = \?, complaint_id = COALESCE\(\?, complaint_id\),/);
+    expect(params[1]).toBeNull();
+    const withComplaint = sqlOf();
+    await real.requestRun(withComplaint, "facebook", 12, "22222222-2222-4222-8222-222222222222");
+    expect(withComplaint.calls[0].params[1]).toBe("22222222-2222-4222-8222-222222222222");
     expect(await real.requestRun(sqlOf(() => ({ affectedRows: 0 })), "facebook", 99)).toBe(false);
     safe(text);
   });
@@ -1855,24 +1861,27 @@ describe("generations and requeue (jobRepository)", () => {
     safe(text);
   });
 
-  it("finds the entries blocked again: active, changed after the job last asked for a run, one indexed query per scope and type", async () => {
-    const sql = sqlOf((text, params) => (params[2] === "advertiser" && params[1] === "facebook" ? [{ id: 5 }] : []));
-    expect(await real.findReblocked(sql, "facebook")).toEqual([5]);
+  it("finds the entries blocked again by their COMPLAINT ID: a new complaint is a new block, the same complaint again (a retry) is not", async () => {
+    const sql = sqlOf((text, params) => (params[2] === "advertiser" && params[1] === "facebook" ? [{ id: 5, complaint_id: "22222222-2222-4222-8222-222222222222" }] : []));
+    expect(await real.findReblocked(sql, "facebook")).toEqual([{ id: 5, complaint_id: "22222222-2222-4222-8222-222222222222" }]);
     expect(sql.calls).toHaveLength(10);
     for (const { text } of sql.calls) {
-      expect(text).toMatch(/FROM copyright_blocklist b JOIN copyright_image_hash_jobs j ON j\.network = \? AND j\.blocklist_id = b\.id WHERE b\.network = \? AND b\.entry_type = \? AND b\.status = 'active'/);
-      expect(text).toMatch(/AND b\.updated_at > COALESCE\(j\.requested_at, j\.created_at\) ORDER BY b\.id LIMIT 100$/);
+      expect(text).toMatch(/SELECT b\.id AS id, b\.complaint_id AS complaint_id FROM copyright_blocklist b JOIN copyright_image_hash_jobs j ON j\.network = \? AND j\.blocklist_id = b\.id WHERE b\.network = \? AND b\.entry_type = \? AND b\.status = 'active'/);
+      // a different (or new) complaint id -> new block; the same one -> never, even if updated_at moved (null-safe comparison <=>)
+      expect(text).toMatch(/AND \(\(b\.complaint_id IS NOT NULL AND NOT \(b\.complaint_id <=> j\.complaint_id\)\) OR \(b\.complaint_id IS NULL AND b\.updated_at > COALESCE\(j\.requested_at, j\.created_at\)\)\) ORDER BY b\.id LIMIT 100$/);
       safe(text);
     }
   });
 
   it("requestReblocked asks each re-blocked entry for a new run and counts them", async () => {
     const sql = sqlOf((text, params) => {
-      if (/^SELECT/.test(text)) return params[2] === "advertiser" ? [{ id: 5 }, { id: 6 }] : [];
+      if (/^SELECT/.test(text)) return params[2] === "advertiser" ? [{ id: 5, complaint_id: "22222222-2222-4222-8222-222222222222" }, { id: 6, complaint_id: null }] : [];
       return { affectedRows: 1 };
     });
     expect(await real.requestReblocked(sql, "facebook")).toBe(2);
-    expect(sql.calls.filter((c) => /^UPDATE/.test(c.text)).map((c) => c.params[3])).toEqual([5, 6]);
+    const updates = sql.calls.filter((c) => /^UPDATE/.test(c.text));
+    expect(updates.map((c) => c.params[4])).toEqual([5, 6]);                                      // the blocklist ids
+    expect(updates.map((c) => c.params[1])).toEqual(["22222222-2222-4222-8222-222222222222", null]); // each with the complaint that blocked it
   });
 
   it("resumeLimited continues only a limit_reached job: same generation, saved place kept, image counter back to zero, compare-and-set", async () => {
@@ -2096,5 +2105,33 @@ describe("the job routes (services/copyrightRequest.js)", () => {
       expect(t.jobs.results).not.toHaveBeenCalled();
       expect(t.jobs.requeue).not.toHaveBeenCalled();
     } finally { await t.close(); }
+  });
+});
+
+describe("submitAdvertiser > the same name blocked again", () => {
+  const { createIntake } = require("../../../src/compliance/imagematch/worker");
+  const COMPLAINT = "33333333-3333-4333-8333-333333333333";
+  const build = (jobRepository) => createIntake({
+    blocklist: { add: async () => ({ rejected: [], results: [{ network: "facebook", ok: true, entries: [{ blocklistId: 40 }] }] }) },
+    sourcesModule: { SOURCES: { facebook: {} }, nameCandidates: () => ["twinkling tree"], findOwners: async () => [], sourceFor: () => ({}) },
+    databaseManager: { getSQL: () => ({ fake: true }) },
+    jobRepository,
+  });
+
+  it("asks at once for a new run of a finished job (the repository decides, by complaint id, whether it is a new block)", async () => {
+    const order = [];
+    const submit = build({
+      createJobs: async () => { order.push("createJobs"); return { created: 0 }; },
+      requestReblocked: vi.fn(async () => { order.push("requestReblocked"); return 1; }),
+    });
+    const out = await submit({ name: "Twinkling Tree", addedBy: "landing-form", complaintId: COMPLAINT });
+    expect(out).toMatchObject({ ok: true, complaintId: COMPLAINT, hashing: [{ network: "facebook", queued: true }] });
+    expect(order).toEqual(["createJobs", "requestReblocked"]);
+  });
+
+  it("a failure of that never turns the request into a failure", async () => {
+    const submit = build({ createJobs: async () => ({ created: 0 }), requestReblocked: async () => { throw new Error("no such column: requested_at"); } });
+    const out = await submit({ name: "Twinkling Tree", addedBy: "landing-form", complaintId: COMPLAINT });
+    expect(out).toMatchObject({ ok: true, hashing: [{ network: "facebook", queued: true }] });
   });
 });

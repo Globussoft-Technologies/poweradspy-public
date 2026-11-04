@@ -1,7 +1,8 @@
 import React, { useContext, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { RxCross1 } from "react-icons/rx";
-import { FiHardDrive, FiServer, FiShare2, FiGlobe, FiCpu } from "react-icons/fi";
+import { FiHardDrive, FiServer, FiShare2, FiGlobe, FiCpu, FiShield } from "react-icons/fi";
+import Cookies from "js-cookie";
 import AdminContext from "../Context/Context";
 import fbaccountdetails from '../assets/fbaccountdetails.png'
 import systeminfo from '../assets/systeminfo.png'
@@ -12,6 +13,40 @@ const Sidebar = () => {
   const { sidebarOpen, setsidebarOpen } = useContext(AdminContext);
   const [isOn, setIsOn] = useState(true);
   const location = useLocation();
+  // Copyright claims: the menu entry is shown only to people on the reviewers' list (the answer is 200 only for them), with how many wait.
+  const [claimsAccess, setClaimsAccess] = useState(false);
+  const [claimsPending, setClaimsPending] = useState(0);
+  // The takedown monitor's two numbers for its badge (steps that failed, steps waiting); read only, asked every 2 minutes and only by reviewers.
+  const [takedown, setTakedown] = useState({ failed: 0, waiting: 0 });
+  useEffect(() => {
+    let stopped = false;
+    const base = import.meta.env.VITE_ADMIN_PANEL_API || "http://localhost:4000/admin-panel";
+    const load = async () => {
+      try {
+        const token = Cookies.get("token");
+        if (!token) return;
+        const res = await fetch(`${base}/copyright-claims/summary`, { headers: { Authorization: `Bearer ${token}` } });
+        if (stopped) return;
+        setClaimsAccess(res.ok);
+        if (res.ok) setClaimsPending(Number((await res.json())?.data?.pending) || 0);
+      } catch { /* the entry simply stays hidden */ }
+    };
+    const loadTakedown = async () => {
+      try {
+        const token = Cookies.get("token");
+        if (!token) return;
+        const res = await fetch(`${base}/copyright-claims/monitor/overview`, { headers: { Authorization: `Bearer ${token}` } });
+        if (stopped || !res.ok) return;
+        const items = (await res.json())?.data?.totals?.items || {};
+        setTakedown({ failed: Number(items.failed) || 0, waiting: Number(items.waiting) || 0 });
+      } catch { /* no badge */ }
+    };
+    load();
+    loadTakedown();
+    const timer = setInterval(load, 60000);
+    const slow = setInterval(loadTakedown, 120000);
+    return () => { stopped = true; clearInterval(timer); clearInterval(slow); };
+  }, []);
   useEffect(() => {
     // const storedValue = localStorage.getItem("powerAdSpy") === "true";
     // const lastPath = localStorage.getItem("lastPath");
@@ -289,6 +324,32 @@ const navLabelClass = (active) =>
                    Competitor Tracker
                   </span>
                 </li>
+              )}
+              {isOn && (
+                <Link to={"/pas/copyright-request"} className="block">
+                  <li className={navItemClass(isActive("/pas/copyright-request"))}>
+                    <FiShield className="w-[22px] h-[22px] text-[#1f296a]" />
+                    <span className={navLabelClass(isActive("/pas/copyright-request"))}>
+                      Copyright Request
+                    </span>
+                    {/* the badges are only for reviewers (the numbers come from calls that answer 200 only to them) */}
+                    {claimsAccess && claimsPending > 0 && (
+                      <span title="Claims waiting for a decision" className="ml-auto bg-rose-600 text-white text-[12px] font-semibold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center">
+                        {claimsPending}
+                      </span>
+                    )}
+                    {claimsAccess && takedown.failed > 0 && (
+                      <span title="Delete steps that failed" className={`${claimsPending > 0 ? "ml-1" : "ml-auto"} bg-gray-800 text-white text-[12px] font-semibold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center`}>
+                        {takedown.failed}
+                      </span>
+                    )}
+                    {claimsAccess && takedown.failed === 0 && takedown.waiting > 0 && (
+                      <span title="Delete steps waiting" className={`${claimsPending > 0 ? "ml-1" : "ml-auto"} bg-amber-500 text-white text-[12px] font-semibold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center`}>
+                        {takedown.waiting}
+                      </span>
+                    )}
+                  </li>
+                </Link>
               )}
               {!isOn && (
                 <>

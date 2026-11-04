@@ -129,3 +129,43 @@ describe("Sidebar", () => {
     expect(localStorage.getItem("lastPath")).not.toBeNull();
   });
 });
+
+describe("Sidebar > Copyright Request (below Competitor Tracker)", () => {
+  const answer = (status, data) => ({ ok: status === 200, status, json: async () => ({ code: status, data }) });
+  const withBackend = (summary, overview) => {
+    document.cookie = "token=jwt-token";
+    global.fetch = vi.fn(async (url) => {
+      if (String(url).endsWith("/copyright-claims/summary")) return summary;
+      if (String(url).endsWith("/copyright-claims/monitor/overview")) return overview;
+      throw new Error(`unexpected call: ${url}`);
+    });
+  };
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+  it("shows one 'Copyright Request' entry after Competitor Tracker, with the waiting claims and the failed delete steps for a reviewer", async () => {
+    withBackend(answer(200, { pending: 3 }), answer(200, { totals: { items: { failed: 6, waiting: 15 } } }));
+    const { getByText, findByText, container } = renderWithCtx();
+    expect(await findByText("Copyright Request")).toBeInTheDocument();
+    expect((await findByText("6")).getAttribute("title")).toBe("Delete steps that failed");
+    const text = container.textContent;
+    expect(text.indexOf("Competitor Tracker")).toBeLessThan(text.indexOf("Copyright Request"));
+    expect(getByText("3").getAttribute("title")).toBe("Claims waiting for a decision");
+    expect(container.querySelector("a[href='/pas/copyright-request']")).not.toBeNull();
+  });
+
+  it("shows the amber waiting number when nothing failed", async () => {
+    withBackend(answer(200, { pending: 0 }), answer(200, { totals: { items: { failed: 0, waiting: 15 } } }));
+    const { findByText } = renderWithCtx();
+    expect((await findByText("15")).getAttribute("title")).toBe("Delete steps waiting");
+  });
+
+  it("is shown to everyone (the backend decides who may use it) but with no badges for a person who is not a reviewer", async () => {
+    withBackend(answer(403, null), answer(403, null));
+    const { getByText, container } = renderWithCtx();
+    await flush();
+    expect(getByText("Copyright Request")).toBeInTheDocument();
+    expect(container.querySelector("a[href='/pas/copyright-request']")).not.toBeNull();
+    expect(container.querySelector("[title='Claims waiting for a decision']")).toBeNull();
+    expect(container.querySelector("[title='Delete steps that failed']")).toBeNull();
+  });
+});

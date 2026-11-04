@@ -34,6 +34,9 @@ import InfraStorage from "../pages/user/InfraStorage";
 import CompetitorDetails from "../components/Pas/CompetitorDetails"
 import Calculator from "../components/Calculator"
 import EmailDetails from "../components/Pas/EmailDetails"
+import CopyrightClaims from "../components/Pas/CopyrightClaims"
+import TakedownMonitor from "../components/Pas/TakedownMonitor"
+import CopyrightRequest from "../components/Pas/CopyrightRequest"
 import CompetitorTracker from "../components/Pas/CompetitorTracker"
 import SearchIntelligence from "../components/Pas/Intelligence/SearchIntelligence"
 
@@ -56,6 +59,9 @@ export const routes = createBrowserRouter(
         <Route index element={<AuthCheck><PasDashboard /></AuthCheck>} />
         {/* <Route path="competitor-details" element={<AuthCheck><CompetitorDetails /></AuthCheck>} /> */}
         <Route path="email-details" element={<AuthCheck><EmailDetails /></AuthCheck>} />
+        <Route path="copyright-claims" element={<AuthCheck><CopyrightClaims /></AuthCheck>} />
+        <Route path="takedown-monitor" element={<AuthCheck><TakedownMonitor /></AuthCheck>} />
+        <Route path="copyright-request" element={<AuthCheck><CopyrightRequest /></AuthCheck>} />
         <Route path="competitor-tracker" element={<AuthCheck><CompetitorTracker /></AuthCheck>} />
         <Route path="search-intelligence" element={<AuthCheck><SearchIntelligence /></AuthCheck>} />
         <Route path="system-info" element={<AuthCheck><SystemInfo /></AuthCheck>} />

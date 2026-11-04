@@ -11,18 +11,20 @@ Team plan and work split: [COPYRIGHT_COMPLIANCE_ARCHITECTURE.md](COPYRIGHT_COMPL
 | --- | --- | --- | --- | --- |
 | B1: check at collection (12 networks + TikTok), spelling variants, attempts log | yes | yes | no | committed in `cca001735` (PR #1649, branch `copyright`) |
 | B2: DS client, matcher, hash job, worker, cron (`imageHashJobs`) | yes | yes | no | uncommitted |
-| B2: schema (14 tables, 256-bit hash, `copyright_image_hash_jobs`, `copyright_image_hash_results`) | yes | dry-run rendered offline | no | no table exists on dev yet |
+| B2: schema (16 tables, 256-bit hash, `copyright_image_hash_jobs`, `copyright_image_hash_results`) | yes | dry-run rendered offline | no | no table exists on dev yet |
 | B2: entry point for a name from the landing page (`submitAdvertiser`) and its route (`POST /api/v1/copyright/advertiser/block`) | yes | yes (function also on the real service; route with a local HTTP server) | no | route is off by default; the approval step in front of it is future work |
 | B2: exact-copy check of every downloaded image / video thumbnail at ingestion (`guardFile`, hooked in `fetchPrimaryMedia`) | yes | yes (real download from a local server) | no | off by default (`compliance.imageMatch.enabled`); Facebook, Instagram, ChatGPT Ads, AdMob pipelines |
 | B2: review queue (list, allow / block; a block adds the image to the blocklist) and search of the stored hashes, on token-protected routes | yes | yes | no | 13.14 |
 | B2: hash of every image stored (`copyright_image_hashes`: new images by the sweep, old ones by the backfill job) | yes | yes | no | both off by default (13.13) |
 | B2 for B3: job generations, requeue (rerun / resume), per-image results (`copyright_image_hash_results`), jobs for ad id and URL blocks, `unresolved` | yes | yes | no | 13.15; the URL part is limited by missing indexes |
+| B2 for claims: evidence files (PDF, images) in a private NAS bucket (`src/compliance/claims/attachments.js`, table `copyright_claim_files`): the storage part only, no upload route yet | yes | yes (fake NAS, and the HTTP transport against a local server) | no | 13.16; off by default; waits for the bucket details and for the claims themselves |
+| Copyright claims stored and decided by us: submit, review, accept / reject, evidence files; the admin proxy and the Copyright Claims screen | yes (3 projects) | yes (fakes; the proxy in a scratch copy; the React page only syntax-checked) | no | 13.17; off by default; **first slice**, see what is missing |
 | B2 stage 4: check of NEW ads (sweep) | yes | yes | no | exact copies only; uncommitted |
 | B2: near-copy distances | — | — | no | **not tuned**, so near-copy matching stays off |
 | B3 takedown, B6 audit | — | — | — | Anij's; they only read what B1/B2 write |
 | Intake (form / agent), Oracle seed, other networks' images, TikTok images | no | — | — | later |
 
-Tests: `npx vitest run tests/compliance tests/insertion/InsertionEngine tests/app tests/admin tests/jobs` → 28 files, 784 tests pass. The whole
+Tests: `npx vitest run tests/compliance tests/insertion/InsertionEngine tests/app tests/admin tests/jobs` → 30 files, 860 tests pass. The whole
 `pas_node_api` suite still has the same 170 failing tests in 46 files as before this work.
 
 ## The compliance flow today (B1 → B2 → B3 → B6)
@@ -346,7 +348,7 @@ as `CHAR(64)` hex and in memory as a `Uint32Array` of 8 words (`src/compliance/i
 
 ### `scripts/apply-copyright-schema.js` (team script; covers B1, B2, B3 and B6)
 
-Creates and validates the 14 copyright tables in every distinct SQL database. Dry-run by default; existing tables are validated
+Creates and validates the 16 copyright tables in every distinct SQL database. Dry-run by default; existing tables are validated
 (columns, types, nullability, character set and collation, indexes), never altered; no foreign keys; one failing database never stops
 the others. Every text column names its collation explicitly, so the post-create validation passes.
 
@@ -595,7 +597,7 @@ Not covered: an ad whose image is stored only after the pass that looked at it; 
 
 ### 13.8 Rollout of B2 (in this order)
 
-1. Dev: `node scripts/apply-copyright-schema.js --networks=facebook --apply --confirm-prod` (dry-run first). Creates the 14 tables.
+1. Dev: `node scripts/apply-copyright-schema.js --networks=facebook --apply --confirm-prod` (dry-run first). Creates the 16 tables.
 2. Environment: `IMAGE_HASH_API_URL` and `IMAGE_HASH_API_KEY` (the key only in the environment).
 3. `config.json`: `compliance.blocklist.enabled: true`, then `crons.jobs.imageHashJobs.enabled: true` (hashing of blocked advertisers).
 4. Try one test advertiser: add it with `add()`; read its row in `copyright_image_hash_jobs` until `done`; check the `image_hash` entries it made.
@@ -762,7 +764,10 @@ Asked for by B3 (takedown), who must not delete an image before B2 has hashed it
 **Generations: telling the runs apart, and a re-block while a job runs.** Every block of an entry is one generation. `copyright_image_hash_jobs` has
 `requested_gen` (the newest asked for), `run_gen` (the one the current or last run works for) and `covered_gen` (the newest a run completed as `done` / `no_owner`), and `requested_at`.
 
-- A repeated block (the blocklist upsert sets `updated_at`; the cron pass compares it with the job's `requested_at`, or `created_at`; `submitAdvertiser` does it at once) raises `requested_gen`.
+- A repeated block raises `requested_gen`. A block is identified by its **complaint id**: an entry whose complaint id differs from the job's (a new complaint on the same advertiser) is a new block;
+  **the same complaint id again (a retry of the same request, e.g. after a timeout) is not**, even though the blocklist upsert moved `updated_at`, so a retry never re-hashes an advertiser. An entry with no complaint id
+  (added by a script) counts only when it changed after the job last asked for a run (`updated_at` > `requested_at`, or `created_at`). The cron pass looks for these, and `submitAdvertiser` at once. A new block also replaces
+  the job's `complaint_id`, so the next run tags its image hashes with the complaint that asked for it. (The comparison was checked on MySQL itself with literal values: 7 cases.)
   A job that is waiting or finished goes back to `pending` and starts clean (a full new run). A job that is **running** keeps running; when it ends, `finish` sees `requested_gen > run_gen`, does
   **not** close the job, leaves `covered_gen` as it was, and sends it back to `pending` to run again. So an older run is never taken for covering the newer block.
 - **The rule for B3:** a job covers the latest block only when `coversLatest` is true: status `done` or `no_owner` and `covered_gen >= requested_gen`. Read the requested generation at the time of the block and compare.
@@ -788,3 +793,64 @@ B2 and B3 must use the same matching: B3 should act on the ads listed in the res
 
 **Not checked on a real database yet:** the schema is applied nowhere; the generation updates rely on MySQL evaluating the assignments of one `UPDATE` from left to right (documented, and none of them changes `requested_gen` or `run_gen`); the tests use fakes and
 check the statements' text. The jobs table definition changed in place (new columns); the schema script validates and never alters, so a database that already has the earlier table would report a mismatch (none does).
+
+### 13.16 Evidence files of a copyright claim: the storage part (private NAS bucket)
+
+What exists: one module, `src/compliance/claims/attachments.js`, and the table `copyright_claim_files` (in the schema script, not applied anywhere). What does **not** exist yet: the upload route, the admin download route and the claims themselves (see the claims proposal); the module is what those routes will call.
+
+- **Not the media NAS.** `nasClient.js` and `nasHttpUpload.js` serve the ad media of every network from one global bucket and token, and the CDN serves every file there to anyone with the URL. Evidence never goes there. The module has its own bucket and token (`compliance.claims.attachments`, token from the environment variable `COPYRIGHT_CLAIMS_NAS_TOKEN` only), does not require those helpers (a test checks that), and never returns a "default image" for a failed upload.
+- **What it does:** `addFiles` checks each file by its **bytes** (pdf, jpg, png, webp; a name like `proof.pdf` on a web page is refused, and so is a file whose extension disagrees with its content), its size (5 MB) and the number per claim (5, counting those already stored), skips a file already stored for the claim (same SHA-256), optionally scans it, uploads it under the key the infrastructure team set for the private bucket `pas-copyright-doc`, **`copyrightdoc/<MMYYYY>/<complaintId>/<timestamp>`** (month and year in UTC; the timestamp in milliseconds; the NAS adds the extension). The service hands out **strictly increasing timestamps**, so two files of one claim can never share a key (the NAS would overwrite one with the other), even if the clock stands still or goes back. The key carries the claim id and never the advertiser or a person's file name. The claim id in the path is acceptable **only because the bucket is private**: confirm that before use (below). It records the file. A failed upload records nothing; a failed record removes the file just uploaded. One bad file does not stop the others.
+- `listFiles` gives names and states only (never a key, a bucket, a hash or a URL). `openFile` reads a file from the NAS **through this server** and returns the stream with download-only headers (attachment, `nosniff`, `no-store`, a sandboxing CSP): nothing hands out a URL, and a file whose scan is not `clean` is refused while `scan.required` is on (the default). `deleteFile` removes the bytes and keeps the row, marked deleted.
+- **Scanning:** the repository has no virus scanner. With `scan.required` on and no scanner connected, files are stored as `pending` and cannot be downloaded. A scanner function can be injected; deciding which one (for example ClamAV) is open.
+- **Settings for the dev bucket** (in `config.json`; the token only in the environment):
+  ```json
+  "compliance": { "claims": { "attachments": { "enabled": true, "bucket": "pas-copyright-doc", "baseUrl": "<the NAS address from the infrastructure team>" } } }
+  ```
+- **Settings** (all default off or strict): `enabled`, `baseUrl`, `bucket`, `uploadPath`, `readPath`, `deletePath`, `verifyTls` (default on; off only for a bare IP endpoint), `timeoutMs`, `maxFiles`, `maxFileBytes`, `allowedTypes`, `scan.required`.
+- **Checked on the real bucket (2026-11-04, `media.globussoft.com`, bucket `pas-copyright-doc`, with its own token, which is not the ad-media token):**
+  - a PDF upload is accepted; the NAS answers with the stored path `/pas-copyright-doc/stream/<key>.pdf`, and that **same path** is read and deleted (`readPath` and `deletePath` default to `/{bucket}/stream/{key}`; `/{bucket}/{key}` answers 404 for both);
+  - the **origin is private**: without a token and with a wrong token the answer is 401, with the token 200; a delete really removes the file (404 afterwards);
+  - **but the CDN in front of the NAS (Cloudflare) caches an authorized answer** (`cache-control: public, max-age=604800, immutable`, 7 days) and then gives it to anybody who asks for the same address, **even after the file was deleted**. This happened in the first probe: a read with the token on the plain address was followed by 200 for a request with no token and for one with a wrong token, and by 200 after the delete. The application therefore gives **every read a new random query string** (`?cb=...`): the plain address is never cached, so a delete is final and nobody else can fetch what a reviewer read (a copy cached under the random address cannot be asked for by anyone). **The infrastructure team should still stop the CDN from caching this bucket** (for example a bypass rule for `/pas-copyright-doc/*`, or `Cache-Control: private, no-store` from the NAS).
+  - Still to confirm with them: that PDFs of the real size (5 MB) are accepted, and backup and who can read the bucket.
+- **Checking the real bucket:** `node scripts/check-claim-files-nas.js` (a dry run: it shows the settings, never the token, and touches nothing) and `node scripts/check-claim-files-nas.js --run`. It uploads ONE made-up PDF and checks, in this order: it is refused without a token, with a wrong token and with a cache-busting address (**before** any authorized read, because a CDN can cache an authorized answer); a read with the token gives the same bytes; it is **still** refused without a token afterwards (our reads leave no public copy in a cache); the delete really removes it (a 404 on the delete is only a warning: the path may be wrong and nothing removed); and it is gone afterwards, with and without the token. It refuses to run against the public ad-media bucket and never prints the token (`COPYRIGHT_CLAIMS_NAS_TOKEN`, environment only). `--base-url=...` and `--bucket=...` override the settings for one run. **On the real bucket: 9 of 9 steps pass.** (An earlier version of the script counted a 404 on the delete as success and so hid a wrong delete path: fixed.)
+- **Checked on the real dev MySQL (2026-11-04), in TEMPORARY tables of one connection only** (they exist only for that connection and vanish when it closes; the real `copyright_*` tables were compared before and after: none, none): the DDL of `copyright_claims`, `copyright_claim_files`, `copyright_blocklist`, `copyright_image_hash_jobs` and `copyright_image_hash_results` is valid MySQL, and the **real SQL** of the claims, the evidence files and the job generations ran with **49 of 49 checks passing**: submit and idempotency, accented and Japanese text, the list cursor, the one-conditional-update decision (`affectedRows` 1, then 0), the JSON result, the unique keys, a re-block while a job runs (the job is not closed: back to `pending`, clean, `covered_gen` unchanged, which is the left-to-right `UPDATE` that was only assumed before), a re-block by complaint id (the same id is not a new block), resume, and the results table. **Not checkable that way:** `claimNext` names the jobs table twice in one statement, which MySQL refuses for a TEMPORARY table (error 1137); it was run with the same assignments instead. It is the part of the job logic still not run on a real table.
+- Not verified: the application with the real hashing service, real ad data, the real blocklist service end to end, and the real browser.
+
+### 13.17 Copyright claims: stored here, reviewed in the admin panel, decided once (first slice, off by default)
+
+The flow: the landing-page form -> the WordPress server -> `POST /claims` (stored as **pending**) -> the reviewer opens **Copyright Claims** in the admin panel (`react_admin`) -> **Accept** (blocks the advertiser and queues its image hashing, through the existing `submitAdvertiser`) or **Reject** (a reason; nothing is blocked). Three projects:
+
+| Project | What was added |
+| --- | --- |
+| `pas_node_api` | `src/compliance/claims/claims.js` (the claims: submit, status, list, get, precheck, accept, reject, retry, open file), `src/services/copyrightClaimsRoutes.js` (the routes, mounted by `services/copyrightRequest.js` only when `compliance.claims.enabled`), the tables `copyright_claims` and `copyright_claim_files` (13.16) in the schema script, and `compliance.claims` in the configuration |
+| `admin_panel_backend` | `routes/copyright-claims.js`, mounted at `/admin-panel/copyright-claims`: checks the admin login (`authenticateJWT`) and an allowlist of reviewers, then calls the claims service with its own token |
+| `react_admin` | `components/Pas/CopyrightClaims.jsx`, the route `/pas/copyright-claims`, and a sidebar entry with a badge of the claims waiting (shown only to listed reviewers) |
+
+**Secrets and settings (environment only; test and production differ).**
+
+| Where | Name | Purpose |
+| --- | --- | --- |
+| claims service | `COPYRIGHT_REQUEST_TOKEN` | the WordPress server: submit a claim, add files, read a claim's status. Nothing else |
+| claims service | `COPYRIGHT_CLAIMS_ADMIN_TOKEN` | the admin panel's backend only: list, read, accept, reject, retry, download. **Must differ** from the WordPress token (if equal or missing, the admin routes answer 503), so the site that submits claims cannot approve them |
+| claims service | `COPYRIGHT_CLAIMS_STATUS_SECRET` | makes the status key a claimant needs (HMAC of the complaint id; nothing stored). A complaint id alone is not proof of identity. Without it no claim is accepted |
+| claims service | `COPYRIGHT_CLAIMS_NAS_TOKEN` | the private NAS bucket (13.16) |
+| claims service, `config.json` | `compliance.claims.enabled`, `homeNetwork` (the database the claims live in; default `facebook`), `requireEvidenceReviewed` (default on) | plus `compliance.request.enabled` and the attachments settings of 13.16 |
+| `admin_panel_backend` | `PAS_NODE_API_URL`, `COPYRIGHT_CLAIMS_ADMIN_TOKEN`, `COPYRIGHT_CLAIMS_REVIEWERS` | the claims service, its admin token, and the comma-separated `user_name` values (from the login's JWT) allowed to review. Empty = nobody; any missing = 503 |
+
+**What the code guarantees (all tested with fakes).**
+- `submit` requires the advertiser, the claimant's name, a valid email, the organization and a reason; an optional https link; it is idempotent on the complaint id (a **fingerprint** of the content: the same content is the same claim, different content under the same id is refused with 409). The reference `CR-XXXXXX` never repeats (a taken one is replaced). The answer carries a status key.
+- A decision is one conditional update (`WHERE status = 'pending'`): of two reviewers at once exactly one wins; the same decision again is a success that does nothing; the opposite decision is refused. Accept needs the reviewer's confirmation that the documents were reviewed, and records the reviewer.
+- **Approval and processing are separate.** The decision is recorded first; then `submitAdvertiser` runs and what each network did is stored with the claim (`processing_status` ok / partial / failed, and per network: block, hashing, ads found). A failure never undoes or hides the decision; **Retry** runs it again (idempotent; the same complaint id does not restart a finished hash job, see 13.15).
+- The reviewer recorded is the login's `user_name`; the proxy ignores any "reviewedBy" the browser sends. The WordPress token cannot call a single admin route (tested), and the admin token cannot submit.
+- The pre-check searches each network read-only and says **found / not found / unable to check / not supported**; a failed or unsupported search is never "no ads found".
+- Evidence files are read by the server and streamed as downloads through the login (no storage address is given out); a file whose scan is not clean is refused.
+- The claimant's link is shown as text in the screen and opened only after a confirmation. Nothing here deletes a claim or sends an email.
+
+**What this first slice does NOT do (so it is not "complete").**
+- Claims live in **one home database** (`compliance.claims.homeNetwork`), as proposed, but there is **no per-network outbox and propagation worker** yet: the per-network result is whatever one `submitAdvertiser` call reported, and Retry is manual. The review screen shows B1 blocking and B2 hash queueing per network; it does **not** show B3 holds or B6 audit status, which are not wired in.
+- No alert **email** to reviewers (the sidebar badge polls every minute), and no confirmation email to the claimant (the claim goes straight to pending).
+- It does not use the co-worker's `copyright_complaints` records (their code is not in this repository); the new tables are separate. The status words and tables must be agreed with B6 before production.
+- The upload route accepts files only if the private bucket is configured and reachable (13.16: its read path is still to be confirmed with the infrastructure team); there is no virus scanner connected, so with `scan.required` on (the default) files stay "scan pending" and cannot be downloaded.
+- The React screen was only syntax-checked (its packages are not installed here); the proxy was tested in a scratch copy using this project's packages. Nothing was run against a real database, the real NAS, or a browser.
+- Taking the downloads, the badge and the decision buttons live requires the schema on the claims' home database, the six settings above, and the reviewers' list.
+- `admin_panel_backend/services/authService.js` prints the whole `Authorization` header to the console on every request (`console.log(authHeader, "authHeader")`). Claims calls would put reviewers' tokens in the logs. It was not changed (outside this work); it should be removed.
