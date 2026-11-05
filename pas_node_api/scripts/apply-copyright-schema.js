@@ -551,7 +551,7 @@ async function inspectTable(sql, dbName, t) {
   // IF NOT EXISTS does not repair a pre-existing table, so validate the
   // storage engine and table collation before accepting it as compatible.
   const tableRows = await sql.query(
-    `SELECT engine, table_collation AS tableCollation
+    `SELECT engine AS engine, table_collation AS tableCollation
        FROM information_schema.tables
       WHERE table_schema = ? AND table_name = ?`,
     [dbName, t.name]
@@ -559,7 +559,7 @@ async function inspectTable(sql, dbName, t) {
   if (!tableRows.length) return { state: 'missing', problems: [] };
 
   const cols = await sql.query(
-    `SELECT column_name AS name, column_type AS type, is_nullable AS nullable, extra,
+    `SELECT column_name AS name, column_type AS type, is_nullable AS nullable, extra AS extra,
             character_set_name AS characterSet, collation_name AS collation
        FROM information_schema.columns
       WHERE table_schema = ? AND table_name = ?`,
@@ -569,8 +569,10 @@ async function inspectTable(sql, dbName, t) {
 
   const problems = [];
   const tableMeta = tableRows[0];
-  if (String(tableMeta.engine || '').toUpperCase() !== 'INNODB') {
-    problems.push(`table engine ${tableMeta.engine || '(none)'} != InnoDB`);
+  // MySQL 8 returns information_schema names in upper case (ENGINE, EXTRA) unless aliased; accept either.
+  const engine = tableMeta.engine ?? tableMeta.ENGINE;
+  if (String(engine || '').toUpperCase() !== 'INNODB') {
+    problems.push(`table engine ${engine || '(none)'} != InnoDB`);
   }
   if (String(tableMeta.tableCollation || '').toLowerCase() !== TABLE_COLLATION) {
     problems.push(`table collation ${tableMeta.tableCollation || '(none)'} != ${TABLE_COLLATION}`);
@@ -582,7 +584,7 @@ async function inspectTable(sql, dbName, t) {
     if (!a) { problems.push(`missing column ${col.name}`); continue; }
     if (normType(a.type) !== col.type) problems.push(`column ${col.name}: type ${a.type} != ${col.type}`);
     if ((a.nullable === 'YES') !== col.nullable) problems.push(`column ${col.name}: nullable ${a.nullable} != ${col.nullable ? 'YES' : 'NO'}`);
-    if (/auto_increment/i.test(a.extra || '') !== col.auto) problems.push(`column ${col.name}: auto_increment mismatch`);
+    if (/auto_increment/i.test(a.extra ?? a.EXTRA ?? '') !== col.auto) problems.push(`column ${col.name}: auto_increment mismatch`);
     const expectedCharset = EXPECTED_CHARSETS.get(col.charset);
     if (expectedCharset && (
       String(a.characterSet || '').toLowerCase() !== expectedCharset.characterSet
