@@ -51,6 +51,46 @@ const assignSpy = vi.fn();
 beforeEach(() => { cookieSpy.get.mockReturnValue("jwt-token"); cookieSpy.remove.mockReset(); assignSpy.mockReset(); });
 afterEach(() => { cleanup(); Object.defineProperty(window, "location", { configurable: true, writable: true, value: realLocation }); });
 
+describe("TakedownMonitor > audit (B6)", () => {
+  const AUDIT = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const audit = { auditId: AUDIT, network: "facebook", auditType: "verification_cleanup", status: "completed", startedAt: when, finishedAt: when, expectedCount: 2, foundCount: 2, takedownRunId: RUN, reportUri: null, details: null, createdAt: when };
+  const findings = { audit, counts: { total: 1, byStatus: { resolved: 1 } }, items: [{ id: 1, findingType: "blocklist_hit", system: "sql", location: "facebook_ad", internalAdId: "131579", platformAdId: "2265", targetType: "ad_id", targetValue: "2265", details: '{"nasDeleted":1}', status: "resolved", resolution: "removed", resolutionNote: null, resolvedAt: when, takedownRunId: RUN, createdAt: when }], next: null };
+
+  it("lists the audit runs of the network and opens one to show its findings", async () => {
+    const calls = backend(base([
+      [/^GET \/monitor\/audits\/[^/]+\/findings/, () => ok(findings)],
+      [/^GET \/monitor\/audits\?/, () => ok({ items: [audit], next: null })],
+    ]));
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Audit" }));
+    fireEvent.click(await screen.findByText("cccccccc"));
+    const drawer = await screen.findByRole("dialog", { name: "Audit findings" });
+    expect(await within(drawer).findByText("blocklist_hit")).toBeTruthy();
+    expect(within(drawer).getByText("2265")).toBeTruthy();
+    expect(within(drawer).getByText("sql / facebook_ad")).toBeTruthy();
+    expect(within(drawer).getByText("removed")).toBeTruthy();
+    expect(calls.some((c) => c.key.startsWith(`GET /monitor/audits/${AUDIT}/findings?network=facebook`))).toBe(true);
+  });
+
+  it("opens the audit of a run from its log, and says so when the run has none", async () => {
+    let found = true;
+    const calls = backend(base([
+      [/^GET \/monitor\/runs\/[^/]+\/logs/, () => ok({ run: run(), steps: { byGroup: {}, bySystem: {} }, items: [], next: null })],
+      [/^GET \/monitor\/audits\/[^/]+\/findings/, () => ok(findings)],
+      [/^GET \/monitor\/audits\?/, () => ok({ items: found ? [audit] : [], next: null })],
+    ]));
+    show();
+    fireEvent.click((await screen.findAllByText("aaaaaaaa"))[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Open audit" }));
+    expect(await screen.findByRole("dialog", { name: "Audit findings" })).toBeTruthy();
+    expect(calls.some((c) => c.key.includes(`takedownRunId=${RUN}`))).toBe(true);
+    found = false;
+    fireEvent.click(await screen.findByRole("button", { name: "Open takedown run" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Open audit" }));
+    expect(await screen.findByText(/There is no audit for this run/)).toBeTruthy();
+  });
+});
+
 describe("TakedownMonitor > the numbers", () => {
   it("shows the verification queue: ads waiting for the check and failed ads waiting for cleanup", async () => {
     const withQueue = { ...OVERVIEW,

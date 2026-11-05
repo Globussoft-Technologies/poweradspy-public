@@ -26,7 +26,9 @@
  *     GET  /admin/monitor/hash-jobs?network=&status=&afterId=   the hash jobs;  /admin/monitor/hash-jobs/:jobId/results?network=&outcome=&afterId=
  *     GET  /admin/monitor/blocklist?network=&status=&entryType=&q=&beforeId=&limit=   who and what is blocked (B1), with counts
  *     GET  /admin/monitor/attempts?network=&beforeId=&limit=     the ads the blocklist refused at ingestion
- *   (the monitor is read only; it reads B1's blocklist, B3's takedown tables and B2's hash tables and changes nothing)
+ *     GET  /admin/monitor/audits?network=&takedownRunId=&cursor=&limit=   the audit runs (B6), newest first
+ *     GET  /admin/monitor/audits/:auditId/findings?network=&status=&afterId=&limit=   one audit run and its findings
+ *   (the monitor is read only; it reads B1's blocklist, B3's takedown tables, B2's hash tables and B6's audit tables and changes nothing)
  *
  * The WordPress token cannot call the admin routes (and the two tokens must differ, or the admin routes are not mounted): otherwise the site
  * that submits claims could also approve them. Every answer is { code, message, data }.
@@ -254,6 +256,8 @@ function createClaimsRouter({ settings = config.compliance?.claims || {}, reques
   router.get('/admin/monitor/hash-jobs', adminLimiter, adminAuth, monitorRoute('hashJobs', (req) => [{ network: q(req).network, status: q(req).status, afterId: q(req).afterId, limit: q(req).limit }]));
   router.get('/admin/monitor/blocklist', adminLimiter, adminAuth, monitorRoute('blocklist', (req) => [{ network: q(req).network, status: q(req).status, entryType: q(req).entryType, q: q(req).q, beforeId: q(req).beforeId, limit: q(req).limit }]));
   router.get('/admin/monitor/attempts', adminLimiter, adminAuth, monitorRoute('attempts', (req) => [{ network: q(req).network, beforeId: q(req).beforeId, limit: q(req).limit }]));
+  router.get('/admin/monitor/audits', adminLimiter, adminAuth, monitorRoute('audits', (req) => [{ network: q(req).network, takedownRunId: q(req).takedownRunId, cursor: q(req).cursor, limit: q(req).limit }]));
+  router.get('/admin/monitor/audits/:auditId/findings', adminLimiter, adminAuth, monitorRoute('auditFindings', (req) => [{ network: q(req).network, auditId: req.params.auditId, status: q(req).status, afterId: q(req).afterId, limit: q(req).limit }]));
   router.get('/admin/monitor/hash-jobs/:jobId/results', adminLimiter, adminAuth, monitorRoute('hashJobResults', (req) => [{ network: q(req).network, jobId: req.params.jobId, generation: q(req).generation, outcome: q(req).outcome, afterId: q(req).afterId, limit: q(req).limit }]));
 
   return router;

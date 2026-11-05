@@ -5,6 +5,7 @@
  * updates or deletes. It reads
  *   - copyright_takedown_runs / copyright_takedown_actions   (B3: the takedown runs and, per run, every delete step), and
  *   - copyright_image_hash_jobs / copyright_image_hash_results (B2: the hash jobs and what they did with each image)
+ *   - copyright_audit_runs / copyright_audit_findings (B6: each audit run and what it found)
  *   - the copyright_status column of each network's ad table (the verification queue: ads waiting to be checked, failed ads waiting for cleanup)
  * in each network's own database. A network whose tables do not exist yet (B3 not deployed) is reported as { available: false } and the others
  * are still shown: a missing table is never shown as "0 deleted".
@@ -369,7 +370,89 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
     }
   }
 
-  return { overview, runs, runLogs, failures, hashJobs, hashJobResults, blocklist, attempts };
+  // ── the audit (B6; read only): one audit run per check (e.g. each verification cleanup) and what it found ──
+  const AUDIT_STATUSES = ['open', 'in_progress', 'resolved', 'false_positive'];
+  const auditShape = (r) => ({
+    auditId: r.audit_id, network: r.network, auditType: r.audit_type, status: r.status, startedAt: iso(r.started_at), finishedAt: iso(r.finished_at),
+    expectedCount: num(r.expected_count), foundCount: num(r.found_count), takedownRunId: r.takedown_run_id || null, reportUri: r.report_uri || null,
+    details: cut(r.details), createdAt: iso(r.created_at),
+  });
+  const AUDIT_COLUMNS = 'audit_id, network, audit_type, status, started_at, finished_at, expected_count, found_count, takedown_run_id, report_uri, details, created_at';
+
+  /** The audit runs of one network, newest first (or those of one takedown run). The cursor of a page is the `next` of the last. */
+  async function audits({ network, takedownRunId, cursor, limit } = {}) {
+    const slug = slugOf(network);
+    if (!slug || !known(slug)) return bad('invalid_network', 'network must be a known network slug');
+    if (takedownRunId && !UUID.test(String(takedownRunId))) return bad('invalid_id', 'takedownRunId must be a run id');
+    const n = pageSize(limit, 25, 100);
+    let before = null;
+    if (cursor) {
+      const m = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|([0-9a-f-]{36})$/i.exec(String(cursor));
+      if (!m) return bad('invalid_cursor', 'cursor is not valid');
+      before = { at: m[1], id: m[2].toLowerCase() };
+    }
+    const sql = getSql(slug);
+    if (!sql) return bad('no_database', 'there is no database connection for that network');
+    try {
+      const where = ['network = ?'];
+      const params = [slug];
+      if (takedownRunId) { where.push('takedown_run_id = ?'); params.push(String(takedownRunId).toLowerCase()); }
+      if (before) { where.push('(created_at < ? OR (created_at = ? AND audit_id < ?))'); params.push(before.at, before.at, before.id); }
+      const rows = await sql.query(`SELECT ${AUDIT_COLUMNS} FROM copyright_audit_runs WHERE ${where.join(' AND ')} ORDER BY created_at DESC, audit_id DESC LIMIT ${n}`, params);
+      const last = rows[rows.length - 1];
+      return { ok: true, items: rows.map(auditShape), next: rows.length === n && last ? `${dbTime(last.created_at)}|${last.audit_id}` : null };
+    } catch (err) {
+      if (missingTable(err)) return bad('no_table', 'the audit tables do not exist in that database yet');
+      log.warn?.('monitor: audits failed', { network: slug, error: err.message });
+      return bad('failed', 'the audit could not be read');
+    }
+  }
+
+  /** One audit run, its findings counted by status, and the findings themselves (by id, pages of `limit`). */
+  async function auditFindings({ network, auditId, status, afterId = 0, limit } = {}) {
+    const slug = slugOf(network);
+    if (!slug || !known(slug)) return bad('invalid_network', 'network must be a known network slug');
+    if (!UUID.test(String(auditId || ''))) return bad('invalid_id', 'auditId must be an audit id');
+    if (status && !AUDIT_STATUSES.includes(status)) return bad('invalid_status', `status must be one of ${AUDIT_STATUSES.join(', ')}`);
+    const n = pageSize(limit, 100, 500);
+    const sql = getSql(slug);
+    if (!sql) return bad('no_database', 'there is no database connection for that network');
+    const id = String(auditId).toLowerCase();
+    try {
+      const [run] = await sql.query(`SELECT ${AUDIT_COLUMNS} FROM copyright_audit_runs WHERE audit_id = ? AND network = ? LIMIT 1`, [id, slug]);
+      if (!run) return bad('not_found', 'no such audit');
+      const counted = await sql.query('SELECT status, COUNT(*) AS findings FROM copyright_audit_findings WHERE audit_id = ? AND network = ? GROUP BY status', [id, slug]);
+      const where = ['audit_id = ?', 'network = ?', 'id > ?'];
+      const params = [id, slug, whole(afterId)];
+      if (status) { where.push('status = ?'); params.push(status); }
+      // `system` is a reserved word in MySQL 8: always quoted.
+      const rows = await sql.query(
+        `SELECT id, finding_type, \`system\`, location, internal_ad_id, platform_ad_id, target_type, target_value, details, status, resolution, resolution_note,
+                resolved_at, takedown_run_id, created_at
+           FROM copyright_audit_findings WHERE ${where.join(' AND ')} ORDER BY id LIMIT ${n}`,
+        params
+      );
+      const byStatus = {};
+      for (const c of counted) byStatus[c.status] = num(c.findings);
+      return {
+        ok: true,
+        audit: auditShape(run),
+        counts: { total: Object.values(byStatus).reduce((a, b) => a + b, 0), byStatus },
+        items: rows.map((f) => ({
+          id: f.id, findingType: f.finding_type, system: f.system, location: cut(f.location), internalAdId: f.internal_ad_id || null, platformAdId: f.platform_ad_id || null,
+          targetType: f.target_type || null, targetValue: cut(f.target_value), details: cut(f.details), status: f.status, resolution: f.resolution || null,
+          resolutionNote: cut(f.resolution_note), resolvedAt: iso(f.resolved_at), takedownRunId: f.takedown_run_id || null, createdAt: iso(f.created_at),
+        })),
+        next: rows.length === n ? rows[rows.length - 1].id : null,
+      };
+    } catch (err) {
+      if (missingTable(err)) return bad('no_table', 'the audit tables do not exist in that database yet');
+      log.warn?.('monitor: audit findings failed', { network: slug, error: err.message });
+      return bad('failed', 'the audit findings could not be read');
+    }
+  }
+
+  return { overview, runs, runLogs, failures, hashJobs, hashJobResults, blocklist, attempts, audits, auditFindings };
 }
 
 module.exports = { createMonitorService, groupOf, STATUS_GROUPS };

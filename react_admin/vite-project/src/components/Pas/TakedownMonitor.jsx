@@ -27,7 +27,9 @@ const HASH_META = {
   pending: "bg-amber-100 text-amber-700", limit_reached: "bg-orange-100 text-orange-700", unresolved: "bg-orange-100 text-orange-700",
 };
 const OUTCOME_META = { hashed: "bg-green-100 text-green-700", duplicate: "bg-gray-100 text-gray-600", skipped: "bg-amber-100 text-amber-700", failed: "bg-rose-100 text-rose-700" };
-const TABS = [{ key: "runs", label: "Takedown runs" }, { key: "failures", label: "Failed steps" }, { key: "hash", label: "Hash jobs" }, { key: "blocklist", label: "Blocked list" }, { key: "attempts", label: "Rejected ads" }, { key: "claims", label: "Claim requests" }];
+const TABS = [{ key: "runs", label: "Takedown runs" }, { key: "failures", label: "Failed steps" }, { key: "hash", label: "Hash jobs" }, { key: "blocklist", label: "Blocked list" }, { key: "attempts", label: "Rejected ads" }, { key: "audit", label: "Audit" }, { key: "claims", label: "Claim requests" }];
+const AUDIT_STATUS_META = { open: "bg-amber-100 text-amber-700", in_progress: "bg-blue-100 text-blue-700", resolved: "bg-green-100 text-green-700", false_positive: "bg-gray-200 text-gray-700", completed: "bg-green-100 text-green-700", failed: "bg-rose-100 text-rose-700" };
+const AUDIT_FINDING_STATUSES = ["open", "in_progress", "resolved", "false_positive"];
 const BLOCK_TYPES = [{ key: "", label: "All types" }, { key: "advertiser", label: "Advertiser" }, { key: "ad_id", label: "Ad id" }, { key: "url", label: "URL" }, { key: "domain", label: "Domain" }, { key: "image_url", label: "Image URL" }, { key: "image_hash", label: "Image (hash)" }, { key: "page", label: "Page" }];
 const BLOCK_STATUS_FILTERS = [{ key: "", label: "All" }, { key: "active", label: "Active" }, { key: "revoked", label: "Revoked" }, { key: "expired", label: "Expired" }];
 const BLOCK_STATUS_META = { active: "bg-rose-100 text-rose-700", revoked: "bg-gray-200 text-gray-700", expired: "bg-gray-100 text-gray-600" };
@@ -102,6 +104,7 @@ export default function TakedownMonitor() {
   const [blockSearch, setBlockSearch] = useState("");
   const [blocklist, setBlocklist] = useState({ items: [], next: null, counts: null, error: "", loading: false });
   const [attempts, setAttempts] = useState({ items: [], next: null, error: "", loading: false });
+  const [audits, setAudits] = useState({ items: [], next: null, error: "", loading: false });
 
   const [claimStatus, setClaimStatus] = useState("");
   const [claims, setClaims] = useState({ items: [], next: null, error: "", loading: false });
@@ -111,6 +114,7 @@ export default function TakedownMonitor() {
   const [stepStatus, setStepStatus] = useState("");
   const [stepSystem, setStepSystem] = useState("");
   const [outcome, setOutcome] = useState("");
+  const [findingStatus, setFindingStatus] = useState("");
   const openRef = useRef(null);
   openRef.current = open;
 
@@ -176,6 +180,17 @@ export default function TakedownMonitor() {
     } catch { setAttempts((a) => ({ ...a, loading: false, error: "The rejected ads could not be loaded." })); }
   }, [network]);
 
+  // B6's audit runs (each verification cleanup writes one) and, when one is opened, what it found.
+  const loadAudits = useCallback(async (reset = true, cursor = null) => {
+    if (!network) return;
+    setAudits((a) => ({ ...a, loading: true, error: "" }));
+    try {
+      const { ok, json } = await api("/audits", { network, cursor: reset ? undefined : cursor, limit: 25 });
+      if (!ok) { setAudits((a) => ({ ...a, loading: false, error: json?.message || "The audit could not be loaded." })); return; }
+      setAudits((a) => ({ items: reset ? json.data.items : [...a.items, ...json.data.items], next: json.data.next, error: "", loading: false }));
+    } catch { setAudits((a) => ({ ...a, loading: false, error: "The audit could not be loaded." })); }
+  }, [network]);
+
   // The claim requests that came in (the claims list of the same backend): who sent what, and what was decided. Deciding is done on the Copyright Claims page.
   const loadClaims = useCallback(async (reset = true, cursor = null) => {
     setClaims((c) => ({ ...c, loading: true, error: "" }));
@@ -191,13 +206,15 @@ export default function TakedownMonitor() {
     try {
       const res = target.kind === "run"
         ? await api(`/runs/${target.id}/logs`, { network: target.network, status: stepStatus, system: stepSystem, afterId: reset ? undefined : cursor, limit: 100 })
-        : await api(`/hash-jobs/${target.id}/results`, { network: target.network, outcome, afterId: reset ? undefined : cursor, limit: 200 });
+        : target.kind === "audit"
+          ? await api(`/audits/${target.id}/findings`, { network: target.network, status: findingStatus, afterId: reset ? undefined : cursor, limit: 100 })
+          : await api(`/hash-jobs/${target.id}/results`, { network: target.network, outcome, afterId: reset ? undefined : cursor, limit: 200 });
       if (openRef.current !== target) return;
       if (!res.ok) { setLog((l) => ({ ...l, loading: false, error: res.json?.message || "The log could not be loaded." })); return; }
       const d = res.json.data;
       setLog((l) => ({ data: reset ? d : l.data, items: reset ? d.items : [...l.items, ...d.items], next: d.items.length ? d.next : null, error: "", loading: false }));
     } catch { setLog((l) => ({ ...l, loading: false, error: "The log could not be loaded." })); }
-  }, [stepStatus, stepSystem, outcome]);
+  }, [stepStatus, stepSystem, outcome, findingStatus]);
 
   useEffect(() => { loadOverview(); const t = setInterval(loadOverview, 60000); return () => clearInterval(t); }, [loadOverview]);
   useEffect(() => { if (tab === "runs") loadRuns(true); }, [tab, loadRuns]);
@@ -205,13 +222,24 @@ export default function TakedownMonitor() {
   useEffect(() => { if (tab === "hash") loadHash(true); }, [tab, loadHash]);
   useEffect(() => { if (tab === "blocklist") loadBlocklist(true); }, [tab, loadBlocklist]);
   useEffect(() => { if (tab === "attempts") loadAttempts(true); }, [tab, loadAttempts]);
+  useEffect(() => { if (tab === "audit") loadAudits(true); }, [tab, loadAudits]);
   useEffect(() => { if (tab === "claims") loadClaims(true); }, [tab, loadClaims]);
   useEffect(() => { if (open) loadLog(open, true); }, [open, loadLog]);
 
-  const refresh = () => { loadOverview(); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "blocklist") loadBlocklist(true); if (tab === "attempts") loadAttempts(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
+  const refresh = () => { loadOverview(); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "blocklist") loadBlocklist(true); if (tab === "attempts") loadAttempts(true); if (tab === "audit") loadAudits(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
   const submitBlockSearch = (e) => { e.preventDefault(); setBlockSearch(blockText.trim()); };
   const openRun = (r) => { setStepStatus(""); setStepSystem(""); setOpen({ kind: "run", network: r.network, id: r.runId }); };
   const openJob = (j) => { setOutcome(""); setOpen({ kind: "job", network: j.network, id: j.id }); };
+  const openAudit = (a) => { setFindingStatus(""); setOpen({ kind: "audit", network: a.network, id: a.auditId }); };
+  // From a run log: the audit written for that run (a run that removed no ad has none).
+  const openAuditOfRun = async (run) => {
+    try {
+      const { ok, json } = await api("/audits", { network: run.network, takedownRunId: run.runId, limit: 1 });
+      const found = ok && json?.data?.items?.[0];
+      if (found) openAudit(found);
+      else setLog((l) => ({ ...l, error: ok ? "There is no audit for this run: it removed no ad, or it ran before the audit was saved." : json?.message || "The audit could not be loaded." }));
+    } catch { setLog((l) => ({ ...l, error: "The audit could not be loaded." })); }
+  };
   const submitComplaint = (e) => {
     e.preventDefault();
     const value = complaint.trim();
@@ -468,6 +496,35 @@ export default function TakedownMonitor() {
         </section>
       )}
 
+      {tab === "audit" && (
+        <section className="space-y-3">
+          <p className="text-sm text-gray-500">The audit of <b>{network || "this network"}</b>, newest first: one row per check (for example each verification cleanup), with how many ads it expected to remove and how many it found removed. Open one to see each finding.</p>
+          {audits.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{audits.error}</div>}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">When</th><th className="p-3">Audit</th><th className="p-3">Type</th><th className="p-3">Status</th><th className="p-3">Expected</th><th className="p-3">Found</th><th className="p-3">Takedown run</th></tr></thead>
+              <tbody>
+                {audits.items.map((a) => (
+                  <tr key={a.auditId} className="border-t border-gray-100 align-top cursor-pointer hover:bg-gray-50" onClick={() => openAudit(a)}>
+                    <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(a.finishedAt || a.startedAt || a.createdAt)}</td>
+                    <td className="p-3 font-mono text-xs">{a.auditId.slice(0, 8)}</td>
+                    <td className="p-3">{a.auditType}</td>
+                    <td className="p-3"><Badge cls={AUDIT_STATUS_META[a.status]}>{a.status}</Badge></td>
+                    <td className="p-3">{a.expectedCount}</td>
+                    <td className={`p-3 ${a.foundCount === a.expectedCount ? "text-green-700" : "text-rose-700"}`}>{a.foundCount}</td>
+                    <td className="p-3">{a.takedownRunId
+                      ? <button type="button" className="font-mono text-xs text-[#1f296a] underline" onClick={(e) => { e.stopPropagation(); openRun({ network: a.network, runId: a.takedownRunId }); }}>{a.takedownRunId.slice(0, 8)}</button>
+                      : "—"}</td>
+                  </tr>
+                ))}
+                {!audits.loading && !audits.items.length && !audits.error && <tr><td className="p-4 text-gray-500" colSpan={7}>No audit yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {audits.next && <button onClick={() => loadAudits(false, audits.next)} disabled={audits.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+        </section>
+      )}
+
       {tab === "claims" && (
         <section className="space-y-3">
           <div className="flex gap-2 flex-wrap items-center">
@@ -500,24 +557,25 @@ export default function TakedownMonitor() {
       )}
 
       {open && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/30" role="dialog" aria-label={open.kind === "run" ? "Run log" : "Job results"}>
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/30" role="dialog" aria-label={open.kind === "run" ? "Run log" : open.kind === "audit" ? "Audit findings" : "Job results"}>
           <div className="bg-white w-full max-w-3xl h-full overflow-y-auto p-5 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-bold text-[#1f296a]">{open.kind === "run" ? "Takedown run log" : `Hash job #${open.id}`}</h2>
+                <h2 className="text-lg font-bold text-[#1f296a]">{open.kind === "run" ? "Takedown run log" : open.kind === "audit" ? "Audit findings" : `Hash job #${open.id}`}</h2>
                 <div className="text-xs text-gray-500 font-mono break-all">{open.network} · {open.id}</div>
               </div>
               <button onClick={() => setOpen(null)} aria-label="Close" className="p-2 rounded-lg hover:bg-gray-100"><FiX /></button>
             </div>
             {log.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{log.error}</div>}
 
-            {open.kind === "run" && log.data && (
+            {open.kind === "run" && log.data?.run && (
               <>
                 <div className="flex gap-2 items-center flex-wrap text-sm">
                   <GroupBadge group={log.data.run.group} status={log.data.run.status} />
                   {log.data.run.mode === "dry_run" && <Badge>dry run: deleted nothing</Badge>}
                   <span>planned {log.data.run.itemsPlanned}</span><span className="text-green-700">done {log.data.run.itemsSucceeded}</span><span className="text-rose-700">failed {log.data.run.itemsFailed}</span>
                   <span className="text-gray-500">operator {log.data.run.operator || "—"}</span>
+                  <button type="button" onClick={() => openAuditOfRun(log.data.run)} className="ml-auto px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs">Open audit</button>
                 </div>
                 {log.data.run.details && <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs whitespace-pre-wrap break-words">{log.data.run.details}</pre>}
                 <div className="flex gap-2 flex-wrap">
@@ -553,7 +611,46 @@ export default function TakedownMonitor() {
               </>
             )}
 
-            {open.kind === "job" && log.data && (
+            {open.kind === "audit" && log.data?.audit && (
+              <>
+                <div className="flex gap-2 items-center flex-wrap text-sm">
+                  <Badge cls={AUDIT_STATUS_META[log.data.audit.status]}>{log.data.audit.status}</Badge>
+                  <span>{log.data.audit.auditType}</span>
+                  <span>expected {log.data.audit.expectedCount}</span>
+                  <span className={log.data.audit.foundCount === log.data.audit.expectedCount ? "text-green-700" : "text-rose-700"}>found {log.data.audit.foundCount}</span>
+                  <span className="text-gray-500">{fmtDate(log.data.audit.finishedAt || log.data.audit.startedAt)}</span>
+                  {log.data.audit.takedownRunId && <button type="button" onClick={() => openRun({ network: log.data.audit.network, runId: log.data.audit.takedownRunId })} className="ml-auto px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs">Open takedown run</button>}
+                </div>
+                {log.data.audit.details && <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs whitespace-pre-wrap break-words">{log.data.audit.details}</pre>}
+                <div className="flex gap-2 items-center flex-wrap text-xs">
+                  {Object.entries(log.data.counts.byStatus).map(([st, n]) => <Badge key={st} cls={AUDIT_STATUS_META[st]}>{st} {n}</Badge>)}
+                  <select aria-label="Finding status" value={findingStatus} onChange={(e) => setFindingStatus(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
+                    <option value="">All findings</option>
+                    {AUDIT_FINDING_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+                  </select>
+                </div>
+                <div className="border border-gray-200 rounded-lg overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="text-left text-gray-500 bg-gray-50"><tr><th className="p-2">Ad</th><th className="p-2">Finding</th><th className="p-2">Where</th><th className="p-2">Status</th><th className="p-2">Details</th><th className="p-2">When</th></tr></thead>
+                    <tbody>
+                      {log.items.map((f) => (
+                        <tr key={f.id} className="border-t border-gray-100 align-top">
+                          <td className="p-2 break-all">{f.platformAdId || "—"}{f.internalAdId && <div className="text-gray-400">row {f.internalAdId}</div>}</td>
+                          <td className="p-2">{f.findingType}</td>
+                          <td className="p-2 break-all">{f.system}{f.location ? ` / ${f.location}` : ""}</td>
+                          <td className="p-2"><Badge cls={AUDIT_STATUS_META[f.status]}>{f.status}</Badge>{f.resolution && <div className="text-gray-400 mt-1">{f.resolution}</div>}</td>
+                          <td className="p-2 break-words max-w-xs text-gray-500">{f.resolutionNote || f.details || "—"}</td>
+                          <td className="p-2 text-gray-500">{fmtDate(f.resolvedAt || f.createdAt)}</td>
+                        </tr>
+                      ))}
+                      {!log.loading && !log.items.length && !log.error && <tr><td className="p-3 text-gray-500" colSpan={6}>No findings recorded for this audit.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+
+            {open.kind === "job" && log.data?.job && (
               <>
                 <div className="flex gap-2 items-center flex-wrap text-sm">
                   <Badge cls={HASH_META[log.data.job.status]}>{log.data.job.status}</Badge>

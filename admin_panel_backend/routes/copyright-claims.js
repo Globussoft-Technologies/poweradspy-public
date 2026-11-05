@@ -100,8 +100,10 @@ const checkMonitor = (req, res, next) => {
   const badNetwork = typeof q.network === 'string' && q.network && !NETWORK.test(q.network);
   const badRun = req.params.runId !== undefined && !UUID.test(req.params.runId);
   const badJob = req.params.jobId !== undefined && !/^\d{1,18}$/.test(req.params.jobId);
+  const badAudit = req.params.auditId !== undefined && !UUID.test(req.params.auditId);
+  const badTakedownRun = typeof q.takedownRunId === 'string' && q.takedownRunId && !UUID.test(q.takedownRunId);
   const badComplaint = typeof q.complaintId === 'string' && q.complaintId && !UUID.test(q.complaintId);
-  if (badNetwork || badRun || badJob || badComplaint) return res.status(400).json({ code: 400, message: 'Invalid request.', data: null });
+  if (badNetwork || badRun || badJob || badComplaint || badAudit || badTakedownRun) return res.status(400).json({ code: 400, message: 'Invalid request.', data: null });
   return next();
 };
 router.get('/monitor/overview', checkMonitor, proxy('GET', '/overview', passOn()));
@@ -111,6 +113,8 @@ router.get('/monitor/failures', checkMonitor, proxy('GET', '/failures', passOn('
 router.get('/monitor/blocklist', checkMonitor, proxy('GET', '/blocklist', passOn('network', 'status', 'entryType', 'q', 'beforeId', 'limit')));
 router.get('/monitor/attempts', checkMonitor, proxy('GET', '/attempts', passOn('network', 'beforeId', 'limit')));
 router.get('/monitor/hash-jobs', checkMonitor, proxy('GET', '/hash-jobs', passOn('network', 'status', 'afterId', 'limit')));
+router.get('/monitor/audits', checkMonitor, proxy('GET', '/audits', passOn('network', 'takedownRunId', 'cursor', 'limit')));
+router.get('/monitor/audits/:auditId/findings', checkMonitor, proxy('GET', (req) => `/audits/${req.params.auditId}/findings`, passOn('network', 'status', 'afterId', 'limit')));
 router.get('/monitor/hash-jobs/:jobId/results', checkMonitor, proxy('GET', (req) => `/hash-jobs/${req.params.jobId}/results`, passOn('network', 'generation', 'outcome', 'afterId', 'limit')));
 
 router.get('/:id', checkId, proxy('GET', (req) => `/${req.params.id}`));

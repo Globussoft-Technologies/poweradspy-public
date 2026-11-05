@@ -223,6 +223,21 @@ describe("routes/copyright-claims > the monitor (read only)", () => {
     expect((await request(app).post(`${BASE}/monitor/blocklist`).set(as())).status).toBe(404);
   });
 
+  it("serves the audit runs and their findings, passing on only their filters", async () => {
+    await request(app).get(`${BASE}/monitor/audits?network=facebook&takedownRunId=${RUN}&cursor=c&limit=5&evil=1`).set(as());
+    expect(fakeAxios.mock.calls[0][0]).toMatchObject({ method: "GET", url: `${MONITOR}/audits`, params: { network: "facebook", takedownRunId: RUN, cursor: "c", limit: "5" } });
+    expect(fakeAxios.mock.calls[0][0].params).not.toHaveProperty("evil");
+    fakeAxios.mockClear();
+    await request(app).get(`${BASE}/monitor/audits/${RUN}/findings?network=facebook&status=resolved&afterId=3`).set(as());
+    expect(fakeAxios.mock.calls[0][0]).toMatchObject({ url: `${MONITOR}/audits/${RUN}/findings`, params: { network: "facebook", status: "resolved", afterId: "3" } });
+    fakeAxios.mockClear();
+    for (const path of ["/monitor/audits/not-a-uuid/findings?network=facebook", "/monitor/audits?network=facebook&takedownRunId=nope"]) {
+      expect((await request(app).get(`${BASE}${path}`).set(as())).status).toBe(400);
+    }
+    expect(fakeAxios).not.toHaveBeenCalled();
+    expect((await request(app).post(`${BASE}/monitor/audits`).set(as())).status).toBe(404);
+  });
+
   it("refuses a bad network, run id, job id or complaint id before calling anything", async () => {
     for (const path of ["/monitor/runs?network=../x", "/monitor/runs?network=a%20b", `/monitor/runs/not-a-uuid/logs?network=facebook`, "/monitor/hash-jobs/abc/results?network=facebook", "/monitor/runs?complaintId=nope"]) {
       expect((await request(app).get(`${BASE}${path}`).set(as())).status).toBe(400);

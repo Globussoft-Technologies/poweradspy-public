@@ -207,6 +207,49 @@ describe("hash jobs", () => {
   });
 });
 
+describe("audit (B6)", () => {
+  const AUDIT = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const auditRow = { audit_id: AUDIT, network: "facebook", audit_type: "verification_cleanup", status: "completed", started_at: "2026-11-05 10:00:00", finished_at: "2026-11-05 10:00:01", expected_count: 2, found_count: 2, takedown_run_id: RUN, report_uri: null, details: null, created_at: "2026-11-05 10:00:01" };
+  const finding = (id, over = {}) => ({ id, finding_type: "blocklist_hit", system: "sql", location: "facebook_ad", internal_ad_id: String(id), platform_ad_id: `p${id}`, target_type: "ad_id", target_value: `p${id}`, details: '{"nasDeleted":1}', status: "resolved", resolution: "removed", resolution_note: null, resolved_at: "2026-11-05 10:00:01", takedown_run_id: RUN, created_at: "2026-11-05 10:00:01", ...over });
+  const auditSql = () => fakeSql((text) => {
+    if (/FROM copyright_audit_runs WHERE audit_id/.test(text)) return [auditRow];
+    if (/FROM copyright_audit_runs/.test(text)) return [auditRow];
+    if (/GROUP BY status/.test(text)) return [{ status: "resolved", findings: 2 }];
+    return [finding(1), finding(2)];
+  });
+
+  it("lists a network's audit runs newest first, by takedown run when asked, with the filters as parameters", async () => {
+    const sql = auditSql();
+    const out = await service({ sqls: { facebook: sql } }).audits({ network: "facebook", takedownRunId: RUN, limit: "1" });
+    expect(out.items[0]).toMatchObject({ auditId: AUDIT, auditType: "verification_cleanup", expectedCount: 2, foundCount: 2, takedownRunId: RUN });
+    expect(out.next).toBe(`2026-11-05 10:00:01|${AUDIT}`);
+    expect(sql.seen[0].params).toEqual(["facebook", RUN]);
+    expect(sql.seen[0].text).toMatch(/ORDER BY created_at DESC, audit_id DESC LIMIT 1$/);
+  });
+
+  it("gives one audit, its findings counted by status, and the findings (the system column quoted for MySQL 8)", async () => {
+    const sql = auditSql();
+    const out = await service({ sqls: { facebook: sql } }).auditFindings({ network: "facebook", auditId: AUDIT, status: "resolved", afterId: "0", limit: "2" });
+    expect(out.audit).toMatchObject({ auditId: AUDIT, status: "completed" });
+    expect(out.counts).toEqual({ total: 2, byStatus: { resolved: 2 } });
+    expect(out.items[1]).toMatchObject({ id: 2, findingType: "blocklist_hit", system: "sql", location: "facebook_ad", platformAdId: "p2", status: "resolved", resolution: "removed" });
+    expect(out.next).toBe(2);
+    expect(sql.seen[2].params).toEqual([AUDIT, "facebook", 0, "resolved"]);
+    for (const q of sql.seen) expect(q.text).not.toMatch(/(^|[^`])\bsystem\b(?!`)/);
+  });
+
+  it("refuses bad input before reading, and reports a missing audit or missing tables", async () => {
+    const svc = service({ sqls: { facebook: auditSql() } });
+    expect((await svc.audits({ network: "nope" })).error).toBe("invalid_network");
+    expect((await svc.audits({ network: "facebook", takedownRunId: "x" })).error).toBe("invalid_id");
+    expect((await svc.audits({ network: "facebook", cursor: "bad" })).error).toBe("invalid_cursor");
+    expect((await svc.auditFindings({ network: "facebook", auditId: "x" })).error).toBe("invalid_id");
+    expect((await svc.auditFindings({ network: "facebook", auditId: AUDIT, status: "weird" })).error).toBe("invalid_status");
+    expect((await service({ sqls: { facebook: fakeSql(() => []) } }).auditFindings({ network: "facebook", auditId: AUDIT })).error).toBe("not_found");
+    expect((await service({ sqls: { facebook: fakeSql(() => { throw noTable(); }) } }).audits({ network: "facebook" })).error).toBe("no_table");
+  });
+});
+
 describe("the service never writes", () => {
   it("every query it sends is a SELECT", async () => {
     const sql = fakeSql((t) => (/runs/.test(t) ? [] : []));
@@ -240,6 +283,8 @@ describe("routes", () => {
     hashJobResults: vi.fn(async () => ({ ok: true, items: [], next: null })),
     blocklist: vi.fn(async () => ({ ok: true, counts: { total: 0, byStatus: {}, activeByType: {} }, items: [], next: null })),
     attempts: vi.fn(async () => ({ ok: true, items: [], next: null })),
+    audits: vi.fn(async () => ({ ok: true, items: [], next: null })),
+    auditFindings: vi.fn(async () => ({ ok: true, audit: {}, counts: { total: 0, byStatus: {} }, items: [], next: null })),
     ...over,
   });
 
@@ -271,6 +316,11 @@ describe("routes", () => {
       expect(monitor.blocklist).toHaveBeenCalledWith({ network: "facebook", status: "active", entryType: "advertiser", q: "test", beforeId: "9", limit: "5" });
       expect((await t.get("/admin/monitor/attempts?network=facebook&beforeId=4&limit=10")).status).toBe(200);
       expect(monitor.attempts).toHaveBeenCalledWith({ network: "facebook", beforeId: "4", limit: "10" });
+      expect((await t.get("/admin/monitor/audits?network=facebook", {})).status).toBe(401);
+      expect((await t.get(`/admin/monitor/audits?network=facebook&takedownRunId=${RUN}&cursor=c&limit=3`)).status).toBe(200);
+      expect(monitor.audits).toHaveBeenCalledWith({ network: "facebook", takedownRunId: RUN, cursor: "c", limit: "3" });
+      expect((await t.get(`/admin/monitor/audits/${RUN}/findings?network=facebook&status=resolved&afterId=2`)).status).toBe(200);
+      expect(monitor.auditFindings).toHaveBeenCalledWith({ network: "facebook", auditId: RUN, status: "resolved", afterId: "2", limit: undefined });
     } finally { await t.close(); }
   });
 
