@@ -67,7 +67,7 @@ How a complaint becomes a block, end to end. `[built]` = code exists (tested wit
 | 2–3 Blocklist and check at collection | B1 (this repo) | `copyright_blocklist`, `copyright_blocked_attempts` | no |
 | 4–5 Hashing and new-ad sweep | B2 (this repo) | `copyright_blocklist` (image_hash), `copyright_image_hash_jobs`, `copyright_review_queue`, `copyright_blocked_attempts` | no |
 | 7 Takedown | B3 | ad tables, `copyright_takedown_*` | yes (batches) |
-| 8 Audit | B6 | `copyright_complaints`, `copyright_audit_*` | no |
+| 8 Audit | B6 | `copyright_audit_*` | no |
 
 Rules that hold across the steps:
 - B1 and B2 only **add** to the blocklist and never delete anything; only B3 deletes, and only after step 4 is done for that advertiser.
@@ -325,8 +325,7 @@ Entry: `{ entryType, value, addedBy, network?, reason?, source?, complaintId?, e
   never cut, because a cut entry would never match.
 
 Returns `{ rejected: [{ entry, reason }], results: [{ network, ok, count, error?, entries: [{ entryType, value, valueSha256, blocklistId }] }] }`.
-`blocklistId` is the row id **in that network's database**: B3 and B6 store it, with the `network`, in their link tables
-(`copyright_takedown_blocklist_entries`, `copyright_complaint_blocklist_entries`). A partial failure is visible per network and the write is
+`blocklistId` is the row id **in that network's database** (B3/B6 link tables for it were dropped as unused). A partial failure is visible per network and the write is
 idempotent, so it is safe to re-run. Re-adding a revoked entry re-activates the same row.
 
 ### `revoke(refs, opts)`
@@ -849,7 +848,7 @@ The flow: the landing-page form -> the WordPress server -> `POST /claims` (store
 **What this first slice does NOT do (so it is not "complete").**
 - Claims live in **one home database** (`compliance.claims.homeNetwork`), as proposed, but there is **no per-network outbox and propagation worker** yet: the per-network result is whatever one `submitAdvertiser` call reported, and Retry is manual. The review screen shows B1 blocking and B2 hash queueing per network; it does **not** show B3 holds or B6 audit status, which are not wired in.
 - No alert **email** to reviewers (the sidebar badge polls every minute), and no confirmation email to the claimant (the claim goes straight to pending).
-- It does not use the co-worker's `copyright_complaints` records (their code is not in this repository); the new tables are separate. The status words and tables must be agreed with B6 before production.
+- Claims are stored only in `copyright_claims` / `copyright_claim_files` (the old `copyright_complaints` tables were dropped as unused).
 - The upload route accepts files only if the private bucket is configured and reachable (13.16: its read path is still to be confirmed with the infrastructure team); there is no virus scanner connected, so with `scan.required` on (the default) files stay "scan pending" and cannot be downloaded.
 - The React screen was only syntax-checked (its packages are not installed here); the proxy was tested in a scratch copy using this project's packages. Nothing was run against a real database, the real NAS, or a browser.
 - Taking the downloads, the badge and the decision buttons live requires the schema on the claims' home database, the six settings above, and the reviewers' list.

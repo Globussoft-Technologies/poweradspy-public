@@ -404,6 +404,13 @@ const config = {
       // Also block the advertiser of a failed ad (not only the ad id).
       blockAdvertiser: fileConfig.compliance?.copyrightVerification?.blockAdvertiser === true,
       audit: fileConfig.compliance?.copyrightVerification?.audit !== false,
+      // A NEW blocklist entry also fails the ads that already exist (approved or pending): they go to status 2 and the
+      // cleanup cron removes them. Checked by the verification cron, a few entries per tick.
+      recheckExisting: fileConfig.compliance?.copyrightVerification?.recheckExisting !== false,
+      recheckEntries: boundedInt(fileConfig.compliance?.copyrightVerification?.recheckEntries, 100, 1, 1000),    // blocklist entries per tick
+      recheckAds: boundedInt(fileConfig.compliance?.copyrightVerification?.recheckAds, 1000, 1, 10000),          // ads marked failed per tick
+      // After a restart, entries added in the last N hours are checked again (the work is idempotent).
+      recheckLookbackHours: boundedInt(fileConfig.compliance?.copyrightVerification?.recheckLookbackHours, 24, 1, 720),
     },
     blocklist: {
       enabled: getVal(fileConfig.compliance?.blocklist?.enabled, 'BLOCKLIST_ENABLED', toBool) === true,

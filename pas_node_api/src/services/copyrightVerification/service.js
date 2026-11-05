@@ -4,6 +4,7 @@
  * Copyright verification — two crons on top of the EXISTING insertion flow.
  *
  *   copyrightVerification  pending ads (status 0) -> blocklist check -> 1 (approved) or 2 (failed)
+ *                          + NEW blocklist entries -> the existing ads they cover (status 0/1) -> 2
  *   copyrightCleanup       failed ads  (status 2) -> blocklist ad -> takedown run + snapshot -> delete NAS + SQL + ES -> steps + audit rows
  *
  * Load control (all from config.json, see compliance.copyrightVerification):
@@ -24,6 +25,7 @@ const nas = require('../../insertion/helpers/nasClient');
 const { mapWithConcurrency } = require('../../insertion/InsertionEngine');
 const { NETWORKS, PENDING, APPROVED, FAILED } = require('./status');
 const { matchBatch } = require('./hashWorker');
+const { nameCandidates } = require('../../compliance/imagematch/sources');
 
 const log = logger.createChild('copyright-verification');
 const ADDED_BY = 'copyright-verification';
@@ -96,11 +98,11 @@ async function loadAds(sql, network, status, afterId, limit) {
 
 // ─── Writing status ─────────────────────────────────────────────────────
 
-async function setSqlStatus(sql, network, ids, to) {
+async function setSqlStatus(sql, network, ids, to, from = [PENDING]) {
   if (!ids.length) return 0;
   const [table] = NETWORKS[network];
-  const res = await sql.query(`UPDATE ${table} SET copyright_status = ? WHERE id IN (${ids.map(() => '?').join(',')}) AND copyright_status = ?`,
-    [to, ...ids, PENDING]);
+  const res = await sql.query(`UPDATE ${table} SET copyright_status = ? WHERE id IN (${ids.map(() => '?').join(',')})
+    AND copyright_status IN (${from.map(() => '?').join(',')})`, [to, ...ids, ...from]);
   return Number(res?.affectedRows) || 0;
 }
 
@@ -162,6 +164,96 @@ async function internalBlocks(sql, network, ids) {
   return new Map(rows.map((r) => [String(r.value).trim(), r.id]));
 }
 
+// ─── Existing ads hit by a NEW blocklist entry ──────────────────────────
+// The pending check only sees new ads. When an entry is added later (an advertiser blocked by hand, or the
+// image hashes the B2 job adds for that advertiser's ads), the ads that already exist must go too: they are
+// set to 2 here and the cleanup cron removes them. Handled entry types: ad_id, advertiser, image_hash
+// (exact copies, found through copyright_image_hashes). url / domain / page / image_url columns have no
+// index, so those entries still apply only to new ads.
+
+// Owner-name column each network's insertion already looks owners up by (indexed). Values are lowercase.
+const OWNER_NAME = { facebook: 'post_owner_lower', chatgptads: 'post_owner_lower', google: 'post_owner_lower', native: 'post_owner_lower', admob: 'name_key' };
+const ownerTable = (network) => (network === 'admob' ? 'mob_post_owners' : `${network === 'google' ? 'google_text' : network}_ad_post_owners`);
+const LIVE = [PENDING, APPROVED];
+const recheckCursors = new Map(); // network -> { entryId, page: { entryId, afterId } | null }
+
+// Where to start after a restart: entries added in the last recheckLookbackHours (marking is idempotent).
+async function recheckStart(sql, s) {
+  const [row] = await sql.query(`SELECT (SELECT MIN(id) FROM copyright_blocklist WHERE created_at >= UTC_TIMESTAMP() - INTERVAL ? HOUR) AS first,
+    (SELECT COALESCE(MAX(id), 0) FROM copyright_blocklist) AS last`, [s.recheckLookbackHours]);
+  return row?.first ? Number(row.first) - 1 : Number(row?.last) || 0;
+}
+
+/** Live (status 0/1) internal ad ids an entry covers. `next` is set when more pages of an advertiser remain. */
+async function adsOfEntry(sql, network, entry, afterId, limit) {
+  const [table] = NETWORKS[network];
+  const live = `copyright_status IN (${LIVE.join(',')})`;
+  const value = String(entry.value || '').trim();
+  const idsOf = (rows) => rows.map((r) => String(r.id));
+  if (entry.entry_type === 'ad_id') {
+    const col = entry.identifier_namespace === 'internal' ? 'id' : 'ad_id';
+    return { ids: idsOf(await sql.query(`SELECT id FROM ${table} WHERE ${col} = ? AND ${live} LIMIT 50`, [value])), next: null };
+  }
+  if (entry.entry_type === 'image_hash') {
+    const ids = new Set();
+    try { const d = JSON.parse(entry.details || '{}'); if (/^\d+$/.test(String(d.internal_ad_id ?? ''))) ids.add(String(d.internal_ad_id)); } catch { /* no details */ }
+    const sha = String(entry.image_sha256 || value).toLowerCase();
+    if (/^[0-9a-f]{64}$/.test(sha)) {
+      for (const r of await sql.query('SELECT internal_ad_id AS id FROM copyright_image_hashes WHERE sha256 = ? AND network = ? LIMIT 1000', [sha, network])) {
+        if (r.id != null) ids.add(String(r.id));
+      }
+    }
+    if (!ids.size) return { ids: [], next: null };
+    const list = [...ids];
+    return { ids: idsOf(await sql.query(`SELECT id FROM ${table} WHERE id IN (${list.map(() => '?').join(',')}) AND ${live}`, list)), next: null };
+  }
+  // advertiser
+  const names = nameCandidates(value);
+  if (!names.length) return { ids: [], next: null };
+  const owners = await sql.query(`SELECT id FROM ${ownerTable(network)} WHERE ${OWNER_NAME[network] || 'post_owner_name'} IN (${names.map(() => '?').join(',')}) LIMIT 200`, names);
+  if (!owners.length) return { ids: [], next: null };
+  const ownerIds = owners.map((o) => o.id);
+  const rows = await sql.query(`SELECT id FROM ${table} WHERE post_owner_id IN (${ownerIds.map(() => '?').join(',')}) AND id > ? AND ${live}
+    ORDER BY id LIMIT ${Number(limit)}`, [...ownerIds, afterId]);
+  return { ids: idsOf(rows), next: rows.length === Number(limit) ? Number(rows[rows.length - 1].id) : null };
+}
+
+async function recheckExisting(db, network, s) {
+  let cur = recheckCursors.get(network);
+  if (!cur) { cur = { entryId: await recheckStart(db.sql, s), page: null }; recheckCursors.set(network, cur); }
+  // Our own ad_id entries are for ads the cleanup cron is already removing.
+  const entries = await db.sql.query(`SELECT id, entry_type, identifier_namespace, value, image_sha256, details FROM copyright_blocklist
+    WHERE id > ? AND network IN (?, 'all') AND status = 'active' AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP())
+      AND entry_type IN ('ad_id', 'advertiser', 'image_hash') AND NOT (entry_type = 'ad_id' AND added_by = ?)
+    ORDER BY id LIMIT ${Number(s.recheckEntries)}`, [cur.entryId, network, ADDED_BY]);
+  const ids = new Set();
+  let lastEntry = cur.entryId;
+  for (const entry of entries) {
+    let afterId = cur.page?.entryId === entry.id ? cur.page.afterId : 0;
+    let done = false;
+    while (ids.size < s.recheckAds) {
+      const page = await adsOfEntry(db.sql, network, entry, afterId, Math.min(500, s.recheckAds - ids.size));
+      page.ids.forEach((id) => ids.add(id));
+      if (page.next == null) { done = true; break; }
+      afterId = page.next;
+    }
+    // Per-tick limit reached in the middle of an advertiser: continue from this page next tick.
+    if (!done) { cur.page = { entryId: entry.id, afterId }; break; }
+    lastEntry = entry.id;
+    cur.page = null;
+  }
+  cur.entryId = lastEntry;
+  const list = [...ids];
+  const failed = await setSqlStatus(db.sql, network, list, FAILED, LIVE);
+  // Hide them in search now; the cleanup cron deletes them shortly. An ES error is only logged (cleanup still deletes).
+  if (failed) {
+    try { await setEsStatus(db.elastic, network, list, FAILED); }
+    catch (error) { log.warn('copyright recheck: ES hide failed', { network, error: error.message }); }
+    log.info('copyright recheck: existing ads failed by new blocklist entries', { network, failed, upToEntry: cur.entryId });
+  }
+  return { entries: entries.length, failed };
+}
+
 async function verifyNetwork(network) {
   const s = settings();
   const db = databaseManager.getConnections(network);
@@ -169,8 +261,14 @@ async function verifyNetwork(network) {
   const banned = blocklist.getImageHashes(network);
   if (!banned.available) return { skipped: 'blocklist not loaded' };
 
+  let rechecked = null;
+  if (s.recheckExisting) {
+    try { rechecked = await recheckExisting(db, network, s); }
+    catch (error) { rechecked = { error: error.message }; log.error('copyright recheck failed', { network, error: error.message }); }
+  }
+
   const ads = await loadAds(db.sql, network, PENDING, cursors.get(network) || 0, s.batchSize);
-  if (!ads.length) { cursors.set(network, 0); return { scanned: 0 }; }
+  if (!ads.length) { cursors.set(network, 0); return { scanned: 0, ...(rechecked ? { rechecked } : {}) }; }
   cursors.set(network, Number(ads[ads.length - 1].id));
 
   // B1 matches only platform ad ids; ads blocked by our internal row id
@@ -227,7 +325,7 @@ async function verifyNetwork(network) {
     blocklist.recordAttempt({ network, platformAdId: f.ad.adId, advertiser: f.ad.ad.post_owner, blocklistId: f.blocklistId,
       matchType: f.matchType || 'unknown', distance: f.distance ?? null, source: 'verification' });
   }
-  return { scanned: ads.length, approved: nApproved, failed: nFailed, pending: ads.length - nApproved - nFailed };
+  return { scanned: ads.length, approved: nApproved, failed: nFailed, pending: ads.length - nApproved - nFailed, ...(rechecked ? { rechecked } : {}) };
 }
 
 // ─── Cron 2: remove failed ads ──────────────────────────────────────────
@@ -358,4 +456,4 @@ async function runAll(kind, task, jobCfg) {
 const runVerification = (jobCfg) => runAll('verification', verifyNetwork, jobCfg);
 const runCleanup = (jobCfg) => runAll('cleanup', cleanupNetwork, jobCfg);
 
-module.exports = { runVerification, runCleanup, verifyNetwork, cleanupNetwork, loadAds, ownFile };
+module.exports = { runVerification, runCleanup, verifyNetwork, cleanupNetwork, recheckExisting, recheckCursors, loadAds, ownFile };

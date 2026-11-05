@@ -2,19 +2,18 @@
 
 /**
  * Creates + validates the 12 copyright-compliance tables in every distinct
- * physical SQL database (B1 blocklist, B2 image hashes, B3 takedown, B6
- * complaints/audit).
+ * physical SQL database (B1 blocklist, B2 image hashes + claims, B3 takedown,
+ * B6 audit).
  * It ONLY creates and validates tables — takedown deletion and auditing are
  * implemented elsewhere.
  *
  *   B1  copyright_blocklist, copyright_blocked_attempts
  *   B2  copyright_image_hashes, copyright_review_queue, copyright_image_hash_jobs, copyright_image_hash_results,
  *       copyright_claims, copyright_claim_files  (claims are used only in the home database, compliance.claims.homeNetwork)
- *   B3  copyright_takedown_runs, copyright_takedown_actions,
- *       copyright_takedown_blocklist_entries                    (requires B1 table)
- *   B6  copyright_complaints, copyright_complaint_items,
- *       copyright_complaint_blocklist_entries, copyright_audit_runs,
- *       copyright_audit_findings                                (requires B1 table)
+ *   B3  copyright_takedown_runs, copyright_takedown_actions        (requires B1 table)
+ *   B6  copyright_audit_runs, copyright_audit_findings             (requires B1 table)
+ *   (copyright_takedown_blocklist_entries, copyright_complaints, copyright_complaint_items and
+ *    copyright_complaint_blocklist_entries were removed: nothing reads or writes them. Claims use copyright_claims.)
  *
  * Contract:
  *  - DRY-RUN by default: connects, reads information_schema, prints what it would
@@ -394,83 +393,8 @@ const TABLES = [
       ix('idx_takedown_actions_retry', 'status', 'next_retry_at'),
     ],
   },
-  {
-    owner: 'B3',
-    name: 'copyright_takedown_blocklist_entries',
-    // A single takedown can create several blocklist rows (advertiser, ad,
-    // URL, and hashes), so keep the complete run-to-blocklist relationship.
-    columns: [
-      id(), uuid('run_id'), network(), count('blocklist_id', false), dt('created_at'),
-    ],
-    indexes: [
-      pk('id'),
-      uq('uq_takedown_blocklist_entry', 'network', 'run_id', 'blocklist_id'),
-      ix('idx_takedown_blocklist_run', 'network', 'run_id'),
-      ix('idx_takedown_blocklist_entry', 'network', 'blocklist_id'),
-    ],
-  },
 
   // ── B6 ──
-  {
-    owner: 'B6',
-    name: 'copyright_complaints',
-    columns: [
-      uuid('complaint_id'), network(),
-      code('source', 64), str('source_reference', 255),
-      str('complainant_name', 255), str('complainant_email', 255), str('complainant_org', 255),
-      text('claim_description'),
-      code('status', 32),
-      dt('received_at'),
-      code('action_taken', 64, true), text('action_summary'),
-      dt('closed_at', true), str('closure_reason', 255),
-      str('report_uri', 1024), str('proof_uri', 1024), text('details'),
-      dt('created_at'), dt('updated_at'),
-    ],
-    indexes: [
-      pk('complaint_id', 'network'),
-      ix('idx_complaints_status', 'network', 'status'),
-      ix('idx_complaints_received', 'received_at'),
-    ],
-  },
-  {
-    owner: 'B6',
-    name: 'copyright_complaint_items',
-    columns: [
-      id(), uuid('complaint_id'), network(),
-      code('item_type', 32),                  // ad | image | url | advertiser
-      adId('internal_ad_id', true), adId('platform_ad_id', true),
-      // item_value also carries advertiser names and ad IDs; item_url remains
-      // for URL-specific queries and backwards-compatible report fields.
-      str('item_value', 2048), c('item_value_sha256', 'char(64)', { charset: ASCII, nullable: true }),
-      str('item_url', 2048), c('item_url_sha256', 'char(64)', { charset: ASCII, nullable: true }),
-      uuid('takedown_run_id', true),
-      code('status', 32), code('action_taken', 64, true),
-      str('proof_uri', 1024), text('details'),
-      dt('created_at'), dt('updated_at'),
-    ],
-    indexes: [
-      pk('id'),
-      ix('idx_complaint_items_complaint', 'complaint_id', 'network'),
-      ix('idx_complaint_items_value', 'network', 'item_value_sha256'),
-      ix('idx_complaint_items_url', 'network', 'item_url_sha256'),
-      ix('idx_complaint_items_run', 'takedown_run_id'),
-    ],
-  },
-  {
-    owner: 'B6',
-    name: 'copyright_complaint_blocklist_entries',
-    // A complaint item may produce multiple blocklist entries; do not collapse
-    // that relationship into one nullable column on copyright_complaint_items.
-    columns: [
-      id(), count('complaint_item_id', false), network(), count('blocklist_id', false), dt('created_at'),
-    ],
-    indexes: [
-      pk('id'),
-      uq('uq_complaint_blocklist_entry', 'network', 'complaint_item_id', 'blocklist_id'),
-      ix('idx_complaint_blocklist_item', 'network', 'complaint_item_id'),
-      ix('idx_complaint_blocklist_entry', 'network', 'blocklist_id'),
-    ],
-  },
   {
     owner: 'B6',
     name: 'copyright_audit_runs',

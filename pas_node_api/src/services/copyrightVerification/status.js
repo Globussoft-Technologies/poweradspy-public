@@ -71,8 +71,9 @@ async function indexDocument(network, configuredIndex, params, getSql) {
   if (index !== String(configuredIndex || '').toLowerCase() && index !== defaultIndex) return params;
   let status = PENDING;
   try {
+    // Insertion writes the id as a flat dotted key (body['facebook_ad.id']); accept a nested object too.
     const [outer, inner] = idField.split('.');
-    const id = inner ? params.body[outer]?.[inner] : params.body[outer];
+    const id = params.body[idField] ?? (inner ? params.body[outer]?.[inner] : undefined);
     if (/^\d+$/.test(String(id ?? ''))) {
       const rows = await getSql().query(`SELECT copyright_status FROM \`${table}\` WHERE id = ? LIMIT 1`, [String(id)]);
       const value = Number(rows?.[0]?.copyright_status);

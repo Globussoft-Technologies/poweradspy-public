@@ -53,7 +53,8 @@ let saved;
 beforeEach(() => {
   saved = JSON.parse(JSON.stringify({ v: config.compliance.copyrightVerification, m: config.compliance.imageMatch, url: config.insertion.nas.mediaUrl }));
   Object.assign(config.compliance.copyrightVerification, { enabled: true, networks: ["facebook"], batchSize: 50, workers: 2,
-    hashConcurrency: 2, maxHashAttempts: 2, afterMaxAttempts: "pending", cleanupBatchSize: 10, nasConcurrency: 2, maxNasAttempts: 2, blockAdvertiser: false, audit: true });
+    hashConcurrency: 2, maxHashAttempts: 2, afterMaxAttempts: "pending", cleanupBatchSize: 10, nasConcurrency: 2, maxNasAttempts: 2, blockAdvertiser: false, audit: true,
+    recheckExisting: false, recheckEntries: 100, recheckAds: 1000, recheckLookbackHours: 24 });
   Object.assign(config.compliance.imageMatch, { hashVersion: V, perceptual: { enabled: true, rejectDistance: 10, reviewDistance: 20 } });
   config.insertion.nas.mediaUrl = "https://cdn.test";
   vi.spyOn(ImageHashClient.prototype, "health").mockResolvedValue({ ok: true, ready: true, hashVersion: V, hashBits: 256 });
@@ -76,6 +77,9 @@ describe("status helpers", () => {
     const sql = { query: vi.fn().mockResolvedValue([{ copyright_status: 1 }]) };
     const out = await status.indexDocument("facebook", "search_mix", { index: "search_mix", body: { facebook_ad: { id: 5 } } }, () => sql);
     expect(out.body.copyright_status).toBe(1);
+    // Real insertion docs use a flat dotted key, not a nested object.
+    const flat = await status.indexDocument("facebook", "search_mix", { index: "search_mix", body: { "facebook_ad.id": 5 } }, () => sql);
+    expect(flat.body.copyright_status).toBe(1);
     const broken = await status.indexDocument("facebook", "search_mix", { index: "search_mix", body: { facebook_ad: { id: 5 } } }, () => { throw new Error("down"); });
     expect(broken.body.copyright_status).toBe(0);
   });
@@ -142,6 +146,70 @@ describe("verification cron", () => {
     const spy = vi.spyOn(databaseManager, "getConnections");
     expect(await service.runVerification({})).toHaveProperty("skipped");
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+// SQL fake for the re-check of existing ads against new blocklist entries.
+function makeRecheckSql({ entries, owners = [], ads, hashes = [] }) {
+  const live = (a) => a.copyright_status === 0 || a.copyright_status === 1;
+  return {
+    async query(q, p = []) {
+      if (q.includes("MIN(id) FROM copyright_blocklist")) return [{ first: null, last: 0 }];
+      if (q.includes("FROM copyright_blocklist")) return entries.filter((e) => e.id > p[0]);
+      if (q.includes("FROM copyright_image_hashes")) return hashes.filter((h) => h.sha256 === p[0]).map((h) => ({ id: h.internal_ad_id }));
+      if (q.includes("FROM facebook_ad_post_owners")) { expect(q).toContain("post_owner_lower IN"); return owners.filter((o) => p.includes(o.name)).map((o) => ({ id: o.id })); }
+      if (q.startsWith("UPDATE facebook_ad SET copyright_status")) {
+        const [to, ...rest] = p; const from = rest.splice(-2);
+        let n = 0; for (const a of ads) if (rest.includes(String(a.id)) && from.includes(a.copyright_status)) { a.copyright_status = to; n++; }
+        return { affectedRows: n };
+      }
+      if (q.includes("WHERE post_owner_id IN")) {
+        const after = p[p.length - 1]; const ownerIds = p.slice(0, -1); const limit = Number(q.match(/LIMIT (\d+)/)[1]);
+        return ads.filter((a) => ownerIds.includes(a.owner) && a.id > after && live(a)).slice(0, limit).map((a) => ({ id: a.id }));
+      }
+      if (q.includes("FROM facebook_ad WHERE id IN")) return ads.filter((a) => p.includes(String(a.id)) && live(a)).map((a) => ({ id: a.id }));
+      if (q.includes("FROM facebook_ad WHERE ad_id")) return ads.filter((a) => a.adId === p[0] && live(a)).map((a) => ({ id: a.id }));
+      throw new Error(`unexpected query ${q}`);
+    },
+  };
+}
+
+describe("re-check of existing ads", () => {
+  beforeEach(() => service.recheckCursors.clear());
+  const s = () => config.compliance.copyrightVerification;
+
+  it("fails the existing approved ads of a newly blocked advertiser and hides them in ES", async () => {
+    const ads = [{ id: 1, owner: 9, copyright_status: 1 }, { id: 2, owner: 9, copyright_status: 0 }, { id: 3, owner: 8, copyright_status: 1 }];
+    const sql = makeRecheckSql({ entries: [{ id: 1, entry_type: "advertiser", identifier_namespace: "none", value: "Acme Corp" }], owners: [{ id: 9, name: "acme corp" }], ads });
+    const es = makeEs();
+    const out = await service.recheckExisting({ sql, elastic: es }, "facebook", s());
+    expect(out).toEqual({ entries: 1, failed: 2 });
+    expect(ads.map((a) => a.copyright_status)).toEqual([2, 2, 1]);
+    expect(es.bulks[0].filter((x) => x.doc).every((x) => x.doc.copyright_status === 2)).toBe(true);
+    // Next tick: nothing new.
+    expect(await service.recheckExisting({ sql, elastic: es }, "facebook", s())).toEqual({ entries: 0, failed: 0 });
+  });
+
+  it("fails the ad an image_hash entry came from and every stored exact copy", async () => {
+    const ads = [{ id: 10, copyright_status: 1 }, { id: 11, copyright_status: 1 }, { id: 12, copyright_status: 1 }];
+    const sql = makeRecheckSql({ ads,
+      entries: [{ id: 5, entry_type: "image_hash", value: SHA_BLOCKED, image_sha256: SHA_BLOCKED, details: JSON.stringify({ internal_ad_id: 10 }) }],
+      hashes: [{ sha256: SHA_BLOCKED, internal_ad_id: 11 }] });
+    const out = await service.recheckExisting({ sql, elastic: makeEs() }, "facebook", s());
+    expect(out.failed).toBe(2);
+    expect(ads.map((a) => a.copyright_status)).toEqual([2, 2, 1]);
+  });
+
+  it("pages a big advertiser across ticks (recheckAds per tick)", async () => {
+    const ads = [1, 2, 3, 4, 5].map((id) => ({ id, owner: 9, copyright_status: 1 }));
+    const sql = makeRecheckSql({ ads, entries: [{ id: 1, entry_type: "advertiser", value: "acme" }, { id: 2, entry_type: "ad_id", identifier_namespace: "platform", value: "P1" }],
+      owners: [{ id: 9, name: "acme" }] });
+    ads.push({ id: 6, owner: 7, adId: "P1", copyright_status: 1 });
+    const cfg = { ...s(), recheckAds: 2 };
+    expect((await service.recheckExisting({ sql, elastic: makeEs() }, "facebook", cfg)).failed).toBe(2);
+    expect((await service.recheckExisting({ sql, elastic: makeEs() }, "facebook", cfg)).failed).toBe(2);
+    expect((await service.recheckExisting({ sql, elastic: makeEs() }, "facebook", cfg)).failed).toBe(2); // ad 5 + the ad_id entry
+    expect(ads.every((a) => a.copyright_status === 2)).toBe(true);
   });
 });
 
