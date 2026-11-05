@@ -211,6 +211,18 @@ describe("routes/copyright-claims > the monitor (read only)", () => {
     expect(fakeAxios.mock.calls[0][0]).toMatchObject({ url: `${MONITOR}/failures`, params: { network: "reddit", beforeId: "40" } });
   });
 
+  it("serves the blocklist and the rejected ads, passing on only their filters", async () => {
+    await request(app).get(`${BASE}/monitor/blocklist?network=facebook&status=active&entryType=advertiser&q=test%20brand&beforeId=9&limit=5&evil=1`).set(as());
+    expect(fakeAxios.mock.calls[0][0]).toMatchObject({ method: "GET", url: `${MONITOR}/blocklist`, params: { network: "facebook", status: "active", entryType: "advertiser", q: "test brand", beforeId: "9", limit: "5" } });
+    expect(fakeAxios.mock.calls[0][0].params).not.toHaveProperty("evil");
+    fakeAxios.mockClear();
+    await request(app).get(`${BASE}/monitor/attempts?network=reddit&beforeId=4&limit=10&token=x`).set(as());
+    expect(fakeAxios.mock.calls[0][0]).toMatchObject({ url: `${MONITOR}/attempts`, params: { network: "reddit", beforeId: "4", limit: "10" } });
+    expect(fakeAxios.mock.calls[0][0].params).not.toHaveProperty("token");
+    expect((await request(app).get(`${BASE}/monitor/blocklist?network=../x`).set(as())).status).toBe(400);
+    expect((await request(app).post(`${BASE}/monitor/blocklist`).set(as())).status).toBe(404);
+  });
+
   it("refuses a bad network, run id, job id or complaint id before calling anything", async () => {
     for (const path of ["/monitor/runs?network=../x", "/monitor/runs?network=a%20b", `/monitor/runs/not-a-uuid/logs?network=facebook`, "/monitor/hash-jobs/abc/results?network=facebook", "/monitor/runs?complaintId=nope"]) {
       expect((await request(app).get(`${BASE}${path}`).set(as())).status).toBe(400);

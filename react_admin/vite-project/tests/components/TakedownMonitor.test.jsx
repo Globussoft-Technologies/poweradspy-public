@@ -166,6 +166,75 @@ describe("TakedownMonitor > failed steps, hash jobs and claim requests", () => {
   });
 });
 
+describe("TakedownMonitor > blocked list and rejected ads", () => {
+  const HASH = "ab".repeat(32);
+  const blockRow = (over = {}) => ({ id: 7, network: "facebook", entryType: "advertiser", value: "Test Brand", reason: "blocklist test", source: "intake", complaintId: COMPLAINT, status: "active", expiresAt: null, createdAt: when, addedBy: "landing-form", removedAt: null, removedBy: null, ...over });
+  const blocklistReply = (items, over = {}) => ok({ counts: { total: 8, byStatus: { active: 7, revoked: 1 }, activeByType: { advertiser: 2, image_hash: 5 } }, items, next: null, ...over });
+
+  it("shows who and what is blocked in the chosen network, with the counts", async () => {
+    const calls = backend(base([[/^GET \/monitor\/blocklist\?/, () => blocklistReply([blockRow(), blockRow({ id: 6, entryType: "image_hash", value: HASH, addedBy: "imagematch-worker", source: null, reason: null }), blockRow({ id: 5, value: "Old Brand", status: "revoked", removedBy: "Admin", removedAt: when })])]]));
+    show();
+    fireEvent.click(await screen.findByText("Blocked list", { selector: "button" }));
+    expect(await screen.findByText("Test Brand")).toBeInTheDocument();
+    expect(screen.getAllByText("blocklist test").length).toBe(2); // the two rows that carry a reason
+    expect(screen.getByText("Blocked (active)")).toBeInTheDocument();
+    expect(screen.getByText("Blocked (active)").parentElement).toHaveTextContent("7"); // the card, not any other "7" on the page
+    expect(screen.getByText("advertiser 2 · image_hash 5")).toBeInTheDocument();
+    expect(screen.getByText("Old Brand")).toBeInTheDocument();
+    expect(screen.getByText(/by Admin/)).toBeInTheDocument();
+    expect(screen.getByText(`${HASH.slice(0, 16)}…`)).toBeInTheDocument(); // an image hash is shortened, the full value is in the tooltip
+    expect(calls.find((c) => c.key.startsWith("GET /monitor/blocklist?")).key).toContain("network=facebook");
+  });
+
+  it("asks the server again when a filter or the search changes", async () => {
+    const calls = backend(base([[/^GET \/monitor\/blocklist\?/, () => blocklistReply([blockRow()])]]));
+    show();
+    fireEvent.click(await screen.findByText("Blocked list", { selector: "button" }));
+    await screen.findByText("Test Brand");
+    fireEvent.click(screen.getByRole("button", { name: "Active" }));
+    await waitFor(() => expect(calls.some((c) => c.key.startsWith("GET /monitor/blocklist?") && c.key.includes("status=active"))).toBe(true));
+    fireEvent.change(screen.getByLabelText("Block type"), { target: { value: "advertiser" } });
+    await waitFor(() => expect(calls.some((c) => c.key.includes("entryType=advertiser"))).toBe(true));
+    fireEvent.change(screen.getByLabelText("Search blocked"), { target: { value: "test brand" } });
+    fireEvent.click(screen.getByLabelText("Search blocked list"));
+    await waitFor(() => expect(calls.some((c) => c.key.includes("q=test+brand") || c.key.includes("q=test%20brand"))).toBe(true));
+  });
+
+  it("says plainly that nothing is blocked, and shows the server's error when it cannot be read", async () => {
+    backend(base([[/^GET \/monitor\/blocklist\?/, () => blocklistReply([], { counts: { total: 0, byStatus: {}, activeByType: {} } })]]));
+    show();
+    fireEvent.click(await screen.findByText("Blocked list", { selector: "button" }));
+    expect(await screen.findByText("Nothing is blocked here yet.")).toBeInTheDocument();
+    cleanup();
+    backend(base([[/^GET \/monitor\/blocklist\?/, () => reply(503, { code: 503, message: "the blocklist table does not exist in that database yet" })]]));
+    show();
+    fireEvent.click(await screen.findByText("Blocked list", { selector: "button" }));
+    expect(await screen.findByText("the blocklist table does not exist in that database yet")).toBeInTheDocument();
+  });
+
+  it("lists the ads the blocklist refused, and why", async () => {
+    const calls = backend(base([[/^GET \/monitor\/attempts\?/, () => ok({ items: [
+      { id: 12, network: "facebook", platformAdId: "990001110002", advertiser: "Test Brand", imageUrl: null, blocklistId: 7, matchType: "advertiser", distance: null, source: "ingestion:facebook", createdAt: when },
+      { id: 11, network: "facebook", platformAdId: "990001110003", advertiser: null, imageUrl: "https://cdn.example/x.jpg", blocklistId: 9, matchType: "phash", distance: 3, source: null, createdAt: when },
+    ], next: null })]]));
+    show();
+    fireEvent.click(await screen.findByText("Rejected ads", { selector: "button" }));
+    expect(await screen.findByText("Advertiser name")).toBeInTheDocument();
+    expect(screen.getByText("990001110002")).toBeInTheDocument();
+    expect(screen.getByText("Similar image")).toBeInTheDocument();
+    expect(screen.getByText("3 bits apart")).toBeInTheDocument();
+    expect(screen.getByText("https://cdn.example/x.jpg")).toBeInTheDocument();
+    expect(calls.find((c) => c.key.startsWith("GET /monitor/attempts?")).key).toContain("network=facebook");
+  });
+
+  it("says no ad has been refused yet", async () => {
+    backend(base([[/^GET \/monitor\/attempts\?/, () => ok({ items: [], next: null })]]));
+    show();
+    fireEvent.click(await screen.findByText("Rejected ads", { selector: "button" }));
+    expect(await screen.findByText("No ad has been refused here yet.")).toBeInTheDocument();
+  });
+});
+
 describe("TakedownMonitor > read only", () => {
   it("only ever sends GET requests", async () => {
     const calls = backend(base([

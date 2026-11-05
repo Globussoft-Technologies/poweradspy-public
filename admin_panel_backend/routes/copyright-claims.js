@@ -108,6 +108,8 @@ router.get('/monitor/overview', checkMonitor, proxy('GET', '/overview', passOn()
 router.get('/monitor/runs', checkMonitor, proxy('GET', '/runs', passOn('network', 'complaintId', 'status', 'mode', 'cursor', 'limit')));
 router.get('/monitor/runs/:runId/logs', checkMonitor, proxy('GET', (req) => `/runs/${req.params.runId}/logs`, passOn('network', 'status', 'system', 'afterId', 'limit')));
 router.get('/monitor/failures', checkMonitor, proxy('GET', '/failures', passOn('network', 'beforeId', 'limit')));
+router.get('/monitor/blocklist', checkMonitor, proxy('GET', '/blocklist', passOn('network', 'status', 'entryType', 'q', 'beforeId', 'limit')));
+router.get('/monitor/attempts', checkMonitor, proxy('GET', '/attempts', passOn('network', 'beforeId', 'limit')));
 router.get('/monitor/hash-jobs', checkMonitor, proxy('GET', '/hash-jobs', passOn('network', 'status', 'afterId', 'limit')));
 router.get('/monitor/hash-jobs/:jobId/results', checkMonitor, proxy('GET', (req) => `/hash-jobs/${req.params.jobId}/results`, passOn('network', 'generation', 'outcome', 'afterId', 'limit')));
 

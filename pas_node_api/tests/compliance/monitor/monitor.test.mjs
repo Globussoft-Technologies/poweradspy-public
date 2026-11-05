@@ -218,6 +218,8 @@ describe("routes", () => {
     failures: vi.fn(async () => ({ ok: true, items: [], next: null })),
     hashJobs: vi.fn(async () => ({ ok: true, items: [], next: null })),
     hashJobResults: vi.fn(async () => ({ ok: true, items: [], next: null })),
+    blocklist: vi.fn(async () => ({ ok: true, counts: { total: 0, byStatus: {}, activeByType: {} }, items: [], next: null })),
+    attempts: vi.fn(async () => ({ ok: true, items: [], next: null })),
     ...over,
   });
 
@@ -236,6 +238,19 @@ describe("routes", () => {
       expect(monitor.runLogs).toHaveBeenCalledWith(expect.objectContaining({ network: "facebook", runId: RUN, afterId: "4" }));
       await t.get("/admin/monitor/hash-jobs/12/results?network=facebook&outcome=failed");
       expect(monitor.hashJobResults).toHaveBeenCalledWith(expect.objectContaining({ jobId: "12", outcome: "failed" }));
+    } finally { await t.close(); }
+  });
+
+  it("serves the blocklist and the rejected ads, behind the admin token, and passes the filters on", async () => {
+    const monitor = fakeMonitor();
+    const t = await serve(monitor);
+    try {
+      expect((await t.get("/admin/monitor/blocklist?network=facebook", {})).status).toBe(401);
+      expect((await t.get("/admin/monitor/attempts?network=facebook", { "x-copyright-token": "site-secret" })).status).toBe(401);
+      expect((await t.get("/admin/monitor/blocklist?network=facebook&status=active&entryType=advertiser&q=test&beforeId=9&limit=5")).status).toBe(200);
+      expect(monitor.blocklist).toHaveBeenCalledWith({ network: "facebook", status: "active", entryType: "advertiser", q: "test", beforeId: "9", limit: "5" });
+      expect((await t.get("/admin/monitor/attempts?network=facebook&beforeId=4&limit=10")).status).toBe(200);
+      expect(monitor.attempts).toHaveBeenCalledWith({ network: "facebook", beforeId: "4", limit: "10" });
     } finally { await t.close(); }
   });
 
@@ -263,5 +278,69 @@ describe("routes", () => {
       }
       expect(monitor.overview).not.toHaveBeenCalled();
     } finally { await t.close(); }
+  });
+});
+
+describe("blocklist and rejected ads", () => {
+  const blockRow = (over = {}) => ({ id: 7, network: "facebook", entry_type: "advertiser", value: "Test Brand", reason: "test", source: "intake", complaint_id: COMPLAINT, status: "active", expires_at: null, created_at: "2026-11-05 10:00:00", added_by: "landing-form", removed_at: null, removed_by: null, ...over });
+  const counted = [{ entry_type: "advertiser", status: "active", entries: 2 }, { entry_type: "image_hash", status: "active", entries: 5 }, { entry_type: "advertiser", status: "revoked", entries: 1 }];
+  const answer = (text) => (/GROUP BY entry_type, status/.test(text) ? counted : [blockRow()]);
+
+  it("lists the blocked entries newest first, with the counts by status and the active ones by type", async () => {
+    const sql = fakeSql(answer);
+    const out = await service({ sqls: { facebook: sql } }).blocklist({ network: "facebook", limit: "1" });
+    expect(out.ok).toBe(true);
+    expect(out.items[0]).toMatchObject({ id: 7, entryType: "advertiser", value: "Test Brand", status: "active", addedBy: "landing-form", complaintId: COMPLAINT, removedAt: null });
+    expect(out.counts).toEqual({ total: 8, byStatus: { active: 7, revoked: 1 }, activeByType: { advertiser: 2, image_hash: 5 } });
+    expect(out.next).toBe(7); // a full page: the id of the last row is the cursor
+    expect(sql.seen[0].text).toMatch(/FROM copyright_blocklist WHERE network = \? ORDER BY id DESC LIMIT 1$/);
+  });
+
+  it("filters through parameters only, escapes the search text, and pages by id", async () => {
+    const sql = fakeSql(answer);
+    await service({ sqls: { facebook: sql } }).blocklist({ network: "facebook", status: "active", entryType: "advertiser", q: "50%_Off\\", beforeId: "20", limit: "10" });
+    expect(sql.seen[0].text).toMatch(/WHERE network = \? AND status = \? AND entry_type = \? AND LOWER\(value\) LIKE \? AND id < \? ORDER BY id DESC LIMIT 10$/);
+    expect(sql.seen[0].params).toEqual(["facebook", "active", "advertiser", "%50\\%\\_off\\\\%", 20]);
+  });
+
+  it("refuses an unknown network, status or type before reading anything", async () => {
+    const sql = fakeSql(answer);
+    const s = service({ sqls: { facebook: sql } });
+    expect((await s.blocklist({ network: "nope" })).error).toBe("invalid_network");
+    expect((await s.blocklist({ network: "facebook", status: "x'; DROP TABLE y;--" })).error).toBe("invalid_status");
+    expect((await s.blocklist({ network: "facebook", entryType: "everything" })).error).toBe("invalid_type");
+    expect((await s.attempts({ network: "../x" })).error).toBe("invalid_network");
+    expect(sql.seen).toHaveLength(0);
+  });
+
+  it("says no_table when the table is missing, and shows no internal error text for another failure", async () => {
+    const missing = service({ sqls: { facebook: fakeSql(() => { throw noTable(); }) } });
+    expect((await missing.blocklist({ network: "facebook" })).error).toBe("no_table");
+    expect((await missing.attempts({ network: "facebook" })).error).toBe("no_table");
+    const broken = service({ sqls: { facebook: fakeSql(() => { throw new Error("secret host db.internal refused"); }) } });
+    const out = await broken.blocklist({ network: "facebook" });
+    expect(out.error).toBe("failed");
+    expect(JSON.stringify(out)).not.toMatch(/secret host/);
+  });
+
+  it("lists the rejected ads newest first, identifiers only, with a cursor", async () => {
+    const rows = [{ id: 12, network: "facebook", platform_ad_id: "990001110002", advertiser: "Test Brand", image_url: null, blocklist_id: 7, match_type: "advertiser", distance: null, source: "ingestion:facebook", created_at: "2026-11-05 10:05:00" },
+      { id: 11, network: "facebook", platform_ad_id: "990001110003", advertiser: null, image_url: "https://x/y.jpg", blocklist_id: 9, match_type: "phash", distance: 3, source: null, created_at: "2026-11-05 10:04:00" }];
+    const sql = fakeSql(() => rows);
+    const out = await service({ sqls: { facebook: sql } }).attempts({ network: "facebook", beforeId: "13", limit: "2" });
+    expect(out.items.map((i) => i.id)).toEqual([12, 11]);
+    expect(out.items[0]).toMatchObject({ platformAdId: "990001110002", advertiser: "Test Brand", matchType: "advertiser", distance: null, blocklistId: 7 });
+    expect(out.items[1]).toMatchObject({ matchType: "phash", distance: 3, imageUrl: "https://x/y.jpg" });
+    expect(out.next).toBe(11);
+    expect(sql.seen[0].text).toMatch(/FROM copyright_blocked_attempts WHERE network = \? AND id < \? ORDER BY id DESC LIMIT 2$/);
+    expect(sql.seen[0].params).toEqual(["facebook", 13]);
+  });
+
+  it("only reads: every query is a SELECT", async () => {
+    const sql = fakeSql(answer);
+    const s = service({ sqls: { facebook: sql } });
+    await s.blocklist({ network: "facebook", q: "x" }); await s.attempts({ network: "facebook" });
+    expect(sql.seen.length).toBeGreaterThan(2);
+    for (const q of sql.seen) expect(q.text).toMatch(/^SELECT /);
   });
 });

@@ -27,7 +27,12 @@ const HASH_META = {
   pending: "bg-amber-100 text-amber-700", limit_reached: "bg-orange-100 text-orange-700", unresolved: "bg-orange-100 text-orange-700",
 };
 const OUTCOME_META = { hashed: "bg-green-100 text-green-700", duplicate: "bg-gray-100 text-gray-600", skipped: "bg-amber-100 text-amber-700", failed: "bg-rose-100 text-rose-700" };
-const TABS = [{ key: "runs", label: "Takedown runs" }, { key: "failures", label: "Failed steps" }, { key: "hash", label: "Hash jobs" }, { key: "claims", label: "Claim requests" }];
+const TABS = [{ key: "runs", label: "Takedown runs" }, { key: "failures", label: "Failed steps" }, { key: "hash", label: "Hash jobs" }, { key: "blocklist", label: "Blocked list" }, { key: "attempts", label: "Rejected ads" }, { key: "claims", label: "Claim requests" }];
+const BLOCK_TYPES = [{ key: "", label: "All types" }, { key: "advertiser", label: "Advertiser" }, { key: "ad_id", label: "Ad id" }, { key: "url", label: "URL" }, { key: "domain", label: "Domain" }, { key: "image_url", label: "Image URL" }, { key: "image_hash", label: "Image (hash)" }, { key: "page", label: "Page" }];
+const BLOCK_STATUS_FILTERS = [{ key: "", label: "All" }, { key: "active", label: "Active" }, { key: "revoked", label: "Revoked" }, { key: "expired", label: "Expired" }];
+const BLOCK_STATUS_META = { active: "bg-rose-100 text-rose-700", revoked: "bg-gray-200 text-gray-700", expired: "bg-gray-100 text-gray-600" };
+const MATCH_LABEL = { advertiser: "Advertiser name", ad_id: "Ad id", url: "URL", domain: "Domain", sha256: "Same image (exact)", phash: "Similar image", image_url: "Image URL", page: "Page" };
+const shortHash = (v) => (typeof v === "string" && /^[0-9a-f]{64}$/i.test(v) ? `${v.slice(0, 16)}…` : v);
 const CLAIM_FILTERS = [{ key: "", label: "All" }, { key: "pending", label: "Waiting" }, { key: "accepted", label: "Accepted" }, { key: "rejected", label: "Rejected" }];
 const CLAIM_STATUS = { pending: "bg-amber-100 text-amber-700", accepted: "bg-green-100 text-green-700", rejected: "bg-gray-200 text-gray-700" };
 const PROCESSING = { none: ["Not started", "bg-gray-100 text-gray-600"], ok: ["Done", "bg-green-100 text-green-700"], partial: ["Partly done", "bg-amber-100 text-amber-700"], failed: ["Failed", "bg-rose-100 text-rose-700"] };
@@ -91,6 +96,13 @@ export default function TakedownMonitor() {
   const [hashStatus, setHashStatus] = useState("");
   const [hash, setHash] = useState({ items: [], next: null, error: "", loading: false });
 
+  const [blockType, setBlockType] = useState("");
+  const [blockStatus, setBlockStatus] = useState("");
+  const [blockText, setBlockText] = useState("");
+  const [blockSearch, setBlockSearch] = useState("");
+  const [blocklist, setBlocklist] = useState({ items: [], next: null, counts: null, error: "", loading: false });
+  const [attempts, setAttempts] = useState({ items: [], next: null, error: "", loading: false });
+
   const [claimStatus, setClaimStatus] = useState("");
   const [claims, setClaims] = useState({ items: [], next: null, error: "", loading: false });
 
@@ -143,6 +155,27 @@ export default function TakedownMonitor() {
     } catch { setHash((h) => ({ ...h, loading: false, error: "The hash jobs could not be loaded." })); }
   }, [network, hashStatus]);
 
+  // Who and what is blocked in the chosen network (B1), and the ads the blocklist refused.
+  const loadBlocklist = useCallback(async (reset = true, cursor = null) => {
+    if (!network) return;
+    setBlocklist((b) => ({ ...b, loading: true, error: "" }));
+    try {
+      const { ok, json } = await api("/blocklist", { network, status: blockStatus, entryType: blockType, q: blockSearch, beforeId: reset ? undefined : cursor, limit: 50 });
+      if (!ok) { setBlocklist((b) => ({ ...b, loading: false, error: json?.message || "The blocklist could not be loaded." })); return; }
+      setBlocklist((b) => ({ items: reset ? json.data.items : [...b.items, ...json.data.items], next: json.data.next, counts: json.data.counts, error: "", loading: false }));
+    } catch { setBlocklist((b) => ({ ...b, loading: false, error: "The blocklist could not be loaded." })); }
+  }, [network, blockStatus, blockType, blockSearch]);
+
+  const loadAttempts = useCallback(async (reset = true, cursor = null) => {
+    if (!network) return;
+    setAttempts((a) => ({ ...a, loading: true, error: "" }));
+    try {
+      const { ok, json } = await api("/attempts", { network, beforeId: reset ? undefined : cursor, limit: 50 });
+      if (!ok) { setAttempts((a) => ({ ...a, loading: false, error: json?.message || "The rejected ads could not be loaded." })); return; }
+      setAttempts((a) => ({ items: reset ? json.data.items : [...a.items, ...json.data.items], next: json.data.next, error: "", loading: false }));
+    } catch { setAttempts((a) => ({ ...a, loading: false, error: "The rejected ads could not be loaded." })); }
+  }, [network]);
+
   // The claim requests that came in (the claims list of the same backend): who sent what, and what was decided. Deciding is done on the Copyright Claims page.
   const loadClaims = useCallback(async (reset = true, cursor = null) => {
     setClaims((c) => ({ ...c, loading: true, error: "" }));
@@ -170,10 +203,13 @@ export default function TakedownMonitor() {
   useEffect(() => { if (tab === "runs") loadRuns(true); }, [tab, loadRuns]);
   useEffect(() => { if (tab === "failures") loadFailures(true); }, [tab, loadFailures]);
   useEffect(() => { if (tab === "hash") loadHash(true); }, [tab, loadHash]);
+  useEffect(() => { if (tab === "blocklist") loadBlocklist(true); }, [tab, loadBlocklist]);
+  useEffect(() => { if (tab === "attempts") loadAttempts(true); }, [tab, loadAttempts]);
   useEffect(() => { if (tab === "claims") loadClaims(true); }, [tab, loadClaims]);
   useEffect(() => { if (open) loadLog(open, true); }, [open, loadLog]);
 
-  const refresh = () => { loadOverview(); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
+  const refresh = () => { loadOverview(); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "blocklist") loadBlocklist(true); if (tab === "attempts") loadAttempts(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
+  const submitBlockSearch = (e) => { e.preventDefault(); setBlockSearch(blockText.trim()); };
   const openRun = (r) => { setStepStatus(""); setStepSystem(""); setOpen({ kind: "run", network: r.network, id: r.runId }); };
   const openJob = (j) => { setOutcome(""); setOpen({ kind: "job", network: j.network, id: j.id }); };
   const submitComplaint = (e) => {
@@ -349,6 +385,79 @@ export default function TakedownMonitor() {
             </table>
           </div>
           {hash.next && <button onClick={() => loadHash(false, hash.next)} disabled={hash.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+        </section>
+      )}
+
+      {tab === "blocklist" && (
+        <section className="space-y-3">
+          <p className="text-sm text-gray-500">Everything blocked in <b>{network || "this network"}</b>: advertisers, ads, links and images. An advertiser blocked from a claim or from the block request appears here at once. New ads of a blocked advertiser are refused.</p>
+          {blocklist.counts && (
+            <div className="flex gap-3 flex-wrap">
+              <Stat label="Blocked (active)" value={blocklist.counts.byStatus.active || 0} tone="text-rose-600" hint={Object.entries(blocklist.counts.activeByType).map(([t, n]) => `${t} ${n}`).join(" · ") || "nothing blocked yet"} />
+              <Stat label="Revoked" value={blocklist.counts.byStatus.revoked || 0} hint="blocks that were lifted" />
+              <Stat label="Expired" value={blocklist.counts.byStatus.expired || 0} />
+            </div>
+          )}
+          <div className="flex gap-2 flex-wrap items-center">
+            {BLOCK_STATUS_FILTERS.map((f) => (
+              <button key={f.key || "all"} onClick={() => setBlockStatus(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${blockStatus === f.key ? "bg-[#1f296a] text-white border-[#1f296a]" : "bg-white text-gray-600 border-gray-300"}`}>{f.label}</button>
+            ))}
+            <select aria-label="Block type" value={blockType} onChange={(e) => setBlockType(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
+              {BLOCK_TYPES.map((t) => <option key={t.key || "all"} value={t.key}>{t.label}</option>)}
+            </select>
+            <form onSubmit={submitBlockSearch} className="ml-auto flex items-center gap-2">
+              <input value={blockText} onChange={(e) => setBlockText(e.target.value)} placeholder="Search a blocked name or link" aria-label="Search blocked" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-64" />
+              <button type="submit" className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-sm" aria-label="Search blocked list"><FiSearch /></button>
+              {blockSearch && <button type="button" onClick={() => { setBlockText(""); setBlockSearch(""); }} className="text-xs text-gray-500 underline">clear</button>}
+            </form>
+          </div>
+          {blocklist.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{blocklist.error}</div>}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Type</th><th className="p-3">Blocked</th><th className="p-3">Status</th><th className="p-3">Added by</th><th className="p-3">Added</th><th className="p-3">Reason</th><th className="p-3">Complaint</th></tr></thead>
+              <tbody>
+                {blocklist.items.map((b) => (
+                  <tr key={b.id} className="border-t border-gray-100 align-top">
+                    <td className="p-3 whitespace-nowrap">{b.entryType}</td>
+                    <td className="p-3 break-all font-medium" title={b.value}>{shortHash(b.value)}</td>
+                    <td className="p-3"><Badge cls={BLOCK_STATUS_META[b.status]}>{b.status}</Badge>{b.removedBy && <div className="text-xs text-gray-400 mt-1">by {b.removedBy} · {fmtDate(b.removedAt)}</div>}</td>
+                    <td className="p-3 text-gray-600">{b.addedBy || "—"}{b.source && <div className="text-xs text-gray-400">{b.source}</div>}</td>
+                    <td className="p-3 text-gray-500">{fmtDate(b.createdAt)}{b.expiresAt && <div className="text-xs text-gray-400">expires {fmtDate(b.expiresAt)}</div>}</td>
+                    <td className="p-3 break-words max-w-xs">{b.reason || "—"}</td>
+                    <td className="p-3 font-mono text-xs text-gray-500">{b.complaintId ? b.complaintId.slice(0, 8) : "—"}</td>
+                  </tr>
+                ))}
+                {!blocklist.loading && !blocklist.items.length && !blocklist.error && <tr><td className="p-4 text-gray-500" colSpan={7}>Nothing is blocked here{blockSearch || blockType || blockStatus ? " with these filters" : " yet"}.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {blocklist.next && <button onClick={() => loadBlocklist(false, blocklist.next)} disabled={blocklist.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+        </section>
+      )}
+
+      {tab === "attempts" && (
+        <section className="space-y-3">
+          <p className="text-sm text-gray-500">Ads of <b>{network || "this network"}</b> that the blocklist refused when they were sent in (newest first). Only identifiers are kept, never the ad itself.</p>
+          {attempts.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{attempts.error}</div>}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">When</th><th className="p-3">Refused because</th><th className="p-3">Advertiser</th><th className="p-3">Ad id</th><th className="p-3">Image</th><th className="p-3">Source</th></tr></thead>
+              <tbody>
+                {attempts.items.map((a) => (
+                  <tr key={a.id} className="border-t border-gray-100 align-top">
+                    <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(a.createdAt)}</td>
+                    <td className="p-3"><Badge cls="bg-rose-100 text-rose-700">{MATCH_LABEL[a.matchType] || a.matchType}</Badge>{a.distance !== null && <div className="text-xs text-gray-400 mt-1">{a.distance} bits apart</div>}</td>
+                    <td className="p-3 break-words">{a.advertiser || "—"}</td>
+                    <td className="p-3 font-mono text-xs break-all">{a.platformAdId || "—"}</td>
+                    <td className="p-3 break-all text-gray-500 text-xs max-w-xs">{a.imageUrl || "—"}</td>
+                    <td className="p-3 text-gray-500 text-xs">{a.source || "—"}</td>
+                  </tr>
+                ))}
+                {!attempts.loading && !attempts.items.length && !attempts.error && <tr><td className="p-4 text-gray-500" colSpan={6}>No ad has been refused here yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          {attempts.next && <button onClick={() => loadAttempts(false, attempts.next)} disabled={attempts.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
         </section>
       )}
 

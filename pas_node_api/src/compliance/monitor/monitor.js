@@ -258,7 +258,95 @@ function createMonitorService({ networks, getSql, jobs, log = console }) {
     return jobs.results({ network: query.network, jobId: query.jobId, generation: query.generation, outcome: query.outcome, afterId: query.afterId, limit: pageSize(query.limit, 200, 500) });
   }
 
-  return { overview, runs, runLogs, failures, hashJobs, hashJobResults };
+  // ── the blocklist itself and the ads it refused (B1; read only) ──
+  const BLOCK_TYPES = ['advertiser', 'page', 'ad_id', 'url', 'image_url', 'domain', 'image_hash'];
+  const BLOCK_STATUSES = ['active', 'expired', 'revoked'];
+  const likeOf = (text) => `%${text.toLowerCase().replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+
+  /**
+   * Who and what is blocked in one network: newest entry first, by id, with a cursor. Optional filters: status, entry type, and a text
+   * search inside the blocked value (the blocklist is small, so the search is a plain scan with a limit). `counts` says how many entries
+   * the network has by status, and how many ACTIVE ones by type. Only columns that every version of the table has are read.
+   */
+  async function blocklist({ network, status, entryType, q, beforeId, limit } = {}) {
+    const slug = slugOf(network);
+    if (!slug || !known(slug)) return bad('invalid_network', 'network must be a known network slug');
+    if (status && !BLOCK_STATUSES.includes(status)) return bad('invalid_status', `status must be one of ${BLOCK_STATUSES.join(', ')}`);
+    if (entryType && !BLOCK_TYPES.includes(entryType)) return bad('invalid_type', `entryType must be one of ${BLOCK_TYPES.join(', ')}`);
+    const text = typeof q === 'string' ? q.trim().slice(0, 100) : '';
+    const n = pageSize(limit, 50, 200);
+    const sql = getSql(slug);
+    if (!sql) return bad('no_database', 'there is no database connection for that network');
+    try {
+      const where = ['network = ?'];
+      const params = [slug];
+      if (status) { where.push('status = ?'); params.push(status); }
+      if (entryType) { where.push('entry_type = ?'); params.push(entryType); }
+      if (text) { where.push('LOWER(value) LIKE ?'); params.push(likeOf(text)); }
+      if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
+      const rows = await sql.query(
+        `SELECT id, network, entry_type, value, reason, source, complaint_id, status, expires_at, created_at, added_by, removed_at, removed_by
+           FROM copyright_blocklist WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`,
+        params
+      );
+      const counted = await sql.query('SELECT entry_type, status, COUNT(*) AS entries FROM copyright_blocklist WHERE network = ? GROUP BY entry_type, status', [slug]);
+      const counts = { total: 0, byStatus: {}, activeByType: {} };
+      for (const c of counted) {
+        const k = num(c.entries);
+        counts.total += k;
+        counts.byStatus[c.status] = (counts.byStatus[c.status] || 0) + k;
+        if (c.status === 'active') counts.activeByType[c.entry_type] = (counts.activeByType[c.entry_type] || 0) + k;
+      }
+      return {
+        ok: true,
+        counts,
+        items: rows.map((r) => ({
+          id: r.id, network: r.network, entryType: r.entry_type, value: cut(r.value), reason: r.reason || null, source: r.source || null,
+          complaintId: r.complaint_id || null, status: r.status, expiresAt: iso(r.expires_at), createdAt: iso(r.created_at),
+          addedBy: r.added_by || null, removedAt: iso(r.removed_at), removedBy: r.removed_by || null,
+        })),
+        next: rows.length === n ? rows[rows.length - 1].id : null,
+      };
+    } catch (err) {
+      if (missingTable(err)) return bad('no_table', 'the blocklist table does not exist in that database yet');
+      log.warn?.('monitor: blocklist failed', { network: slug, error: err.message });
+      return bad('failed', 'the blocklist could not be read');
+    }
+  }
+
+  /** The ads the blocklist refused at ingestion in one network, newest first (identifiers only: copyright_blocked_attempts never holds the payload). */
+  async function attempts({ network, beforeId, limit } = {}) {
+    const slug = slugOf(network);
+    if (!slug || !known(slug)) return bad('invalid_network', 'network must be a known network slug');
+    const n = pageSize(limit, 50, 200);
+    const sql = getSql(slug);
+    if (!sql) return bad('no_database', 'there is no database connection for that network');
+    try {
+      const where = ['network = ?'];
+      const params = [slug];
+      if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
+      const rows = await sql.query(
+        `SELECT id, network, platform_ad_id, advertiser, image_url, blocklist_id, match_type, distance, source, created_at
+           FROM copyright_blocked_attempts WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`,
+        params
+      );
+      return {
+        ok: true,
+        items: rows.map((r) => ({
+          id: r.id, network: r.network, platformAdId: r.platform_ad_id || null, advertiser: r.advertiser || null, imageUrl: cut(r.image_url),
+          blocklistId: r.blocklist_id, matchType: r.match_type, distance: r.distance === null || r.distance === undefined ? null : num(r.distance),
+          source: r.source || null, createdAt: iso(r.created_at),
+        })),
+        next: rows.length === n ? rows[rows.length - 1].id : null,
+      };
+    } catch (err) {
+      if (missingTable(err)) return bad('no_table', 'the blocked-attempts table does not exist in that database yet');
+      log.warn?.('monitor: attempts failed', { network: slug, error: err.message });
+      return bad('failed', 'the rejected ads could not be read');
+    }
+  }
+
+  return { overview, runs, runLogs, failures, hashJobs, hashJobResults, blocklist, attempts };
 }
 
 module.exports = { createMonitorService, groupOf, STATUS_GROUPS };
