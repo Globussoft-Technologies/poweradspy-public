@@ -37,6 +37,95 @@ const SOURCES = {
     variants: { table: 'facebook_ad_variants', ad: 'facebook_ad_id', image: 'image_url', original: 'image_url_original' },
     carousel: { table: 'facebook_ad_image_video', ad: 'facebook_ad_id', image: 'ad_image_video' },
   },
+
+  // The networks below were checked on dev (SHOW COLUMNS / SHOW INDEX, and a few stored image values): each lookup is an index lookup.
+  // Prod must be checked again before the job runs there. A group that is left out makes the feature that needs it report "unresolved"
+  // instead of scanning: without `domains` / `meta` / `ads.domain` a destination-URL block cannot be resolved to ads.
+  instagram: {
+    owners: { table: 'instagram_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'instagram_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    domains: { table: 'instagram_ad_domain', id: 'id', domain: 'domain' },
+    meta: { table: 'instagram_ad_meta_data', ad: 'instagram_ad_id', destination: 'destination_url' },
+    variants: { table: 'instagram_ad_variants', ad: 'instagram_ad_id', image: 'image_url', original: 'image_url_original' },
+    carousel: { table: 'instagram_ad_image_video', ad: 'instagram_ad_id', image: 'ad_image_video' },
+  },
+  reddit: {
+    owners: { table: 'reddit_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'reddit_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    domains: { table: 'reddit_ad_domain', id: 'id', domain: 'domain' },
+    meta: { table: 'reddit_ad_meta_data', ad: 'reddit_ad_id', destination: 'destination_url' },
+    variants: { table: 'reddit_ad_variants', ad: 'reddit_ad_id', image: 'image_url', original: 'image_url_original' },
+    carousel: { table: 'reddit_ad_image_video', ad: 'reddit_ad_id', image: 'ad_image_video' },
+  },
+  quora: {
+    owners: { table: 'quora_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'quora_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    domains: { table: 'quora_ad_domain', id: 'id', domain: 'domain' },
+    meta: { table: 'quora_ad_meta_data', ad: 'quora_ad_id', destination: 'destination_url' },
+    variants: { table: 'quora_ad_variants', ad: 'quora_ad_id', image: 'image_url', original: 'image_url_original' },
+    carousel: { table: 'quora_ad_image_video', ad: 'quora_ad_id', image: 'ad_image_video' },
+  },
+  pinterest: {
+    owners: { table: 'pinterest_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'pinterest_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    domains: { table: 'pinterest_ad_domains', id: 'id', domain: 'domain' },
+    meta: { table: 'pinterest_ad_meta_data', ad: 'pinterest_ad_id', destination: 'destination_url' },
+    variants: { table: 'pinterest_ad_variants', ad: 'pinterest_ad_id', image: 'image_url', original: 'image_url_original' },
+  },
+  // native and gdn: their ad tables have NO index on domain_id, so a destination URL is not resolved there (no domains / meta / ads.domain).
+  native: {
+    owners: { table: 'native_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'native_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id' },
+    variants: { table: 'native_ad_variants', ad: 'native_ad_id', image: 'image_url', original: 'image_url_original' },
+    // the ad column of this table is named facebook_ad_id (copied from Facebook); it is the primary key
+    carousel: { table: 'native_ad_image_video', ad: 'facebook_ad_id', image: 'ad_image_video' },
+  },
+  gdn: {
+    owners: { table: 'gdn_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'gdn_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id' },
+    variants: { table: 'gdn_ad_variants', ad: 'gdn_ad_id', image: 'image_url', original: 'image_url_original' },
+  },
+  // chatgptads keeps the destination URL on the ad row itself (no meta table), so the primary key of chatgptads_ad is the lookup.
+  chatgptads: {
+    owners: { table: 'chatgptads_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'chatgptads_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    domains: { table: 'chatgptads_ad_domains', id: 'id', domain: 'domain' },
+    meta: { table: 'chatgptads_ad', ad: 'id', destination: 'destination_url' },
+    variants: { table: 'chatgptads_ad_variants', ad: 'chatgptads_ad_id', image: 'image_url', original: 'image_url_original' },
+    carousel: { table: 'chatgptads_ad_image_video', ad: 'chatgptads_ad_id', image: 'ad_image_video' },
+  },
+  linkedin: {
+    owners: { table: 'linkedin_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'linkedin_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    domains: { table: 'linkedin_ad_domains', id: 'id', domain: 'domain' },
+    meta: { table: 'linkedin_ad_meta_data', ad: 'linkedin_ad_id', destination: 'destination_url' },
+    variants: { table: 'linkedin_ad_variants', ad: 'linkedin_ad_id', image: 'image_url', original: 'image_url_original' },
+    carousel: { table: 'linkedin_ad_image_video', ad: 'linkedin_ad_id', image: 'ad_image_video' },
+  },
+  // youtube stores the video's thumbnail, not an ad image: the thumbnail is what is hashed.
+  youtube: {
+    owners: { table: 'youtube_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'youtube_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    domains: { table: 'youtube_ad_domains', id: 'id', domain: 'domain' },
+    meta: { table: 'youtube_ad_meta_data', ad: 'youtube_ad_id', destination: 'destination_url' },
+    variants: { table: 'youtube_ad_variants', ad: 'youtube_ad_id', image: 'thumbnail_url', original: 'thumbnail_url_original' },
+    carousel: { table: 'youtube_ad_image_video', ad: 'youtube_ad_id', image: 'ad_image_video' },
+  },
+  // google (text ads): the image column is mostly empty, so most ads are counted as "no stored image".
+  google: {
+    owners: { table: 'google_text_ad_post_owners', id: 'id', name: 'post_owner_name', lower: 'post_owner_lower', adsCount: 'ads_count' },
+    ads: { table: 'google_text_ad', id: 'id', owner: 'post_owner_id', platformId: 'ad_id', domain: 'domain_id' },
+    domains: { table: 'google_text_ad_domains', id: 'id', domain: 'domain' },
+    meta: { table: 'google_text_ad_meta_data', ad: 'google_text_ad_id', destination: 'destination_url' },
+    variants: { table: 'google_text_ad_variants', ad: 'google_text_ad_id', image: 'image_url', original: 'image_url_original' },
+  },
+  // admob: its own table names. The owner key mob_post_owners.name_key is the lowercase trimmed name; the stored image path is mob_ad_media.nas_path
+  // (a video row has a video path, which the image-extension check leaves out). No domain table: a destination URL is not resolved here.
+  admob: {
+    owners: { table: 'mob_post_owners', id: 'id', name: 'name', lower: 'name_key', adsCount: 'ads_count' },
+    ads: { table: 'mob_ads', id: 'id', owner: 'post_owner_id', platformId: 'ad_id' },
+    variants: { table: 'mob_ad_media', ad: 'ad_id', image: 'nas_path', original: 'original_url' },
+  },
 };
 
 function validate(network, source) {
@@ -99,6 +188,7 @@ async function findOwners(sql, source, lowerNames) {
     names
   );
 }
+
 
 /** @returns {Promise<Array<{id, name, ads_count}>>} */
 async function ownersByIds(sql, source, ids) {
@@ -226,17 +316,46 @@ async function variantImages(sql, source, adIds) {
   );
 }
 
-/** @returns {Promise<Array<{ad_id, image_url, image_url_original}>>} */
+const MAX_CAROUSEL_PER_AD = 30;
+
+/**
+ * The image paths in the cell of a carousel table. The cell is the text of a JSON array, for example
+ * `["/pas-dev/stream/fb/otherMultiMedia/202610/1_0.jpeg","/pas-dev/stream/fb/otherMultiMedia/202610/1_1.jpeg"]`
+ * (`[null,null]` or `[]` when the ad has none); Quora keeps one plain path. Only a path the CDN can serve is kept: an http(s) URL, or a path
+ * with a known storage prefix (see LEGACY_PREFIX). Older rows hold local paths such as `/image/otherImage_1_0.jpg` or `pasimages/...` that
+ * are not on the CDN: they would only come back as failed fetches (and enough failures in a row stop a job), so they are left out here.
+ */
+function carouselPaths(cell) {
+  if (typeof cell !== 'string') return [];
+  const text = cell.trim();
+  let list = [text];
+  if (text.startsWith('[')) {
+    try { list = JSON.parse(text); } catch { return []; }
+    if (!Array.isArray(list)) return [];
+  }
+  return list
+    .filter((p) => typeof p === 'string')
+    .map((p) => p.trim())
+    .filter((p) => p && (/^https?:\/\//i.test(p) || LEGACY_PREFIX.test(p)))
+    .slice(0, MAX_CAROUSEL_PER_AD);
+}
+
+/** One row per carousel image. @returns {Promise<Array<{ad_id, image_url, image_url_original}>>} */
 async function carouselImages(sql, source, adIds) {
   const ids = clampIn(adIds || []);
   if (!ids.length || !source.carousel) return [];
   const c = source.carousel;
-  return sql.query(
-    `SELECT ${q(c.ad)} AS ad_id, ${q(c.image)} AS image_url, NULL AS image_url_original
+  const cells = await sql.query(
+    `SELECT ${q(c.ad)} AS ad_id, ${q(c.image)} AS image_url
        FROM ${q(c.table)}
       WHERE ${q(c.ad)} IN (${marks(ids.length)})`,
     ids
   );
+  const out = [];
+  for (const cell of cells) {
+    for (const path of carouselPaths(cell.image_url)) out.push({ ad_id: cell.ad_id, image_url: path, image_url_original: null });
+  }
+  return out;
 }
 
 // ═══ 3. Spellings of a name ═══
@@ -336,7 +455,7 @@ function toFetchableUrl(stored, cdnBase) {
 
 module.exports = {
   SOURCES, IDENTIFIER, sourceFor,
-  findOwners, ownersByIds, adIdsPage, newAdsPage, maxAdId, platformIds, hasImageExtension, variantImages, carouselImages, MAX_IN, MAX_OWNERS,
+  findOwners, ownersByIds, adIdsPage, newAdsPage, maxAdId, platformIds, hasImageExtension, variantImages, carouselImages, carouselPaths, MAX_IN, MAX_OWNERS,
   adIdsByPlatformId, domainIds, adIdsByDomainPage, destinationUrls,
   nameCandidates, MAX_CANDIDATES,
   toFetchableUrl,

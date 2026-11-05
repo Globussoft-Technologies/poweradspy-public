@@ -911,7 +911,7 @@ class NewAdSweeper {
 
   /** Hash the images of one page of ads and queue the matches. @returns {Promise<{ ok: boolean, problem?, pause? }>} */
   async checkPage(network, sql, source, ads, banned, out) {
-    const rows = await this.sources.variantImages(sql, source, ads.map((a) => a.id));
+    const rows = await imageRowsOf(this.sources, sql, source, ads.map((a) => a.id), this.options.includeCarousel === true);
     const platformOf = new Map(ads.map((a) => [String(a.id), a.platformId]));
     const images = collectImages(this.sources, this.options.cdnBase, rows, platformOf, out);
     if (!images.length) return { ok: true };
@@ -928,7 +928,7 @@ class NewAdSweeper {
         await this.judge(network, sql, images[i], res, banned, out);
         if (this.options.recordHashes) {
           toRecord.push({
-            network, internalAdId: images[i].adId, platformAdId: images[i].platformId, mediaRole: 'creative', ordinal: images[i].ordinal,
+            network, internalAdId: images[i].adId, platformAdId: images[i].platformId, mediaRole: images[i].role, ordinal: images[i].ordinal,
             sha256: res.sha256, phash: res.sscdHash, phashAlgo: this.options.hashVersion, sourceUrl: images[i].url, storagePath: images[i].stored, source: 'ingest',
           });
         }
@@ -989,7 +989,19 @@ function parseState(raw, top) {
  * - OFF by default (compliance.imageMatch.backfill.enabled).
  */
 
-/** The usable images of a page: [{ adId, platformId, url, stored, ordinal }]. Skips what the service could not fetch (no file, the default image, no image extension) and a URL seen twice on the page. */
+/**
+ * The image rows of some ads: their main images and, when asked for (job.includeCarousel), their carousel images. A carousel row is
+ * tagged, so that it gets image slots of its own (role 'carousel') and never takes the place of a main image.
+ */
+async function imageRowsOf(sources, sql, source, adIds, includeCarousel) {
+  const rows = await sources.variantImages(sql, source, adIds);
+  if (includeCarousel && typeof sources.carouselImages === 'function') {
+    for (const r of await sources.carouselImages(sql, source, adIds)) rows.push({ ...r, role: 'carousel' });
+  }
+  return rows;
+}
+
+/** The usable images of a page: [{ adId, platformId, url, stored, ordinal, role }]. Skips what the service could not fetch (no file, the default image, no image extension) and a URL seen twice on the page. */
 function collectImages(sources, cdnBase, rows, platformOf, counters) {
   const images = [];
   const seenUrls = new Set();
@@ -1000,9 +1012,11 @@ function collectImages(sources, cdnBase, rows, platformOf, counters) {
     if (!url || !hasImageExtension(url) || seenUrls.has(url)) { counters.skipped++; continue; }
     seenUrls.add(url);
     const key = String(r.ad_id);
-    const ordinal = perAd.get(key) || 0;
-    perAd.set(key, ordinal + 1);
-    images.push({ adId: r.ad_id, platformId: platformOf.get(key) ?? null, url, stored, ordinal });
+    const role = r.role || 'creative';
+    const slot = `${role}|${key}`;
+    const ordinal = perAd.get(slot) || 0;
+    perAd.set(slot, ordinal + 1);
+    images.push({ adId: r.ad_id, platformId: platformOf.get(key) ?? null, url, stored, ordinal, role });
   }
   return images;
 }
@@ -1074,7 +1088,7 @@ class ImageBackfill {
 
   /** Hash the images of one page and record them. @returns {Promise<{ ok: boolean, recorded: number, problem?, pause? }>} */
   async hashPage(network, sql, source, ads, out) {
-    const rows = await this.sources.variantImages(sql, source, ads.map((a) => a.id));
+    const rows = await imageRowsOf(this.sources, sql, source, ads.map((a) => a.id), this.options.includeCarousel === true);
     const platformOf = new Map(ads.map((a) => [String(a.id), a.platformId]));
     const images = collectImages(this.sources, this.options.cdnBase, rows, platformOf, out);
     if (!images.length) return { ok: true, recorded: 0 };
@@ -1088,7 +1102,7 @@ class ImageBackfill {
         hashed++;
         out.hashed++;
         toRecord.push({
-          network, internalAdId: images[i].adId, platformAdId: images[i].platformId, mediaRole: 'creative', ordinal: images[i].ordinal,
+          network, internalAdId: images[i].adId, platformAdId: images[i].platformId, mediaRole: images[i].role, ordinal: images[i].ordinal,
           sha256: res.sha256, phash: res.sscdHash, phashAlgo: this.options.hashVersion, sourceUrl: images[i].url, storagePath: images[i].stored, source: 'backfill',
         });
       } else if (res.outcome === 'unauthorized' || res.outcome === 'not_configured') {
@@ -1228,7 +1242,7 @@ function createRunner(deps = {}) {
       const matcher = get('matcherModule', () => require('./matcher'));
       sweeper = new NewAdSweeper({
         client, blocklist, matcher, sourceFor, sources, repo: deps.jobRepository, log,
-        options: { ...im.sweep, hashVersion: im.hashVersion, perceptual: im.perceptual, cdnBase: config.cdn?.baseUrl || '', staleClaimMinutes: im.worker.staleClaimMinutes },
+        options: { ...im.sweep, hashVersion: im.hashVersion, perceptual: im.perceptual, cdnBase: config.cdn?.baseUrl || '', staleClaimMinutes: im.worker.staleClaimMinutes, includeCarousel: im.job?.includeCarousel === true },
       });
     }
     let backfill = null;
@@ -1236,7 +1250,7 @@ function createRunner(deps = {}) {
       const sources = get('sourcesModule', () => require('./sources'));
       backfill = new ImageBackfill({
         client, sourceFor, sources, repo: deps.jobRepository, log,
-        options: { ...im.backfill, hashVersion: im.hashVersion, cdnBase: config.cdn?.baseUrl || '', staleClaimMinutes: im.worker.staleClaimMinutes },
+        options: { ...im.backfill, hashVersion: im.hashVersion, cdnBase: config.cdn?.baseUrl || '', staleClaimMinutes: im.worker.staleClaimMinutes, includeCarousel: im.job?.includeCarousel === true },
       });
     }
     return new HashWorker({ networks, getSql, makeJob, sweeper, backfill, config: im.worker, repo: deps.jobRepository, log });

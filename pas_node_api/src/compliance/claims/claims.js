@@ -184,10 +184,11 @@ function createClaimsService({ settings, getSql, repo = repository, submitAdvert
   async function readBack(sql, complaintId) { return repo.getByComplaintId(sql, complaintId); }
 
   /**
-   * Store a claim as pending. Idempotent on the complaint id (see the header). Required: the advertiser name, who is complaining
+   * Check the fields of a claim without writing anything. Required: the advertiser name, who is complaining
    * (name, email, organization) and a reason; optional: an https link and the sender's own reference.
+   * @returns {{ ok: true, complaintId: string, claim: Object } | { ok: false, error: string, message: string }}
    */
-  async function submit(input = {}) {
+  function validate(input = {}) {
     const name = oneLine(input.name, 255);
     if (name.length < 2) return bad('invalid_name', 'the advertiser name must be 2 to 255 characters');
     const complainantName = oneLine(input.complainantName, 255);
@@ -204,10 +205,16 @@ function createClaimsService({ settings, getSql, repo = repository, submitAdvert
     const given = input.complaintId;
     if (given !== undefined && given !== null && given !== '' && !UUID.test(String(given))) return bad('invalid_complaint_id', 'complaintId must be a UUID');
     const complaintId = (given ? String(given) : crypto.randomUUID()).toLowerCase();
+    return { ok: true, complaintId, claim: { name, reason, complainantName, complainantEmail, complainantOrg, evidenceUrl, sourceReference } };
+  }
 
+  /** Store a claim as pending. Idempotent on the complaint id (see the header). */
+  async function submit(input = {}) {
+    const checked = validate(input);
+    if (!checked.ok) return checked;
+    const { complaintId, claim } = checked;
     const sql = needSql();
     if (!sql) return bad('no_database', 'the claims database is not connected');
-    const claim = { name, reason, complainantName, complainantEmail, complainantOrg, evidenceUrl, sourceReference };
     const fingerprint = fingerprintOf(claim, normalizeName);
 
     try {
@@ -432,7 +439,7 @@ function createClaimsService({ settings, getSql, repo = repository, submitAdvert
     }
   }
 
-  return { submit, getStatus, claimForUpload, list, summary, get, precheck, accept, reject, retryProcessing, openFile, isEnabled: () => settings.enabled === true };
+  return { validate, databaseOf: needSql, submit, getStatus, claimForUpload, list, summary, get, precheck, accept, reject, retryProcessing, openFile, isEnabled: () => settings.enabled === true };
 }
 
 /** The list row: enough to choose a claim, no contact details. */

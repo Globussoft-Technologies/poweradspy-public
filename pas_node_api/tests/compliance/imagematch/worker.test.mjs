@@ -871,13 +871,14 @@ describe("sweep > the SQL of the cursor and the review queue", () => {
 });
 
 // A network with ads, a cursor row and a review queue, all in memory, behind the same functions the sweeper calls.
-function sweepWorld({ maxId = 10, ads = {}, images = {}, hashes = {}, banned = [], available = true, claimable = true } = {}) {
-  const w = { maxId, cursor: null, held: false, saves: [], queue: [], attempts: [], hashCalls: [], hashes, ads, images, banned, available, claimable };
+function sweepWorld({ maxId = 10, ads = {}, images = {}, carousel = {}, hashes = {}, banned = [], available = true, claimable = true } = {}) {
+  const w = { maxId, cursor: null, held: false, saves: [], queue: [], attempts: [], hashCalls: [], hashes, ads, images, carousel, banned, available, claimable };
   const sources = {
     maxAdId: async () => w.maxId,
     newAdsPage: async (_s, _src, after, upTo, limit) =>
       Object.keys(w.ads).map(Number).filter((id) => id > after && id <= upTo).sort((a, b) => a - b).slice(0, limit).map((id) => ({ id, platformId: w.ads[id] })),
     variantImages: async (_s, _src, ids) => ids.filter((id) => w.images[id] !== undefined).map((id) => ({ ad_id: id, image_url: w.images[id], image_url_original: null })),
+    carouselImages: async (_s, _src, ids) => ids.flatMap((id) => (w.carousel[id] || []).map((p) => ({ ad_id: id, image_url: p, image_url_original: null }))),
     toFetchableUrl: sweepSources.toFetchableUrl,
   };
   const repo = {
@@ -1424,14 +1425,15 @@ describe("SQL of the cursors, the stored hashes and the review queue", () => {
 });
 
 // A network with ads and a backfill cursor, all in memory, behind the same functions the backfill calls.
-function backfillWorld({ max = 10, ads = {}, images = {}, hashes = {}, claimable = true, pageSize = 100 } = {}) {
-  const w = { max, ads, images, hashes, cursor: null, saves: [], recorded: [], hashCalls: [], ensureCalls: 0, released: 0, kinds: new Set(), claimable };
+function backfillWorld({ max = 10, ads = {}, images = {}, carousel = {}, hashes = {}, claimable = true, pageSize = 100 } = {}) {
+  const w = { max, ads, images, carousel, hashes, cursor: null, saves: [], recorded: [], hashCalls: [], ensureCalls: 0, released: 0, kinds: new Set(), claimable };
   let clock = 0;
   const sources = {
     maxAdId: async () => w.max,
     newAdsPage: async (_s, _src, after, upTo, limit) =>
       Object.keys(w.ads).map(Number).filter((id) => id > after && id <= upTo).sort((a, b) => a - b).slice(0, limit).map((id) => ({ id, platformId: w.ads[id] })),
     variantImages: async (_s, _src, ids) => ids.flatMap((id) => (w.images[id] === undefined ? [] : [].concat(w.images[id]).map((p) => ({ ad_id: id, image_url: p, image_url_original: null })))),
+    carouselImages: async (_s, _src, ids) => ids.flatMap((id) => (w.carousel[id] || []).map((p) => ({ ad_id: id, image_url: p, image_url_original: null }))),
     toFetchableUrl: sweepSources.toFetchableUrl,
   };
   const repo = {
@@ -1472,6 +1474,21 @@ describe("ImageBackfill", () => {
     expect(again).toMatchObject({ done: true, hashed: 0 });
     expect(w.ensureCalls).toBe(1); // finished: not even a query
     expect(w.hashCalls).toHaveLength(4);
+  });
+
+  it("records the carousel images of an ad in their own slots when job.includeCarousel is on, and not otherwise", async () => {
+    const make = () => backfillWorld({
+      max: 2, ads: { 1: "p1", 2: "p2" }, images: { 1: "m/a.jpg", 2: "m/b.jpg" }, carousel: { 1: ["m/c1.jpg", "m/c2.jpg"] },
+      hashes: { [U("m/a.jpg")]: okHash("a".repeat(64), 1), [U("m/b.jpg")]: okHash("b".repeat(64), 2), [U("m/c1.jpg")]: okHash("c".repeat(64), 3), [U("m/c2.jpg")]: okHash("d".repeat(64), 4) },
+    });
+    const off = make();
+    await off.backfill.run("facebook", {}, { workerId: "w", deadline: FOREVER });
+    expect(off.w.recorded.map((r) => r.mediaRole)).toEqual(["creative", "creative"]);
+
+    const on = make();
+    on.backfill.options.includeCarousel = true;
+    await on.backfill.run("facebook", {}, { workerId: "w", deadline: FOREVER });
+    expect(on.w.recorded.map((r) => [r.platformAdId, r.mediaRole, r.ordinal])).toEqual([["p1", "creative", 0], ["p2", "creative", 0], ["p1", "carousel", 0], ["p1", "carousel", 1]]); // the main images of the page first, then its carousel
   });
 
   it("stops at the deadline with its place saved, continues from there, and never goes past the newest ad of its first run", async () => {
@@ -1560,6 +1577,37 @@ describe("the sweep records every new image when recordHashes is on", () => {
     await three(off);
     expect(off.w.hashCalls).toEqual([]); // nothing banned and recording off: the service is not called
     expect(off.recorded).toEqual([]);
+  });
+
+  it("carousel images are checked and recorded only when job.includeCarousel is on, in slots of their own (role 'carousel')", async () => {
+    const world = () => setup({
+      banned: [bannedImage(7, SHA_BAD)],
+      ads: { 11: "p11" }, images: { 11: "m/a.jpg" }, carousel: { 11: ["m/c1.jpg", "m/c2.jpg"] },
+      hashes: { [U("m/a.jpg")]: okHash(SHA_OK, 1), [U("m/c1.jpg")]: okHash(SHA_BAD, 2), [U("m/c2.jpg")]: okHash("c".repeat(64), 3) },
+    });
+    const off = world();
+    off.sweeper.options.recordHashes = true;
+    await three(off);
+    expect(off.w.hashCalls).toEqual([U("m/a.jpg")]); // off by default: the carousel is not even read
+    expect(off.recorded.map((r) => r.mediaRole)).toEqual(["creative"]);
+
+    const on = world();
+    on.sweeper.options.recordHashes = true;
+    on.sweeper.options.includeCarousel = true;
+    await three(on);
+    expect(on.w.hashCalls).toEqual([U("m/a.jpg"), U("m/c1.jpg"), U("m/c2.jpg")]);
+    expect(on.recorded.map((r) => [r.mediaRole, r.ordinal])).toEqual([["creative", 0], ["carousel", 0], ["carousel", 1]]); // the main image keeps its slot
+    expect(on.w.queue).toHaveLength(1); // a banned image inside a carousel is queued for review
+    expect(on.w.queue[0]).toMatchObject({ platformAdId: "p11", imageUrl: U("m/c1.jpg") });
+  });
+
+  it("a source without carouselImages is not asked for the carousel, even when it is on", async () => {
+    const t = setup();
+    t.sweeper.options.recordHashes = true;
+    t.sweeper.options.includeCarousel = true;
+    delete t.sweeper.sources.carouselImages;
+    await three(t);
+    expect(t.w.hashCalls).toEqual([U("m/a.jpg"), U("m/b.jpg")]);
   });
 
   it("a failing write of the hashes never fails the page: the cursor still moves", async () => {

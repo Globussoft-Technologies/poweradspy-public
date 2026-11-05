@@ -258,15 +258,17 @@ describe("imagematch/job > a full run", () => {
   });
 
   it("includes the carousel images only when asked", async () => {
-    const carousel = [{ ad_id: 1, image_url: "fb/c/extra.jpeg", image_url_original: null }];
+    // the table keeps the text of a JSON array per ad
+    const carousel = [{ ad_id: 1, image_url: '["/pas-dev/stream/fb/otherMultiMedia/202610/1_0.jpeg","/pas-dev/stream/fb/otherMultiMedia/202610/1_1.jpeg",null]', image_url_original: null }];
     const off = makeJob({ sql: standardDb({ carousel }) });
     await off.job.run(APPLY);
-    expect(off.client.hashUrl).not.toHaveBeenCalledWith(`${CDN}/fb/c/extra.jpeg`);
+    expect(off.client.hashUrl).not.toHaveBeenCalledWith(`${CDN}/fb/otherMultiMedia/202610/1_0.jpeg`);
     expect(off.sql.calls.some((c) => /facebook_ad_image_video/.test(c.text))).toBe(false);
 
     const on = makeJob({ sql: standardDb({ carousel }), config: { includeCarousel: true } });
     await on.job.run(APPLY);
-    expect(on.client.hashUrl).toHaveBeenCalledWith(`${CDN}/fb/c/extra.jpeg`);
+    expect(on.client.hashUrl).toHaveBeenCalledWith(`${CDN}/fb/otherMultiMedia/202610/1_0.jpeg`); // each image of the array is hashed
+    expect(on.client.hashUrl).toHaveBeenCalledWith(`${CDN}/fb/otherMultiMedia/202610/1_1.jpeg`);
   });
 
   it("writes in batches of the configured size", async () => {
@@ -528,7 +530,7 @@ describe("imagematch/sources > sourceFor", () => {
   });
 
   it("says clearly that another network is not supported yet", () => {
-    for (const bad of ["reddit", "", undefined, null, 5, "__proto__", "constructor", "toString", "hasOwnProperty"]) {
+    for (const bad of ["tiktok", "bing", "", undefined, null, 5, "__proto__", "constructor", "toString", "hasOwnProperty"]) {
       expect(() => sourceFor(bad)).toThrow(/not supported by the image-hashing job yet/);
     }
   });
@@ -542,6 +544,107 @@ describe("imagematch/sources > sourceFor", () => {
 
   it("every identifier in the shipped map is valid", () => {
     for (const network of Object.keys(SOURCES)) expect(() => sourceFor(network)).not.toThrow();
+  });
+
+  const NETWORKS = ["facebook", "instagram", "reddit", "quora", "pinterest", "native", "gdn", "chatgptads", "linkedin", "youtube", "google", "admob"];
+
+  it("supports exactly the networks whose tables and indexes were checked (tiktok has no SQL ad table)", () => {
+    expect(Object.keys(SOURCES).sort()).toEqual([...NETWORKS].sort());
+  });
+
+  it("every network has the three groups the job always needs", () => {
+    for (const network of NETWORKS) {
+      const s = sourceFor(network);
+      expect(s.owners, network).toMatchObject({ table: expect.any(String), id: "id", name: expect.any(String), lower: expect.any(String), adsCount: expect.any(String) });
+      expect(s.ads, network).toMatchObject({ table: expect.any(String), id: "id", owner: "post_owner_id", platformId: "ad_id" });
+      expect(s.variants, network).toMatchObject({ table: expect.any(String), ad: expect.any(String), image: expect.any(String), original: expect.any(String) });
+    }
+  });
+
+  it("a destination URL can be resolved only when the whole path exists: domains, meta and ads.domain come together or not at all", () => {
+    for (const network of NETWORKS) {
+      const s = sourceFor(network);
+      const has = [Boolean(s.domains), Boolean(s.meta), Boolean(s.ads.domain)];
+      expect(new Set(has).size, `${network} has a partial URL path: ${has}`).toBe(1);
+    }
+    for (const network of ["native", "gdn", "admob"]) expect(sourceFor(network).domains).toBeUndefined(); // no domain_id index / no domain table
+  });
+
+  it("each network reads its own tables (a wrong table name would read another network's data)", () => {
+    const own = { instagram: "instagram_", reddit: "reddit_", quora: "quora_", pinterest: "pinterest_", native: "native_", gdn: "gdn_", chatgptads: "chatgptads_", linkedin: "linkedin_", youtube: "youtube_", google: "google_text_", admob: "mob_" };
+    for (const [network, prefix] of Object.entries(own)) {
+      const s = sourceFor(network);
+      for (const [group, columns] of Object.entries(s)) expect(columns.table.startsWith(prefix), `${network}.${group}.table = ${columns.table}`).toBe(true);
+    }
+  });
+
+  it("the queries of every network are index lookups on that network's tables, with the right columns", async () => {
+    for (const network of NETWORKS) {
+      const s = sourceFor(network);
+      const sql = fakeSql();
+      await repo.findOwners(sql, s, ["acme"]);
+      await repo.adIdsPage(sql, s, 7, 0, 10);
+      await repo.variantImages(sql, s, [1, 2]);
+      const texts = sql.calls.map((c) => c.text);
+      expect(texts[0], network).toContain(`FROM \`${s.owners.table}\` WHERE \`${s.owners.lower}\` IN (?) LIMIT 200`);
+      expect(texts[1], network).toContain(`FROM \`${s.ads.table}\` WHERE \`${s.ads.owner}\` = ? AND \`${s.ads.id}\` > ? ORDER BY \`${s.ads.id}\` LIMIT 10`);
+      expect(texts[2], network).toContain(`SELECT \`${s.variants.ad}\` AS ad_id, \`${s.variants.image}\` AS image_url, \`${s.variants.original}\` AS image_url_original FROM \`${s.variants.table}\` WHERE \`${s.variants.ad}\` IN (?, ?)`);
+      for (const t of texts) { expect(t).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|REPLACE)\b/i); expect(t).not.toMatch(/\bLIKE\b|\bOFFSET\b/i); }
+    }
+  });
+
+  it("admob finds an owner by name_key and reads the stored path of its media; youtube reads the thumbnail", async () => {
+    const sql = fakeSql();
+    await repo.findOwners(sql, sourceFor("admob"), ["acme"]);
+    await repo.variantImages(sql, sourceFor("admob"), [5]);
+    expect(sql.calls[0].text).toContain("FROM `mob_post_owners` WHERE `name_key` IN (?)");
+    expect(sql.calls[1].text).toContain("`nas_path` AS image_url, `original_url` AS image_url_original FROM `mob_ad_media` WHERE `ad_id` IN (?)");
+    const yt = fakeSql();
+    await repo.variantImages(yt, sourceFor("youtube"), [5]);
+    expect(yt.calls[0].text).toContain("`thumbnail_url` AS image_url, `thumbnail_url_original` AS image_url_original FROM `youtube_ad_variants`");
+  });
+
+  it("a network with no URL path says 'unresolved' by finding nothing, never by scanning", async () => {
+    for (const network of ["native", "gdn", "admob"]) {
+      const sql = fakeSql();
+      expect(await repo.domainIds(sql, sourceFor(network), ["example.com"])).toEqual([]);
+      expect(await repo.adIdsByDomainPage(sql, sourceFor(network), [1], 0, 10)).toEqual([]);
+      expect(await repo.destinationUrls(sql, sourceFor(network), [1])).toEqual([]);
+      expect(sql.calls, network).toHaveLength(0);
+    }
+  });
+
+  it("chatgptads reads the destination URL from its ad row by primary key; the others from their meta table by ad id", async () => {
+    const gpt = fakeSql();
+    await repo.destinationUrls(gpt, sourceFor("chatgptads"), [3]);
+    expect(gpt.calls[0].text).toContain("`id` AS ad_id, `destination_url` AS destination_url FROM `chatgptads_ad` WHERE `id` IN (?)");
+    const ig = fakeSql();
+    await repo.destinationUrls(ig, sourceFor("instagram"), [3]);
+    expect(ig.calls[0].text).toContain("`instagram_ad_id` AS ad_id, `destination_url` AS destination_url FROM `instagram_ad_meta_data` WHERE `instagram_ad_id` IN (?)");
+  });
+
+  it("the stored image paths seen on dev become CDN URLs the hashing service can fetch, for every network", () => {
+    const cdn = "https://cdn.example.com";
+    const seen = {
+      instagram: ["/pas-dev/stream/insta/adImage/202610/150729.jpeg", "insta/adImage/202610/150729.jpeg"],
+      reddit: ["/pas-dev/stream/reddit/adImage/202610/32086.webp", "reddit/adImage/202610/32086.webp"],
+      quora: ["/pas-dev/stream/quora/adImage/202609/8788.jpeg", "quora/adImage/202609/8788.jpeg"],
+      pinterest: ["/pas-dev/stream/pint/adImage/202609/4595290183517593216.jpg", "pint/adImage/202609/4595290183517593216.jpg"],
+      native: ["/pas-dev/stream/native/adImage/202607/265778.jpeg", "native/adImage/202607/265778.jpeg"],
+      gdn: ["/pas-dev/stream/gdn/adImage/202607/379642.jpg", "gdn/adImage/202607/379642.jpg"],
+      chatgptads: ["/pas-dev/stream/gpt/adImage/202611/787.png", "gpt/adImage/202611/787.png"],
+      linkedin: ["/pas-dev/stream/linkedin/adImage/202610/44628.gif", "linkedin/adImage/202610/44628.gif"],
+      youtube: ["/pas-dev/stream/yt/thumbnail/202609/298182.jpeg", "yt/thumbnail/202609/298182.jpeg"],
+      admob: ["/pas-dev/stream/admob/adImage/202609/14978.png", "admob/adImage/202609/14978.png"],
+      production: ["/pas-prod/stream/insta/adImage/202610/1.jpeg", "insta/adImage/202610/1.jpeg"],
+    };
+    for (const [network, [stored, path]] of Object.entries(seen)) {
+      const url = repo.toFetchableUrl(stored, cdn);
+      expect(url, network).toBe(`${cdn}/${path}`);
+      expect(repo.hasImageExtension(url), network).toBe(true);
+    }
+    // not images: left out, as for Facebook
+    expect(repo.hasImageExtension(repo.toFetchableUrl("/pas-dev/stream/admob/adVideo/202609/1.mp4", cdn))).toBe(false);
   });
 });
 
@@ -628,6 +731,48 @@ describe("imagematch/sourceRepository > the queries only read, by index, with a 
     const { carousel, ...withoutCarousel } = FB; // eslint-disable-line no-unused-vars
     expect(await repo.carouselImages(sql, withoutCarousel, [1])).toEqual([]);
     expect(sql.calls).toHaveLength(1);
+  });
+
+  describe("carousel cells", () => {
+    const P = "/pas-dev/stream/fb/otherMultiMedia/202610/";
+
+    it("one JSON array becomes one path per image; null, empty and non-text entries are dropped", () => {
+      expect(repo.carouselPaths(`["${P}1_0.jpeg","${P}1_1.jpeg"]`)).toEqual([`${P}1_0.jpeg`, `${P}1_1.jpeg`]);
+      expect(repo.carouselPaths(`[null,"${P}1_0.jpeg","",7,{}]`)).toEqual([`${P}1_0.jpeg`]);
+      for (const none of ["[]", "[null,null,null]", "", "  ", null, undefined, 5, {}, "[not json", "{\"a\":1}", "\"text\""]) expect(repo.carouselPaths(none), String(none)).toEqual([]);
+    });
+
+    it("reads escaped slashes, http(s) URLs, prod paths and one plain path (Quora)", () => {
+      expect(repo.carouselPaths(`["\\/pas-dev\\/stream\\/fb\\/otherMultiMedia\\/202610\\/1_0.jpeg"]`)).toEqual([`${P}1_0.jpeg`]);
+      expect(repo.carouselPaths('["https://x.example/a.jpg"]')).toEqual(["https://x.example/a.jpg"]);
+      expect(repo.carouselPaths("/pas-prod/stream/insta/otherMultiMedia/202610/9_0.jpeg")).toEqual(["/pas-prod/stream/insta/otherMultiMedia/202610/9_0.jpeg"]);
+      expect(repo.carouselPaths("/pas-dev/stream/quora/thumbnail/202606/8307.jpg")).toEqual(["/pas-dev/stream/quora/thumbnail/202606/8307.jpg"]);
+    });
+
+    it("leaves out old local paths that are not on the CDN (they would only fail, and failures in a row stop a job)", () => {
+      expect(repo.carouselPaths('["\\/image\\/otherImage_19336_0_1710141290.jpg"]')).toEqual([]); // reddit, seen on dev
+      expect(repo.carouselPaths('["pasimages\\/linkedin\\/otherImage\\/otherImage_16500_0_1663913070.jpg"]')).toEqual([]); // linkedin, seen on dev
+      expect(repo.carouselPaths(`["/image/old_0.jpg","${P}1_0.jpeg"]`)).toEqual([`${P}1_0.jpeg`]); // the good one stays
+    });
+
+    it("never returns more than 30 images for one ad", () => {
+      const many = JSON.stringify(Array.from({ length: 100 }, (_, i) => `${P}1_${i}.jpeg`));
+      expect(repo.carouselPaths(many)).toHaveLength(30);
+    });
+
+    it("carouselImages gives one row per image, keeps the ad id, and has no 'original' column", async () => {
+      const sql = fakeSql(() => [
+        { ad_id: 1, image_url: `["${P}1_0.jpeg","${P}1_1.jpeg"]` },
+        { ad_id: 2, image_url: "[null,null]" },
+        { ad_id: 3, image_url: '["\\/image\\/otherImage_1_0.jpg"]' },
+        { ad_id: 4, image_url: `["${P}4_0.jpeg"]` },
+      ]);
+      expect(await repo.carouselImages(sql, FB, [1, 2, 3, 4])).toEqual([
+        { ad_id: 1, image_url: `${P}1_0.jpeg`, image_url_original: null },
+        { ad_id: 1, image_url: `${P}1_1.jpeg`, image_url_original: null },
+        { ad_id: 4, image_url: `${P}4_0.jpeg`, image_url_original: null },
+      ]);
+    });
   });
 });
 });

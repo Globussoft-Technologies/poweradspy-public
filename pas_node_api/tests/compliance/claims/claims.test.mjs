@@ -394,6 +394,8 @@ describe("claims > routes", () => {
 
   function fakeService(over = {}) {
     return {
+      validate: vi.fn(() => ({ ok: true, complaintId: ID, claim: {} })),
+      databaseOf: vi.fn(() => ({ fake: true })),
       submit: vi.fn(async () => ({ ok: true, complaintId: ID, claimReference: "CR-ABC234", status: "pending", statusKey: "k".repeat(40) })),
       getStatus: vi.fn(async () => ({ ok: true, status: "pending", decidedAt: null })),
       claimForUpload: vi.fn(async () => ({ ok: true, complaintId: ID, sql: { fake: true } })),
@@ -410,7 +412,8 @@ describe("claims > routes", () => {
   }
   function fakeFiles(over = {}) {
     return {
-      addFiles: vi.fn(async ({ files }) => ({ ok: true, results: files.map((f) => ({ ok: true, name: f.originalName, fileId: "f1" })) })),
+      addFiles: vi.fn(async ({ files }) => ({ ok: true, results: files.map((f, i) => ({ ok: true, name: f.originalName, fileId: `f${i + 1}` })) })),
+      deleteFile: vi.fn(async () => ({ ok: true })),
       ...over,
     };
   }
@@ -578,6 +581,84 @@ describe("claims > routes", () => {
       expect(res.status).toBe(422);
       expect((await res.json()).data.results[0].reason).toBe("type_not_allowed");
     } finally { await none.close(); }
+  });
+
+  describe("the one call: fields and files together", () => {
+    const fields = { name: "Acme", complainantName: "Asha", complainantEmail: "a@x.com", complainantOrg: "Acme Ltd", reason: "copied", evidenceUrl: "https://x.com/p" };
+    const claimForm = (parts = [["a.pdf", Buffer.from("%PDF-1.4 a")]], extra = fields) => {
+      const f = new FormData();
+      for (const [k, v] of Object.entries(extra)) f.append(k, v);
+      for (const [name, bytes] of parts) f.append("files", new Blob([bytes]), name);
+      return f;
+    };
+
+    it("stores the files, then the claim, and gives WordPress only the claim reference", using({}, async (t) => {
+      const res = await t.call("POST", "/claims", claimForm([["a.pdf", Buffer.from("%PDF-1.4 a")], ["b.png", Buffer.from("png b")]]), t.site);
+      expect(res.status).toBe(200);
+      expect((await res.json()).data).toEqual({ claimReference: "CR-ABC234" });
+      expect(t.service.validate).toHaveBeenCalledWith(expect.objectContaining({ name: "Acme", complainantOrg: "Acme Ltd" }));
+      expect(t.files.addFiles.mock.calls[0][0]).toMatchObject({ complaintId: ID, sql: { fake: true } });
+      expect(t.files.addFiles.mock.calls[0][0].files).toHaveLength(2);
+      expect(t.service.submit).toHaveBeenCalledWith(expect.objectContaining({ name: "Acme", complaintId: ID }));
+      expect(t.files.deleteFile).not.toHaveBeenCalled();
+    }));
+
+    it("writes nothing when a field is wrong: no file is stored", using({ service: fakeService({ validate: vi.fn(() => ({ ok: false, error: "invalid_complainant_org", message: "the company or organization is required" })) }) }, async (t) => {
+      const res = await t.call("POST", "/claims", claimForm(), t.site);
+      expect(res.status).toBe(400);
+      expect((await res.json()).message).toMatch(/company or organization/);
+      expect(t.files.addFiles).not.toHaveBeenCalled();
+      expect(t.service.submit).not.toHaveBeenCalled();
+    }));
+
+    it("does not record the claim when a file is refused, and takes back the files that were stored", using({
+      files: fakeFiles({ addFiles: vi.fn(async () => ({ ok: true, results: [{ ok: true, name: "a.pdf", fileId: "f1" }, { ok: false, name: "b.exe", reason: "type_not_allowed" }] })) }),
+    }, async (t) => {
+      const res = await t.call("POST", "/claims", claimForm([["a.pdf", Buffer.from("%PDF-1.4 a")], ["b.exe", Buffer.from("MZ")]]), t.site);
+      expect(res.status).toBe(422);
+      expect((await res.json()).data.results).toEqual([{ ok: true, name: "a.pdf" }, { ok: false, name: "b.exe", reason: "type_not_allowed" }]);
+      expect(t.service.submit).not.toHaveBeenCalled();
+      expect(t.files.deleteFile).toHaveBeenCalledTimes(1);
+      expect(t.files.deleteFile).toHaveBeenCalledWith({ sql: { fake: true }, complaintId: ID, fileId: "f1" });
+    }));
+
+    it("takes the files back when the claim cannot be stored, and answers 503 without detail", using({
+      service: fakeService({ submit: vi.fn(async () => ({ ok: false, error: "failed", message: "secret db detail" })) }),
+    }, async (t) => {
+      const res = await t.call("POST", "/claims", claimForm([["a.pdf", Buffer.from("%PDF-1.4 a")], ["b.png", Buffer.from("png b")]]), t.site);
+      expect(res.status).toBe(503);
+      expect((await res.json()).message).not.toMatch(/secret/);
+      expect(t.files.deleteFile).toHaveBeenCalledTimes(2);
+    }));
+
+    it("does not take back a file it did not add (a repeated file in the same call)", using({
+      files: fakeFiles({ addFiles: vi.fn(async () => ({ ok: true, results: [{ ok: true, name: "a.pdf", fileId: "f1" }, { ok: true, name: "copy.pdf", fileId: "f1", duplicate: true }] })) }),
+      service: fakeService({ submit: vi.fn(async () => ({ ok: false, error: "failed" })) }),
+    }, async (t) => {
+      await t.call("POST", "/claims", claimForm([["a.pdf", Buffer.from("%PDF-1.4 a")], ["copy.pdf", Buffer.from("%PDF-1.4 a")]]), t.site);
+      expect(t.files.deleteFile).toHaveBeenCalledTimes(1);
+    }));
+
+    it("needs at least one file, refuses too big or too many, and needs the token", using({}, async (t) => {
+      expect((await t.call("POST", "/claims", claimForm([]), t.site)).status).toBe(400);
+      expect((await t.call("POST", "/claims", claimForm([["big.pdf", Buffer.alloc(5000, 1)]]), t.site)).status).toBe(400);
+      expect((await t.call("POST", "/claims", claimForm([["1", Buffer.from("1")], ["2", Buffer.from("2")], ["3", Buffer.from("3")], ["4", Buffer.from("4")]]), t.site)).status).toBe(400);
+      expect((await t.call("POST", "/claims", claimForm(), {})).status).toBe(401);
+      expect((await t.call("POST", "/claims", claimForm(), t.admin)).status).toBe(401);
+      expect(t.service.submit).not.toHaveBeenCalled();
+    }));
+
+    it("leaves nothing in the temp folder, and answers 503 when the evidence storage is off", async () => {
+      const seen = [];
+      const t = await serve({ files: fakeFiles({ addFiles: vi.fn(async ({ files }) => { seen.push(...files); return { ok: true, results: files.map((f) => ({ ok: true, name: f.originalName, fileId: "f1" })) }; }) }) });
+      try {
+        expect((await t.call("POST", "/claims", claimForm(), t.site)).status).toBe(200);
+        await new Promise((r) => setTimeout(r, 80));
+        for (const f of seen) expect(fs.existsSync(f.path)).toBe(false);
+      } finally { await t.close(); }
+      const off = await serve({ files: null, settings: { attachments: { enabled: false } } });
+      try { expect((await off.call("POST", "/claims", claimForm(), off.site)).status).toBe(503); } finally { await off.close(); }
+    });
   });
 
   it("answers 503 for files when the evidence storage is not enabled", async () => {

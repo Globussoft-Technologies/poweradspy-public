@@ -109,9 +109,53 @@ function createClaimsRouter({ settings = config.compliance?.claims || {}, reques
   const body = (req) => (req.body && typeof req.body === 'object' ? req.body : {});
   const keyOf = (req) => req.headers['x-claim-key'] || (typeof req.query.key === 'string' ? req.query.key : '');
 
+  /**
+   * The one call of the WordPress form: the fields and the files together. Nothing is written until the fields are valid; the files go
+   * to the private bucket under an id made here, and the claim is stored only when every file was stored. If the claim cannot be stored,
+   * the files just stored are removed again, so a failed call leaves nothing behind. WordPress gets back only the claim reference.
+   */
+  async function submitWithFiles(req, res) {
+    if (!files) return reply(res, 503, 'Files cannot be accepted right now.');
+    const uploaded = await receiveFiles(req, res, attachmentSettings, { fields: 12 });
+    if (uploaded.error) return reply(res, 400, uploaded.error);
+    const stored = [];
+    try {
+      const checked = service.validate(body(req));
+      if (!checked.ok) return reply(res, statusOf(checked.error), checked.message);
+      const sql = service.databaseOf();
+      if (!sql) return reply(res, 503, 'We could not record the claim right now. Please try again.');
+
+      const out = await files.addFiles({ sql, complaintId: checked.complaintId, files: uploaded.files });
+      if (out.error) return reply(res, statusOf(out.error), out.error === 'not_configured' ? 'Files cannot be accepted right now.' : out.error);
+      for (const r of out.results) if (r.ok && !r.duplicate) stored.push(r.fileId);
+      if (out.results.some((r) => !r.ok)) {
+        await discardFiles(sql, checked.complaintId, stored);
+        return reply(res, 422, 'a file was refused, so the claim was not recorded', { results: out.results.map(({ ok, name, reason }) => ({ ok, name, reason })) });
+      }
+
+      const claim = await service.submit({ ...body(req), complaintId: checked.complaintId });
+      if (!claim.ok) {
+        await discardFiles(sql, checked.complaintId, stored);
+        const code = statusOf(claim.error);
+        return reply(res, code, code === 503 ? 'We could not record the claim right now. Please try again.' : claim.message, null);
+      }
+      stored.length = 0;
+      return reply(res, 200, 'ok', { claimReference: claim.claimReference });
+    } finally {
+      for (const f of uploaded.files) fs.unlink(f.path, () => {});
+    }
+  }
+
+  async function discardFiles(sql, complaintId, fileIds) {
+    for (const fileId of fileIds) {
+      try { await files.deleteFile({ sql, complaintId, fileId }); } catch (err) { log.error('a file of a claim that was not stored could not be removed', { error: err.message }); }
+    }
+  }
+
   // ── the WordPress server ──
-  router.post('/claims', limiter, siteAuth, asyncHandler(async (req, res) => {
+  router.post('/claims',limiter, siteAuth, asyncHandler(async (req, res) => {
     if (!settings.statusSecret) return reply(res, 503, 'This service is not configured.');
+    if (req.is('multipart/form-data')) return submitWithFiles(req, res);
     const out = await service.submit(body(req));
     if (!out.ok) {
       const code = statusOf(out.error);
@@ -259,12 +303,12 @@ function buildAttachments(settings) {
 }
 
 /** Read a multipart request into temp files (size and count limited while receiving). Resolves { files } or { error }. */
-function receiveFiles(req, res, att) {
+function receiveFiles(req, res, att, { fields = 5 } = {}) {
   return new Promise((resolve) => {
     const multer = require('multer');
     const dir = path.join(os.tmpdir(), 'pas-claim-uploads');
     try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); } catch { /* multer reports it */ }
-    const upload = multer({ dest: dir, limits: { files: att.maxFiles || 5, fileSize: att.maxFileBytes || 5 * 1024 * 1024, fields: 5, parts: 30 } }).array('files', att.maxFiles || 5);
+    const upload = multer({ dest: dir, limits: { files: att.maxFiles || 5, fileSize: att.maxFileBytes || 5 * 1024 * 1024, fields, parts: 30 } }).array('files', att.maxFiles || 5);
     upload(req, res, (err) => {
       const received = (req.files || []).map((f) => ({ path: f.path, originalName: f.originalname }));
       if (err) {
