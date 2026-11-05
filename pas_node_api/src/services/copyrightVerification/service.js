@@ -346,9 +346,10 @@ function ownFile(path, ad) {
 // NAS path, so the Takedown Monitor (src/compliance/monitor) shows the run and its steps.
 // A run left 'running' by a crash would show as Running forever; its ads are still at status 2 and are retried by a later run.
 // Called on EVERY cleanup tick (also when there is nothing to delete), so the last stuck runs are closed too.
+// Planned is kept and the ads it did not finish count as failed IN THIS RUN, so the row reads planned 3 / done 0 / failed 3 and nothing is "waiting".
 async function closeStaleRuns(sql, network) {
-  await sql.query(`UPDATE copyright_takedown_runs SET status = 'failed', items_planned = items_succeeded + items_failed, finished_at = UTC_TIMESTAMP(),
-    details = 'process stopped before the run finished; its ads are retried by a later run'
+  await sql.query(`UPDATE copyright_takedown_runs SET status = 'failed', items_failed = GREATEST(items_planned - items_succeeded, 0), finished_at = UTC_TIMESTAMP(),
+    details = 'process stopped before the run finished; its ads were not finished here and are retried by a later run'
     WHERE network = ? AND status = 'running' AND trigger_type = 'verification' AND operator = ? AND started_at < UTC_TIMESTAMP() - INTERVAL 1 HOUR`,
   [network, ADDED_BY]);
 }

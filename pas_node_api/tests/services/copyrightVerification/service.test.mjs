@@ -221,7 +221,9 @@ describe("cleanup cron", () => {
     vi.spyOn(databaseManager, "getConnections").mockReturnValue({ sql, elastic: makeEs() });
     expect(await service.cleanupNetwork("facebook")).toEqual({ scanned: 0 });
     const stale = sql.calls.find((c) => c.q.startsWith("UPDATE copyright_takedown_runs SET status = 'failed'"));
-    expect(stale.q).toContain("items_planned = items_succeeded + items_failed");
+    // planned is kept; what the run did not finish counts as failed in that run
+    expect(stale.q).toContain("items_failed = GREATEST(items_planned - items_succeeded, 0)");
+    expect(stale.q).not.toContain("items_planned =");
     expect(stale.p).toEqual(["facebook", "copyright-verification"]);
   });
 
