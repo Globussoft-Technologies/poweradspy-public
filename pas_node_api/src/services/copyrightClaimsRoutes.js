@@ -267,6 +267,8 @@ function buildMonitor() {
     networks: () => Object.entries(networksConfig).filter(([, c]) => c?.database?.sql?.enabled).map(([n]) => n),
     getSql: (network) => manager.getSQL(network),
     jobs: require('../compliance/imagematch/worker').jobs,
+    // network -> ad table with copyright_status: the verification queue counts of the overview
+    adTables: Object.fromEntries(Object.entries(require('./copyrightVerification/status').NETWORKS).map(([n, [table]]) => [n, table])),
     log,
   });
 }

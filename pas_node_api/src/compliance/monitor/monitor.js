@@ -5,6 +5,7 @@
  * updates or deletes. It reads
  *   - copyright_takedown_runs / copyright_takedown_actions   (B3: the takedown runs and, per run, every delete step), and
  *   - copyright_image_hash_jobs / copyright_image_hash_results (B2: the hash jobs and what they did with each image)
+ *   - the copyright_status column of each network's ad table (the verification queue: ads waiting to be checked, failed ads waiting for cleanup)
  * in each network's own database. A network whose tables do not exist yet (B3 not deployed) is reported as { available: false } and the others
  * are still shown: a missing table is never shown as "0 deleted".
  *
@@ -55,9 +56,10 @@ function addTo(bucket, group, n) { bucket[group] = (bucket[group] || 0) + n; }
  * @param {() => string[]} deps.networks   the network slugs to look at
  * @param {(network: string) => ?Object} deps.getSql
  * @param {{ list: Function, results: Function }} [deps.jobs]   the hash jobs API (worker.jobs)
+ * @param {Object<string, string>} [deps.adTables]  network -> ad table with copyright_status (copyrightVerification/status.js NETWORKS)
  * @param {Object} [deps.log]
  */
-function createMonitorService({ networks, getSql, jobs, log = console }) {
+function createMonitorService({ networks, getSql, jobs, adTables = {}, log = console }) {
   const bad = (error, message) => ({ ok: false, error, message });
   const slugOf = (network) => (typeof network === 'string' && NETWORK.test(network.trim().toLowerCase()) ? network.trim().toLowerCase() : null);
   const known = (slug) => networks().includes(slug);
@@ -110,16 +112,36 @@ function createMonitorService({ networks, getSql, jobs, log = console }) {
     }
   }
 
+  /**
+   * The verification queue of one network: ads hidden until checked (copyright_status 0) and failed ads waiting for the cleanup cron (2).
+   * Read through the (copyright_status, id) index; approved ads (1) are never counted, that would read the whole index.
+   */
+  async function verificationOf(sql, network) {
+    const table = adTables[network];
+    if (!table || !/^[a-z][a-z0-9_]{0,63}$/.test(table)) return { available: false, reason: 'not_supported' };
+    try {
+      const rows = await sql.query(`SELECT copyright_status AS status, COUNT(*) AS ads FROM \`${table}\` WHERE copyright_status IN (0, 2) GROUP BY copyright_status`);
+      const out = { available: true, pending: 0, failed: 0 };
+      for (const r of rows) { if (num(r.status) === 0) out.pending = num(r.ads); else out.failed = num(r.ads); }
+      return out;
+    } catch (err) {
+      // No column yet = the migration has not run there: not available, never zero.
+      if (missingTable(err) || err?.code === 'ER_BAD_FIELD_ERROR' || err?.errno === 1054) return { available: false, reason: 'no_column' };
+      log.warn?.('monitor: verification counts failed', { network, error: err.message });
+      return { available: false, reason: 'error' };
+    }
+  }
+
   /** The numbers for every network, and the totals. */
   async function overview() {
     const list = networks();
     const per = await Promise.all(list.map(async (network) => {
       const sql = getSql(network);
-      if (!sql) return { network, takedown: { available: false, reason: 'no_database' }, hashJobs: { available: false, reason: 'no_database' } };
-      const [takedown, hashJobs] = await Promise.all([takedownOf(sql, network), hashOf(sql, network)]);
-      return { network, takedown, hashJobs };
+      if (!sql) return { network, takedown: { available: false, reason: 'no_database' }, hashJobs: { available: false, reason: 'no_database' }, verification: { available: false, reason: 'no_database' } };
+      const [takedown, hashJobs, verification] = await Promise.all([takedownOf(sql, network), hashOf(sql, network), verificationOf(sql, network)]);
+      return { network, takedown, hashJobs, verification };
     }));
-    const totals = { runs: { total: 0, byGroup: {} }, items: { planned: 0, deleted: 0, failed: 0, waiting: 0 }, hashJobs: { total: 0, byStatus: {} }, unavailable: [] };
+    const totals = { runs: { total: 0, byGroup: {} }, items: { planned: 0, deleted: 0, failed: 0, waiting: 0 }, hashJobs: { total: 0, byStatus: {} }, verification: { pending: 0, failed: 0 }, unavailable: [] };
     for (const n of per) {
       if (n.takedown.available) {
         totals.runs.total += n.takedown.runs.total;
@@ -130,6 +152,7 @@ function createMonitorService({ networks, getSql, jobs, log = console }) {
         totals.hashJobs.total += n.hashJobs.total;
         for (const [s, v] of Object.entries(n.hashJobs.byStatus)) addTo(totals.hashJobs.byStatus, s, v);
       } else totals.unavailable.push({ network: n.network, what: 'hashJobs', reason: n.hashJobs.reason });
+      if (n.verification.available) { totals.verification.pending += n.verification.pending; totals.verification.failed += n.verification.failed; }
     }
     return { ok: true, networks: per, totals, groups: STATUS_GROUPS };
   }
@@ -189,7 +212,7 @@ function createMonitorService({ networks, getSql, jobs, log = console }) {
     system: a.system, operation: a.operation, status: a.status, group: groupOf(a.status), errorMessage: cut(a.error_message), details: cut(a.details),
     attempts: num(a.attempts), proofUri: a.proof_uri || null, nextRetryAt: iso(a.next_retry_at), startedAt: iso(a.started_at), finishedAt: iso(a.finished_at), createdAt: iso(a.created_at),
   });
-  const ACTION_COLUMNS = `id, run_id, network, target_type, target_id, internal_ad_id, target_value, target_url, system, operation, status, error_message, details, attempts,
+  const ACTION_COLUMNS = `id, run_id, network, target_type, target_id, internal_ad_id, target_value, target_url, \`system\`, operation, status, error_message, details, attempts,
             proof_uri, next_retry_at, started_at, finished_at, created_at`;
 
   /** One run, the count of its steps by system and status, and the log: its steps (by id, pages of `limit`). */
@@ -203,11 +226,11 @@ function createMonitorService({ networks, getSql, jobs, log = console }) {
     try {
       const [run] = await sql.query(`SELECT ${RUN_COLUMNS} FROM ${RUNS} WHERE run_id = ? AND network = ? LIMIT 1`, [String(runId).toLowerCase(), slug]);
       if (!run) return bad('not_found', 'no such run');
-      const counts = await sql.query(`SELECT system, status, COUNT(*) AS steps FROM ${ACTIONS} WHERE run_id = ? AND network = ? GROUP BY system, status`, [String(runId).toLowerCase(), slug]);
+      const counts = await sql.query(`SELECT \`system\` AS \`system\`, status, COUNT(*) AS steps FROM ${ACTIONS} WHERE run_id = ? AND network = ? GROUP BY \`system\`, status`, [String(runId).toLowerCase(), slug]);
       const where = ['run_id = ?', 'network = ?', 'id > ?'];
       const params = [String(runId).toLowerCase(), slug, whole(afterId)];
       if (status) { where.push('status = ?'); params.push(String(status)); }
-      if (system) { where.push('system = ?'); params.push(String(system)); }
+      if (system) { where.push('`system` = ?'); params.push(String(system)); }
       const rows = await sql.query(`SELECT ${ACTION_COLUMNS} FROM ${ACTIONS} WHERE ${where.join(' AND ')} ORDER BY id LIMIT ${n}`, params);
       const bySystem = {};
       const byGroup = {};
@@ -266,7 +289,7 @@ function createMonitorService({ networks, getSql, jobs, log = console }) {
   /**
    * Who and what is blocked in one network: newest entry first, by id, with a cursor. Optional filters: status, entry type, and a text
    * search inside the blocked value (the blocklist is small, so the search is a plain scan with a limit). `counts` says how many entries
-   * the network has by status, and how many ACTIVE ones by type. Only columns that every version of the table has are read.
+   * the network has by status, and how many ACTIVE ones by type. It reads identifier_namespace too (in the schema since the namespace change), to tell a platform ad id from our row id.
    */
   async function blocklist({ network, status, entryType, q, beforeId, limit } = {}) {
     const slug = slugOf(network);
@@ -285,7 +308,7 @@ function createMonitorService({ networks, getSql, jobs, log = console }) {
       if (text) { where.push('LOWER(value) LIKE ?'); params.push(likeOf(text)); }
       if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
       const rows = await sql.query(
-        `SELECT id, network, entry_type, value, reason, source, complaint_id, status, expires_at, created_at, added_by, removed_at, removed_by
+        `SELECT id, network, entry_type, identifier_namespace, value, reason, source, complaint_id, status, expires_at, created_at, added_by, removed_at, removed_by
            FROM copyright_blocklist WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`,
         params
       );
@@ -301,7 +324,7 @@ function createMonitorService({ networks, getSql, jobs, log = console }) {
         ok: true,
         counts,
         items: rows.map((r) => ({
-          id: r.id, network: r.network, entryType: r.entry_type, value: cut(r.value), reason: r.reason || null, source: r.source || null,
+          id: r.id, network: r.network, entryType: r.entry_type, identifierNamespace: r.identifier_namespace || null, value: cut(r.value), reason: r.reason || null, source: r.source || null,
           complaintId: r.complaint_id || null, status: r.status, expiresAt: iso(r.expires_at), createdAt: iso(r.created_at),
           addedBy: r.added_by || null, removedAt: iso(r.removed_at), removedBy: r.removed_by || null,
         })),

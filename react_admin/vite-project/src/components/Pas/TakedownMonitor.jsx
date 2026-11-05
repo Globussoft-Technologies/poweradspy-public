@@ -242,9 +242,11 @@ export default function TakedownMonitor() {
 
       {totals && (
         <div className="flex gap-3 flex-wrap">
-          <Stat label="Deleted" value={totals.items.deleted} tone="text-green-600" hint="steps done in real runs" />
+          <Stat label="Deleted" value={totals.items.deleted} tone="text-green-600" hint="ads removed in real runs" />
           <Stat label="Waiting" value={totals.items.waiting} tone="text-amber-600" hint="planned, not yet done" />
-          <Stat label="Failed" value={totals.items.failed} tone="text-rose-600" hint="steps that failed" />
+          <Stat label="Failed" value={totals.items.failed} tone="text-rose-600" hint="ads whose delete failed" />
+          {totals.verification && <Stat label="Waiting for check" value={totals.verification.pending} tone="text-amber-600" hint="new ads hidden until verified" />}
+          {totals.verification && <Stat label="Waiting for cleanup" value={totals.verification.failed} tone="text-rose-600" hint="failed check, not deleted yet" />}
           <Stat label="Takedown runs" value={totals.runs.total} hint={Object.entries(totals.runs.byGroup).map(([g, n]) => `${(GROUP_META[g] || GROUP_META.other).label} ${n}`).join(" · ") || "none yet"} />
           <Stat label="Hash jobs" value={totals.hashJobs.total} hint={Object.entries(totals.hashJobs.byStatus).map(([s, n]) => `${s} ${n}`).join(" · ") || "none yet"} />
         </div>
@@ -259,7 +261,7 @@ export default function TakedownMonitor() {
         <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-gray-500 bg-gray-50">
-              <tr><th className="p-3">Network</th><th className="p-3">Runs</th><th className="p-3">Deleted</th><th className="p-3">Waiting</th><th className="p-3">Failed</th><th className="p-3">Dry runs</th><th className="p-3">Last run</th><th className="p-3">Hash jobs</th></tr>
+              <tr><th className="p-3">Network</th><th className="p-3">Runs</th><th className="p-3">Deleted</th><th className="p-3">Waiting</th><th className="p-3">Failed</th><th className="p-3">Dry runs</th><th className="p-3">Last run</th><th className="p-3">To check / to remove</th><th className="p-3">Hash jobs</th></tr>
             </thead>
             <tbody>
               {overview.networks.map((n) => (
@@ -277,6 +279,11 @@ export default function TakedownMonitor() {
                   ) : (
                     <td className="p-3 text-gray-400" colSpan={6}>Takedown: not available</td>
                   )}
+                  <td className="p-3">
+                    {n.verification?.available
+                      ? <><span className="text-amber-700">{n.verification.pending}</span> / <span className="text-rose-700">{n.verification.failed}</span></>
+                      : <span className="text-gray-400">{n.verification?.reason === "no_column" ? "not migrated" : "—"}</span>}
+                  </td>
                   <td className="p-3">
                     {n.hashJobs.available
                       ? (Object.entries(n.hashJobs.byStatus).map(([s, c]) => <span key={s} className={`mr-1 inline-block px-2 py-0.5 rounded-full text-xs ${HASH_META[s] || "bg-gray-100 text-gray-600"}`}>{s} {c}</span>) || null)
@@ -312,7 +319,7 @@ export default function TakedownMonitor() {
           {runs.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{runs.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Run</th><th className="p-3">Status</th><th className="p-3">Mode</th><th className="p-3">Planned</th><th className="p-3">Done</th><th className="p-3">Failed</th><th className="p-3">Started</th><th className="p-3">Complaint</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Run</th><th className="p-3">Status</th><th className="p-3">Mode</th><th className="p-3">Planned</th><th className="p-3">Done</th><th className="p-3">Failed</th><th className="p-3">Started</th><th className="p-3">Complaint / trigger</th></tr></thead>
               <tbody>
                 {runs.items.map((r) => (
                   <tr key={`${r.network}-${r.runId}`} className="border-t border-gray-100 cursor-pointer hover:bg-gray-50" onClick={() => openRun(r)}>
@@ -321,7 +328,7 @@ export default function TakedownMonitor() {
                     <td className="p-3">{r.mode === "dry_run" ? <Badge>dry run: deleted nothing</Badge> : "real"}</td>
                     <td className="p-3">{r.itemsPlanned}</td><td className="p-3 text-green-700">{r.itemsSucceeded}</td><td className="p-3 text-rose-700">{r.itemsFailed}</td>
                     <td className="p-3 text-gray-500">{fmtDate(r.startedAt || r.createdAt)}</td>
-                    <td className="p-3 font-mono text-xs text-gray-500">{r.complaintId ? r.complaintId.slice(0, 8) : "—"}</td>
+                    <td className="p-3 font-mono text-xs text-gray-500">{r.complaintId ? r.complaintId.slice(0, 8) : (r.triggerType || "—")}</td>
                   </tr>
                 ))}
                 {!runs.loading && !runs.items.length && !runs.error && <tr><td className="p-4 text-gray-500" colSpan={8}>No takedown runs{runs.unavailable.length ? ` (not available: ${runs.unavailable.join(", ")})` : ""}.</td></tr>}
@@ -418,7 +425,7 @@ export default function TakedownMonitor() {
               <tbody>
                 {blocklist.items.map((b) => (
                   <tr key={b.id} className="border-t border-gray-100 align-top">
-                    <td className="p-3 whitespace-nowrap">{b.entryType}</td>
+                    <td className="p-3 whitespace-nowrap">{b.entryType}{b.entryType === "ad_id" && b.identifierNamespace && <div className="text-xs text-gray-400">{b.identifierNamespace === "internal" ? "our row id" : "platform id"}</div>}</td>
                     <td className="p-3 break-all font-medium" title={b.value}>{shortHash(b.value)}</td>
                     <td className="p-3"><Badge cls={BLOCK_STATUS_META[b.status]}>{b.status}</Badge>{b.removedBy && <div className="text-xs text-gray-400 mt-1">by {b.removedBy} · {fmtDate(b.removedAt)}</div>}</td>
                     <td className="p-3 text-gray-600">{b.addedBy || "—"}{b.source && <div className="text-xs text-gray-400">{b.source}</div>}</td>
@@ -437,7 +444,7 @@ export default function TakedownMonitor() {
 
       {tab === "attempts" && (
         <section className="space-y-3">
-          <p className="text-sm text-gray-500">Ads of <b>{network || "this network"}</b> that the blocklist refused when they were sent in (newest first). Only identifiers are kept, never the ad itself.</p>
+          <p className="text-sm text-gray-500">Ads of <b>{network || "this network"}</b> that the blocklist refused (newest first): at insertion, when a new ad was checked (verification), or when an existing ad matched a new block (verification-recheck; the cleanup cron then deletes it). Only identifiers are kept, never the ad itself.</p>
           {attempts.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{attempts.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">

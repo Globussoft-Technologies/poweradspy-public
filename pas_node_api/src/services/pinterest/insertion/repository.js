@@ -116,6 +116,7 @@ async function deleteAdCascade(exec, id) {
     ['pinterest_ad_url',                 'pinterest_ad_id'],
     ['pinterest_ad_variants',            'pinterest_ad_id'],
     ['pinterest_ad_recommended_activity','ad_id'],
+    ['pinterest_ad_categories',          'pinterest_ad_id'], // RESTRICT foreign key to pinterest_ad (checked on dev)
   ];
   for (const [table, col] of childDeletes) {
     await deleteIgnoringMissingTable(exec, `DELETE FROM ${table} WHERE ${col} = ?`, [id]);

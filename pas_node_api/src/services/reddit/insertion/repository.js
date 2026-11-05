@@ -81,6 +81,9 @@ async function deleteAdCascade(exec, internalId) {
     ['reddit_ad_users', 'reddit_ad_id'],
     ['reddit_ad_variants', 'reddit_ad_id'],
     ['reddit_comments', 'reddit_ad_id'],
+    // RESTRICT foreign keys to reddit_ad (checked on dev)
+    ['reddit_ad_categories', 'reddit_ad_id'],
+    ['reddit_user_affiliate_ads', 'reddit_ad_id'],
   ];
   for (const [table, col] of childDeletes) {
     await deleteIgnoringMissingTable(exec, `DELETE FROM ${table} WHERE ${col} = ?`, [internalId]);

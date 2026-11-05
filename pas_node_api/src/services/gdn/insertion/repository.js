@@ -140,6 +140,11 @@ async function deleteAdCascade(exec, internalId) {
     ['gdn_ad_countries_only', 'gdn_ad_id'],
     ['gdn_ad_meta_data', 'gdn_ad_id'],
     ['gdn_ad_variants', 'gdn_ad_id'],
+    // RESTRICT foreign keys to gdn_ad (checked on dev)
+    ['gdn_ad_categories', 'gdn_ad_id'],
+    ['gdn_ad_outgoing_links', 'gdn_ad_id'],
+    ['gdn_ad_bug_report', 'ad_id'],
+    ['gdn_hidden_ads', 'ad_id'],
   ];
   for (const [table, col] of childDeletes) {
     await deleteIgnoringMissingTable(exec, `DELETE FROM ${table} WHERE ${col} = ?`, [internalId]);

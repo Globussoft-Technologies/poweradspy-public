@@ -120,6 +120,7 @@ async function deleteAdCascade(exec, id) {
     ['native_placement_url',            'native_ad_id'],
     ['native_ad_target_site',           'native_ad_id'],
     ['native_ad_recommended_activity',  'ad_id'],
+    ['native_ad_categories',            'native_ad_id'], // RESTRICT foreign key to native_ad (checked on dev)
   ];
   for (const [table, col] of childDeletes) {
     await deleteIgnoringMissingTable(exec, `DELETE FROM ${table} WHERE ${col} = ?`, [id]);

@@ -80,6 +80,24 @@ describe("overview", () => {
   });
 });
 
+describe("verification queue", () => {
+  const make = (answer, adTables = { facebook: "facebook_ad" }) => createMonitorService({ networks: () => Object.keys(adTables).concat("other"), getSql: () => fakeSql(answer), adTables, log: silent });
+
+  it("counts pending (0) and failed-waiting-for-cleanup (2) ads per network, never approved ones", async () => {
+    const sql = (text) => (/copyright_status/.test(text) ? [{ status: 0, ads: 12 }, { status: 2, ads: 3 }] : []);
+    const out = await make(sql).overview();
+    expect(out.networks[0].verification).toEqual({ available: true, pending: 12, failed: 3 });
+    expect(out.networks[1].verification).toEqual({ available: false, reason: "not_supported" });
+    expect(out.totals.verification).toEqual({ pending: 12, failed: 3 });
+  });
+
+  it("a table without the column (migration not run) is not available, never zero", async () => {
+    const out = await make((text) => { if (/copyright_status/.test(text)) throw Object.assign(new Error("Unknown column"), { code: "ER_BAD_FIELD_ERROR", errno: 1054 }); return []; }).overview();
+    expect(out.networks[0].verification).toEqual({ available: false, reason: "no_column" });
+    expect(out.totals.verification).toEqual({ pending: 0, failed: 0 });
+  });
+});
+
 describe("runs", () => {
   const row = (over = {}) => ({ run_id: RUN, network: "facebook", complaint_id: COMPLAINT, trigger_type: "complaint", mode: "execute", status: "failed", started_at: "2026-11-04 09:00:00", finished_at: null, items_planned: 10, items_succeeded: 4, items_failed: 6, operator: "anij", report_uri: null, proof_uri: null, details: "x".repeat(5000), created_at: "2026-11-04 09:00:00", ...over });
 
@@ -131,7 +149,7 @@ describe("run logs and failures", () => {
   function logsSql() {
     return fakeSql((text) => {
       if (/FROM copyright_takedown_runs/.test(text)) return [runRow];
-      if (/GROUP BY system, status/.test(text)) return [{ system: "sql", status: "succeeded", steps: 2 }, { system: "elastic", status: "failed", steps: 1 }];
+      if (/GROUP BY `system`, status/.test(text)) return [{ system: "sql", status: "succeeded", steps: 2 }, { system: "elastic", status: "failed", steps: 1 }];
       return [action(1), action(2), action(3, { system: "elastic", status: "failed", error_message: "timeout", attempts: 3, next_retry_at: "2026-11-04 12:00:00" })];
     });
   }
@@ -146,6 +164,8 @@ describe("run logs and failures", () => {
     expect(out.next).toBe(3);
     // reads the steps by run id (the run's index), by id order, with a limit
     expect(sql.seen[2].text).toMatch(/FROM copyright_takedown_actions WHERE run_id = \? AND network = \? AND id > \? ORDER BY id LIMIT 3$/);
+    // `system` is a reserved word in MySQL 8: a bare one is a syntax error there (the run log then answered 503)
+    for (const q of sql.seen) expect(q.text).not.toMatch(/(^|[^`])system(?!`)/);
   });
 
   it("filters the steps by status and system through parameters", async () => {

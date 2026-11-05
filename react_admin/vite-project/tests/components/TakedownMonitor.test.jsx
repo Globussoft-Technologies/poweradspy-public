@@ -52,6 +52,18 @@ beforeEach(() => { cookieSpy.get.mockReturnValue("jwt-token"); cookieSpy.remove.
 afterEach(() => { cleanup(); Object.defineProperty(window, "location", { configurable: true, writable: true, value: realLocation }); });
 
 describe("TakedownMonitor > the numbers", () => {
+  it("shows the verification queue: ads waiting for the check and failed ads waiting for cleanup", async () => {
+    const withQueue = { ...OVERVIEW,
+      networks: [{ ...OVERVIEW.networks[0], verification: { available: true, pending: 123, failed: 45 } }, { ...OVERVIEW.networks[1], verification: { available: false, reason: "no_column" } }],
+      totals: { ...OVERVIEW.totals, verification: { pending: 123, failed: 45 } } };
+    backend([[/^GET \/monitor\/overview/, () => ok(withQueue)], ...base()]);
+    show();
+    expect(await screen.findByText("Waiting for check")).toBeTruthy();
+    expect(screen.getByText("Waiting for cleanup")).toBeTruthy();
+    expect(screen.getAllByText("123").length).toBe(2); // stat card + facebook row
+    expect(screen.getByText("not migrated")).toBeTruthy();
+  });
+
   it("shows deleted, waiting and failed, the networks, and says which are not available (never as zero)", async () => {
     const calls = backend(base());
     show();

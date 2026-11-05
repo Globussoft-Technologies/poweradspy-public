@@ -25,7 +25,7 @@ const nas = require('../../insertion/helpers/nasClient');
 const { mapWithConcurrency } = require('../../insertion/InsertionEngine');
 const { NETWORKS, PENDING, APPROVED, FAILED } = require('./status');
 const { matchBatch } = require('./hashWorker');
-const { nameCandidates } = require('../../compliance/imagematch/sources');
+const sources = require('../../compliance/imagematch/sources'); // checked owner/ad table map per network (B2)
 
 const log = logger.createChild('copyright-verification');
 const ADDED_BY = 'copyright-verification';
@@ -171,9 +171,6 @@ async function internalBlocks(sql, network, ids) {
 // (exact copies, found through copyright_image_hashes). url / domain / page / image_url columns have no
 // index, so those entries still apply only to new ads.
 
-// Owner-name column each network's insertion already looks owners up by (indexed). Values are lowercase.
-const OWNER_NAME = { facebook: 'post_owner_lower', chatgptads: 'post_owner_lower', google: 'post_owner_lower', native: 'post_owner_lower', admob: 'name_key' };
-const ownerTable = (network) => (network === 'admob' ? 'mob_post_owners' : `${network === 'google' ? 'google_text' : network}_ad_post_owners`);
 const LIVE = [PENDING, APPROVED];
 const recheckCursors = new Map(); // network -> { entryId, page: { entryId, afterId } | null }
 
@@ -184,15 +181,15 @@ async function recheckStart(sql, s) {
   return row?.first ? Number(row.first) - 1 : Number(row?.last) || 0;
 }
 
-/** Live (status 0/1) internal ad ids an entry covers. `next` is set when more pages of an advertiser remain. */
+/** Live (status 0/1) ads an entry covers, as { id, adId }. `next` is set when more pages of an advertiser remain. */
 async function adsOfEntry(sql, network, entry, afterId, limit) {
   const [table] = NETWORKS[network];
   const live = `copyright_status IN (${LIVE.join(',')})`;
   const value = String(entry.value || '').trim();
-  const idsOf = (rows) => rows.map((r) => String(r.id));
+  const idsOf = (rows) => rows.map((r) => ({ id: String(r.id), adId: r.ad_id ?? null }));
   if (entry.entry_type === 'ad_id') {
     const col = entry.identifier_namespace === 'internal' ? 'id' : 'ad_id';
-    return { ids: idsOf(await sql.query(`SELECT id FROM ${table} WHERE ${col} = ? AND ${live} LIMIT 50`, [value])), next: null };
+    return { ids: idsOf(await sql.query(`SELECT id, ad_id FROM ${table} WHERE ${col} = ? AND ${live} LIMIT 50`, [value])), next: null };
   }
   if (entry.entry_type === 'image_hash') {
     const ids = new Set();
@@ -205,15 +202,17 @@ async function adsOfEntry(sql, network, entry, afterId, limit) {
     }
     if (!ids.size) return { ids: [], next: null };
     const list = [...ids];
-    return { ids: idsOf(await sql.query(`SELECT id FROM ${table} WHERE id IN (${list.map(() => '?').join(',')}) AND ${live}`, list)), next: null };
+    return { ids: idsOf(await sql.query(`SELECT id, ad_id FROM ${table} WHERE id IN (${list.map(() => '?').join(',')}) AND ${live}`, list)), next: null };
   }
-  // advertiser
-  const names = nameCandidates(value);
+  // advertiser: owners by their indexed lowercase name, through B2's checked table map (same lookup as the hash job).
+  const names = sources.nameCandidates(value);
   if (!names.length) return { ids: [], next: null };
-  const owners = await sql.query(`SELECT id FROM ${ownerTable(network)} WHERE ${OWNER_NAME[network] || 'post_owner_name'} IN (${names.map(() => '?').join(',')}) LIMIT 200`, names);
+  let source;
+  try { source = sources.sourceFor(network); } catch { return { ids: [], next: null }; } // network not in the map yet
+  const owners = await sources.findOwners(sql, source, names);
   if (!owners.length) return { ids: [], next: null };
   const ownerIds = owners.map((o) => o.id);
-  const rows = await sql.query(`SELECT id FROM ${table} WHERE post_owner_id IN (${ownerIds.map(() => '?').join(',')}) AND id > ? AND ${live}
+  const rows = await sql.query(`SELECT id, ad_id FROM ${table} WHERE post_owner_id IN (${ownerIds.map(() => '?').join(',')}) AND id > ? AND ${live}
     ORDER BY id LIMIT ${Number(limit)}`, [...ownerIds, afterId]);
   return { ids: idsOf(rows), next: rows.length === Number(limit) ? Number(rows[rows.length - 1].id) : null };
 }
@@ -226,14 +225,14 @@ async function recheckExisting(db, network, s) {
     WHERE id > ? AND network IN (?, 'all') AND status = 'active' AND (expires_at IS NULL OR expires_at > UTC_TIMESTAMP())
       AND entry_type IN ('ad_id', 'advertiser', 'image_hash') AND NOT (entry_type = 'ad_id' AND added_by = ?)
     ORDER BY id LIMIT ${Number(s.recheckEntries)}`, [cur.entryId, network, ADDED_BY]);
-  const ids = new Set();
+  const found = new Map(); // internal id -> { adId, entry }: the first entry that covers the ad
   let lastEntry = cur.entryId;
   for (const entry of entries) {
     let afterId = cur.page?.entryId === entry.id ? cur.page.afterId : 0;
     let done = false;
-    while (ids.size < s.recheckAds) {
-      const page = await adsOfEntry(db.sql, network, entry, afterId, Math.min(500, s.recheckAds - ids.size));
-      page.ids.forEach((id) => ids.add(id));
+    while (found.size < s.recheckAds) {
+      const page = await adsOfEntry(db.sql, network, entry, afterId, Math.min(500, s.recheckAds - found.size));
+      for (const ad of page.ids) if (!found.has(ad.id)) found.set(ad.id, { adId: ad.adId, entry });
       if (page.next == null) { done = true; break; }
       afterId = page.next;
     }
@@ -243,13 +242,18 @@ async function recheckExisting(db, network, s) {
     cur.page = null;
   }
   cur.entryId = lastEntry;
-  const list = [...ids];
+  const list = [...found.keys()];
   const failed = await setSqlStatus(db.sql, network, list, FAILED, LIVE);
   // Hide them in search now; the cleanup cron deletes them shortly. An ES error is only logged (cleanup still deletes).
   if (failed) {
     try { await setEsStatus(db.elastic, network, list, FAILED); }
     catch (error) { log.warn('copyright recheck: ES hide failed', { network, error: error.message }); }
     log.info('copyright recheck: existing ads failed by new blocklist entries', { network, failed, upToEntry: cur.entryId });
+    // Why each ad failed, for the monitor's Rejected ads tab (copyright_blocked_attempts).
+    for (const { adId, entry } of found.values()) {
+      blocklist.recordAttempt({ network, platformAdId: adId, advertiser: entry.entry_type === 'advertiser' ? entry.value : null, blocklistId: Number(entry.id),
+        matchType: entry.entry_type === 'image_hash' ? 'sha256' : entry.entry_type, source: 'verification-recheck' });
+    }
   }
   return { entries: entries.length, failed };
 }
@@ -300,9 +304,10 @@ async function verifyNetwork(network) {
       { hashVersion: config.compliance.imageMatch.hashVersion, perceptual: config.compliance.imageMatch.perceptual }, s.workers);
     const byUrl = new Map(list.map(([url], i) => [url, decisions[i]]));
     for (const ad of toHash) {
-      const results = imageUrls(ad).map((u) => byUrl.get(u));
-      const reject = results.find((r) => r?.action === 'reject');
-      if (reject) { failed.push({ ad, blocklistId: reject.blocklistId, matchType: reject.kind, distance: reject.distance }); continue; }
+      const urlsOfAd = imageUrls(ad);
+      const results = urlsOfAd.map((u) => byUrl.get(u));
+      const at = results.findIndex((r) => r?.action === 'reject');
+      if (at >= 0) { const r = results[at]; failed.push({ ad, blocklistId: r.blocklistId, matchType: r.kind, distance: r.distance, imageUrl: urlsOfAd[at] }); continue; }
       const key = `${network}:${ad.id}`;
       // Close to a blocked image but not close enough to reject: keep it hidden for a person to decide.
       if (results.some((r) => r?.action === 'review')) { held.add(key); log.warn('copyright review needed', { network, id: ad.id }); continue; }
@@ -323,7 +328,7 @@ async function verifyNetwork(network) {
   for (const f of failed) {
     // Audit of the match, through B1's batched attempts writer (copyright_blocked_attempts).
     blocklist.recordAttempt({ network, platformAdId: f.ad.adId, advertiser: f.ad.ad.post_owner, blocklistId: f.blocklistId,
-      matchType: f.matchType || 'unknown', distance: f.distance ?? null, source: 'verification' });
+      imageUrl: f.imageUrl ?? null, matchType: f.matchType || 'unknown', distance: f.distance ?? null, source: 'verification' });
   }
   return { scanned: ads.length, approved: nApproved, failed: nFailed, pending: ads.length - nApproved - nFailed, ...(rechecked ? { rechecked } : {}) };
 }
@@ -339,11 +344,16 @@ function ownFile(path, ad) {
 
 // B3 takedown run, saved BEFORE any delete: its preflight_snapshot holds every id and
 // NAS path, so the Takedown Monitor (src/compliance/monitor) shows the run and its steps.
-async function startRun(sql, network, ads) {
-  // A run left 'running' by a crash would show as Running forever; its ads are still at status 2 and are retried by this tick.
-  await sql.query(`UPDATE copyright_takedown_runs SET status = 'failed', finished_at = UTC_TIMESTAMP(), details = 'process stopped before the run finished'
+// A run left 'running' by a crash would show as Running forever; its ads are still at status 2 and are retried by a later run.
+// Called on EVERY cleanup tick (also when there is nothing to delete), so the last stuck runs are closed too.
+async function closeStaleRuns(sql, network) {
+  await sql.query(`UPDATE copyright_takedown_runs SET status = 'failed', items_planned = items_succeeded + items_failed, finished_at = UTC_TIMESTAMP(),
+    details = 'process stopped before the run finished; its ads are retried by a later run'
     WHERE network = ? AND status = 'running' AND trigger_type = 'verification' AND operator = ? AND started_at < UTC_TIMESTAMP() - INTERVAL 1 HOUR`,
   [network, ADDED_BY]);
+}
+
+async function startRun(sql, network, ads) {
   const runId = crypto.randomUUID();
   const snapshot = { snapshotVersion: 1, capturedAt: new Date().toISOString(),
     ads: ads.map((ad) => ({ internalId: ad.id, platformAdId: ad.adId ?? null, storagePaths: [...ad.paths].filter((p) => ownFile(p, ad)) })) };
@@ -354,34 +364,49 @@ async function startRun(sql, network, ads) {
 }
 
 // Steps of the run (storage + sql per ad), the run's final counts, and the B6 findings.
+// `system` is a reserved word in MySQL 8, so the column is always quoted with backticks.
+// The run is closed even when a step or audit write fails, so it never stays 'running'.
 async function finishRun(sql, network, runId, steps, removed, refused) {
+  const errors = [];
   if (steps.length) {
     const rows = steps.map((st) => [runId, network, 'ad', st.ad.adId == null ? null : String(st.ad.adId), st.ad.id, st.system, st.status,
       st.error ?? null, JSON.stringify(st.details)]);
-    await sql.query(`INSERT INTO copyright_takedown_actions (run_id, network, target_type, target_id, internal_ad_id, system, operation, status,
-      error_message, details, attempts, started_at, finished_at, created_at)
-      VALUES ${rows.map(() => "(?, ?, ?, ?, ?, ?, 'delete', ?, ?, ?, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP())").join(', ')}`, rows.flat());
+    try {
+      await sql.query(`INSERT INTO copyright_takedown_actions (run_id, network, target_type, target_id, internal_ad_id, \`system\`, operation, status,
+        error_message, details, attempts, started_at, finished_at, created_at)
+        VALUES ${rows.map(() => "(?, ?, ?, ?, ?, ?, 'delete', ?, ?, ?, 1, UTC_TIMESTAMP(), UTC_TIMESTAMP(), UTC_TIMESTAMP())").join(', ')}`, rows.flat());
+    } catch (error) { errors.push(`steps: ${error.message}`); }
   }
-  // Ads waiting for a NAS retry are neither done nor failed: the monitor shows them as waiting.
+  // An ad waiting for a NAS retry is planned again by the next run (its 'retry' storage step stays in this run's log),
+  // so it is not counted here: otherwise the monitor's "Waiting" would count it twice and never go down.
   // 'succeeded' / 'failed' are the words the admin Takedown Monitor filters on (react_admin TakedownMonitor.jsx RUN_FILTERS).
-  await sql.query(`UPDATE copyright_takedown_runs SET status = ?, items_succeeded = ?, items_failed = ?, finished_at = UTC_TIMESTAMP()
-    WHERE run_id = ? AND network = ?`, [refused ? 'failed' : 'succeeded', removed.length, refused, runId, network]);
-  if (!removed.length) return;
-  const auditId = crypto.randomUUID();
-  await sql.query(`INSERT INTO copyright_audit_runs (audit_id, network, audit_type, status, started_at, finished_at, expected_count, found_count,
-    takedown_run_id, created_at) VALUES (?, ?, 'verification_cleanup', 'completed', UTC_TIMESTAMP(), UTC_TIMESTAMP(), ?, ?, ?, UTC_TIMESTAMP())`,
-  [auditId, network, removed.length, removed.length, runId]);
-  const rows = removed.map((r) => [auditId, network, 'blocklist_hit', 'sql', NETWORKS[network][0], r.ad.id, r.ad.adId ?? null,
-    'ad_id', r.ad.adId ?? null, JSON.stringify({ nasDeleted: r.nasDeleted, nasFailed: r.nasFailed }), 'resolved', 'removed', runId]);
-  await sql.query(`INSERT INTO copyright_audit_findings (audit_id, network, finding_type, system, location, internal_ad_id, platform_ad_id,
-    target_type, target_value, details, status, resolution, takedown_run_id, resolved_at, created_at)
-    VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())').join(', ')}`, rows.flat());
+  await sql.query(`UPDATE copyright_takedown_runs SET status = ?, items_planned = ?, items_succeeded = ?, items_failed = ?, finished_at = UTC_TIMESTAMP(),
+    details = ? WHERE run_id = ? AND network = ?`,
+  [refused ? 'failed' : 'succeeded', removed.length + refused, removed.length, refused, errors.length ? `log not fully saved: ${errors.join('; ')}`.slice(0, 2000) : null, runId, network]);
+  if (removed.length) {
+    try {
+      const auditId = crypto.randomUUID();
+      await sql.query(`INSERT INTO copyright_audit_runs (audit_id, network, audit_type, status, started_at, finished_at, expected_count, found_count,
+        takedown_run_id, created_at) VALUES (?, ?, 'verification_cleanup', 'completed', UTC_TIMESTAMP(), UTC_TIMESTAMP(), ?, ?, ?, UTC_TIMESTAMP())`,
+      [auditId, network, removed.length, removed.length, runId]);
+      const rows = removed.map((r) => [auditId, network, 'blocklist_hit', 'sql', NETWORKS[network][0], r.ad.id, r.ad.adId ?? null,
+        'ad_id', r.ad.adId ?? null, JSON.stringify({ nasDeleted: r.nasDeleted, nasFailed: r.nasFailed }), 'resolved', 'removed', runId]);
+      await sql.query(`INSERT INTO copyright_audit_findings (audit_id, network, finding_type, \`system\`, location, internal_ad_id, platform_ad_id,
+        target_type, target_value, details, status, resolution, takedown_run_id, resolved_at, created_at)
+        VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())').join(', ')}`, rows.flat());
+    } catch (error) { errors.push(`audit: ${error.message}`); }
+  }
+  if (errors.length) throw new Error(errors.join('; '));
 }
 
 async function cleanupNetwork(network) {
   const s = settings();
   const db = databaseManager.getConnections(network);
   if (!db?.sql) return { skipped: 'SQL not connected' };
+  if (s.audit !== false) {
+    try { await closeStaleRuns(db.sql, network); }
+    catch (error) { log.warn('copyright cleanup: could not close stale runs', { network, error: error.message }); }
+  }
   const ads = await loadAds(db.sql, network, FAILED, 0, s.cleanupBatchSize);
   if (!ads.length) return { scanned: 0 };
 

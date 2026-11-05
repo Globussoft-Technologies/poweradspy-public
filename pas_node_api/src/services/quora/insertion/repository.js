@@ -73,6 +73,7 @@ async function deleteAdCascade(exec, internalId) {
     ['quora_ad_variants', 'quora_ad_id'],
     ['quora_comments', 'quora_ad_id'],
     ['quora_ad_bug_report', 'ad_id'],
+    ['quora_ad_categories', 'quora_ad_id'], // RESTRICT foreign key to quora_ad (checked on dev)
   ];
   for (const [table, col] of childDeletes) {
     await deleteIgnoringMissingTable(exec, `DELETE FROM ${table} WHERE ${col} = ?`, [internalId]);

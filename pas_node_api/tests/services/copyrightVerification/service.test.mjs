@@ -157,7 +157,7 @@ function makeRecheckSql({ entries, owners = [], ads, hashes = [] }) {
       if (q.includes("MIN(id) FROM copyright_blocklist")) return [{ first: null, last: 0 }];
       if (q.includes("FROM copyright_blocklist")) return entries.filter((e) => e.id > p[0]);
       if (q.includes("FROM copyright_image_hashes")) return hashes.filter((h) => h.sha256 === p[0]).map((h) => ({ id: h.internal_ad_id }));
-      if (q.includes("FROM facebook_ad_post_owners")) { expect(q).toContain("post_owner_lower IN"); return owners.filter((o) => p.includes(o.name)).map((o) => ({ id: o.id })); }
+      if (q.includes("FROM `facebook_ad_post_owners`")) { expect(q).toContain("`post_owner_lower` IN"); return owners.filter((o) => p.includes(o.name)).map((o) => ({ id: o.id })); }
       if (q.startsWith("UPDATE facebook_ad SET copyright_status")) {
         const [to, ...rest] = p; const from = rest.splice(-2);
         let n = 0; for (const a of ads) if (rest.includes(String(a.id)) && from.includes(a.copyright_status)) { a.copyright_status = to; n++; }
@@ -186,6 +186,8 @@ describe("re-check of existing ads", () => {
     expect(out).toEqual({ entries: 1, failed: 2 });
     expect(ads.map((a) => a.copyright_status)).toEqual([2, 2, 1]);
     expect(es.bulks[0].filter((x) => x.doc).every((x) => x.doc.copyright_status === 2)).toBe(true);
+    // Why each ad failed goes to the Rejected ads tab.
+    expect(blocklist.recordAttempt).toHaveBeenCalledWith(expect.objectContaining({ blocklistId: 1, matchType: "advertiser", advertiser: "Acme Corp", source: "verification-recheck" }));
     // Next tick: nothing new.
     expect(await service.recheckExisting({ sql, elastic: es }, "facebook", s())).toEqual({ entries: 0, failed: 0 });
   });
@@ -214,6 +216,15 @@ describe("re-check of existing ads", () => {
 });
 
 describe("cleanup cron", () => {
+  it("closes runs stuck at 'running' even when there is nothing to delete", async () => {
+    const sql = makeSql([], []);
+    vi.spyOn(databaseManager, "getConnections").mockReturnValue({ sql, elastic: makeEs() });
+    expect(await service.cleanupNetwork("facebook")).toEqual({ scanned: 0 });
+    const stale = sql.calls.find((c) => c.q.startsWith("UPDATE copyright_takedown_runs SET status = 'failed'"));
+    expect(stale.q).toContain("items_planned = items_succeeded + items_failed");
+    expect(stale.p).toEqual(["facebook", "copyright-verification"]);
+  });
+
   it("blocklists, deletes own NAS files, deletes through the existing pipeline and writes audit rows", async () => {
     const ads = [{ id: 11, ad_id: "p11", post_owner: "Bad Co", copyright_status: 2 }];
     const media = [{ ad: 11, image_url: "/b/stream/fb/adImage/2026-11/11.jpg" }, { ad: 11, image_url: "/b/stream/fb/postowner/2026-11/99.jpg" }];
@@ -232,7 +243,9 @@ describe("cleanup cron", () => {
     expect(del.mock.invocationCallOrder[0]).toBeGreaterThan(0);
     const steps = sql.calls.find((c) => c.q.includes("INSERT INTO copyright_takedown_actions"));
     expect(steps.p.filter((v) => v === "storage" || v === "sql")).toEqual(["storage", "sql"]);
-    expect(sql.calls.filter((c) => c.q.startsWith("UPDATE copyright_takedown_runs")).pop().p.slice(0, 3)).toEqual(["succeeded", 1, 0]);
+    expect(sql.calls.filter((c) => c.q.startsWith("UPDATE copyright_takedown_runs")).pop().p.slice(0, 4)).toEqual(["succeeded", 1, 1, 0]); // status, planned, succeeded, failed
+    // `system` is a reserved word in MySQL 8: the step and finding inserts must quote it
+    for (const c of sql.calls.filter((x) => /INSERT INTO copyright_(takedown_actions|audit_findings)/.test(x.q))) expect(c.q).toContain("`system`");
     expect(add.mock.calls[0][0][0]).toMatchObject({ entryType: "ad_id", identifierNamespace: "platform", value: "p11", network: "facebook" });
     expect(del).toHaveBeenCalledTimes(1); // the shared post-owner image is never deleted
     expect(del.mock.calls[0][0]).toBe("/b/stream/fb/adImage/2026-11/11.jpg");

@@ -101,6 +101,9 @@ async function deleteAdCascade(exec, internalId) {
     ['facebook_ad_variants', 'facebook_ad_id'],
     ['facebook_comments', 'facebook_ad_id'],
     ['facebook_ad_bug_report', 'ad_id'], // bug report keyed by ad_id (PHP passes the internal id)
+    // RESTRICT foreign keys to facebook_ad (checked on dev): without these an ad with a lander/language row cannot be deleted
+    ['facebook_ad_html_lander_content', 'facebook_ad_id'],
+    ['facebook_ar_language', 'facebook_ad_id'],
   ];
   for (const [table, col] of childDeletes) {
     await deleteIgnoringMissingTable(exec, `DELETE FROM ${table} WHERE ${col} = ?`, [internalId]);
