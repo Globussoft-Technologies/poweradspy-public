@@ -5,6 +5,7 @@ const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 const { open } = require('sqlite');
 const { getClientIp } = require('../utils/geoip');
+const { isSingletonOwner } = require('../clusterWorkerIdentity');
 
 /**
  * MetricsDB - Lightweight, persistent SQLite database for application metrics.
@@ -438,6 +439,12 @@ class MetricsDB {
    * Cleans data older than 3 days automatically every hour.
    */
   _startCleanupJob() {
+    // metrics.sqlite is ONE file shared by every PM2 worker. Each worker used
+    // to run this job (DELETE + VACUUM) on its own hourly timer, so several
+    // processes rewrote the whole file at the same time — a VACUUM racing
+    // another process's VACUUM/writes is a known way to end up with
+    // SQLITE_CORRUPT. Only the singleton owner cleans; the others just write.
+    if (!isSingletonOwner()) return;
     const cleanOldData = async () => {
       if (!this.db) return;
       try {

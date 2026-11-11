@@ -108,3 +108,36 @@ describe("common/helpers/displayableMediaFilters > getDisplayableMediaFilter", (
     expect(json).toContain('"term":{"type":"organic search"}');
   });
 });
+
+// Production bug (2026-11-11): the "everything else" branch had two `must_not`
+// keys in one object literal, so the second silently replaced the first and the
+// IMAGE/VIDEO(/STORIES) type exclusion was lost — legacy-media ads (hidden by
+// new-ui-react) passed the gate through that branch and inflated counts.
+describe("displayableMediaFilters — FB/IG catch-all branch keeps its type exclusion", () => {
+  const catchAll = (network) => getDisplayableMediaFilter(network)[0].bool.should[2].bool;
+
+  it("facebook: the catch-all branch excludes IMAGE and VIDEO and still blocks legacy media", () => {
+    const b = catchAll("facebook");
+    expect(b.must_not).toContainEqual({ terms: { "facebook_ad.type.keyword": ["IMAGE", "VIDEO"] } });
+    expect(collectWildcards(b.must_not).map((w) => w.value)).toEqual(expect.arrayContaining(["*pasimage*", "*pasvideo*", "*bydefault*", "*DefaultImage*"]));
+  });
+
+  it("instagram: the catch-all branch excludes IMAGE, VIDEO and STORIES and blocks legacy media", () => {
+    const b = catchAll("instagram");
+    expect(b.must_not).toContainEqual({ terms: { "instagram_ad.type.keyword": ["IMAGE", "VIDEO", "STORIES"] } });
+    expect(collectWildcards(b.must_not).map((w) => w.value)).toEqual(expect.arrayContaining(["*pasimage*", "*pasvideo*", "*bydefault*"]));
+  });
+
+  it("instagram: every branch blocks legacy pasimages/pasvideos/bydefault media", () => {
+    for (const branch of getDisplayableMediaFilter("instagram")[0].bool.should) {
+      const values = collectWildcards(branch.bool.must_not).map((w) => w.value);
+      expect(values).toEqual(expect.arrayContaining(["*pasimage*", "*pasvideo*", "*bydefault*"]));
+    }
+  });
+
+  it("instagram: a video STORY with only a thumbnail is displayable (same as VIDEO)", () => {
+    const thumbBranch = getDisplayableMediaFilter("instagram")[0].bool.should[1].bool;
+    expect(thumbBranch.filter).toContainEqual({ terms: { "instagram_ad.type.keyword": ["VIDEO", "STORIES"] } });
+    expect(thumbBranch.filter).toContainEqual({ exists: { field: "thumbnail" } });
+  });
+});

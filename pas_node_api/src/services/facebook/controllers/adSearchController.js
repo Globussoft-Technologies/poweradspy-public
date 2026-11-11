@@ -8,6 +8,19 @@ const { applyAiMetaFilters, markAiMetaResult } = require('../../common/helpers/a
 const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwnerRejection');
 const { normalizeSearchValues } = require('../../common/helpers/esQueryHelpers');
 
+// Heavy _source fields the search path never reads (see searchAds). Only the
+// per-language analyzer copies of the text, the raw page dumps and duplicate
+// original-image URLs; every field the SQL merge overlays from ES is kept.
+const FB_SEARCH_SOURCE_EXCLUDES = [
+  'mixdata',
+  'html',
+  'image_url_original',
+  'facebook_ad_variants.image_url_original',
+  'facebook_lib_page_details.data',
+  '*_ru', '*_fr', '*_sp', '*_ge',
+  'facebook_ad_variants.*_exactly',
+];
+
 // Shared SQL fragment for fetching full ad details by IDs
 // (used by main search, favorite, hidden, bug flows)
 const AD_DETAIL_SELECT = `
@@ -471,6 +484,16 @@ async function searchAds(req, db, logger) {
   // Build and execute
   const esParams = builder.build();
   applyAiMetaFilters(esParams, 'facebook', p);
+  // The Facebook builder asks for the complete _source. Search docs carry the ad
+  // text up to 7 times (base + _ru/_fr/_sp/_ge/_exactly analyzer copies) plus
+  // mixdata/html, so one page of 9 ads could be >2 MB. Nothing in this search
+  // path reads those copies (cards are hydrated from SQL; only the fields listed
+  // below in the SQL merge are taken from ES), so leave them out of the response.
+  // Matching, sorting and totals are unaffected: _source filtering only changes
+  // what is sent back.
+  if (esParams.body._source === undefined) {
+    esParams.body._source = { excludes: FB_SEARCH_SOURCE_EXCLUDES };
+  }
 
   // ─── Deep pagination: swap from/size → search_after ──
   const queryHash = buildQueryHash(p);

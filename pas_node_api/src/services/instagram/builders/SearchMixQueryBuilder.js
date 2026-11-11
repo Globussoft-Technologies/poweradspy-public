@@ -41,6 +41,16 @@ const { normalizePostOwnerName } = require('../../../insertion/helpers/postOwner
 const DEFAULT_IG_INDEX = igNet?.database?.elastic?.index || process.env.IG_ELASTIC_INDEX || 'search_mix';
 
 const DEFAULT_IMAGE_WILDCARD = { value: '*DefaultImage*' };
+// Legacy pre-migration storage folders (pasimages/pasvideos/…) and the
+// bydefault_ads placeholder 404 on the NAS and new-ui-react hides them
+// (shouldHideAdForBlockedMedia). Production 2026-11-11: ads with such a path in
+// ES also have a legacy SQL image_url, so the card is broken either way —
+// exclude them here so counts/pages only hold ads the dashboard renders.
+const BLOCKED_MEDIA_WILDCARDS = ['*pasimage*', '*pasvideo*', '*bydefault*'];
+const blockedMediaMustNot = (...fields) =>
+  fields.flatMap((field) =>
+    BLOCKED_MEDIA_WILDCARDS.map((value) => ({ wildcard: { [`${field}.keyword`]: { value } } })),
+  );
 // IMPORTANT: If you change this displayable-media gate, you MUST update all 3
 // mirrored copies of `displayableMediaFilters.js`:
 //   - pas_node_api/src/services/common/helpers/displayableMediaFilters.js
@@ -60,27 +70,27 @@ const EXTRA_CONDITION = [
             ],
             must_not: [
               { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
+              ...blockedMediaMustNot('new_nas_image_url'),
             ],
           },
         },
-        // VIDEO — must have a thumbnail (no DefaultImage)
+        // VIDEO, and video STORIES (no new_nas_image_url — the card image is the
+        // thumbnail, same as VIDEO) — must have a thumbnail (no DefaultImage)
         {
           bool: {
             filter: [
-              { term:   { 'instagram_ad.type.keyword': 'VIDEO' } },
+              { terms:  { 'instagram_ad.type.keyword': ['VIDEO', 'STORIES'] } },
               { exists: { field: 'thumbnail' } },
             ],
             must_not: [
               { wildcard: { 'thumbnail.keyword': DEFAULT_IMAGE_WILDCARD } },
+              ...blockedMediaMustNot('thumbnail'),
             ],
           },
         },
         // Everything else (carousel, reel, etc.) — needs new_nas_image_url or othermedia, no DefaultImage
         {
           bool: {
-            must_not: [
-              { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
-            ],
             filter: [
               {
                 bool: {
@@ -92,9 +102,14 @@ const EXTRA_CONDITION = [
                 },
               },
             ],
+            // ONE must_not array: a second `must_not` key in this object would
+            // silently replace the first, dropping the type exclusion and letting
+            // IMAGE/VIDEO/STORIES ads with broken media through this branch.
             must_not: [
+              { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
               { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
               { wildcard: { 'othermedia.keyword': DEFAULT_IMAGE_WILDCARD } },
+              ...blockedMediaMustNot('new_nas_image_url', 'othermedia'),
             ],
           },
         },

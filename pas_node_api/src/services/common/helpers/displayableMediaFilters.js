@@ -61,9 +61,6 @@ const FACEBOOK = [
           ],
         } },
         { bool: {
-          must_not: [
-            { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
-          ],
           filter: [
             { bool: {
               should: [
@@ -73,7 +70,11 @@ const FACEBOOK = [
               minimum_should_match: 1,
             } },
           ],
+          // ONE must_not array: a second `must_not` key in this object would
+          // silently replace the first, dropping the type exclusion and letting
+          // IMAGE/VIDEO ads with broken media through this branch.
           must_not: [
+            { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
             { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
             { wildcard: { 'othermedia.keyword': { value: '*DefaultImage*' } } },
             ...FB_BLOCKED_MEDIA('new_nas_image_url', 'othermedia'),
@@ -86,6 +87,10 @@ const FACEBOOK = [
 ];
 
 // ─── Instagram ──────────────────────────────────────────────────────────
+// Legacy pasimages/pasvideos/bydefault paths 404 on the NAS and new-ui-react
+// hides them (production 2026-11-11: such ads also have a legacy SQL
+// image_url, so the card is broken either way). Mirrors
+// instagram/builders/SearchMixQueryBuilder.js.
 const INSTAGRAM = [
   {
     bool: {
@@ -97,21 +102,21 @@ const INSTAGRAM = [
           ],
           must_not: [
             { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
+            ...FB_BLOCKED_MEDIA('new_nas_image_url'),
           ],
         } },
+        // VIDEO, and video STORIES (no new_nas_image_url, card image is the thumbnail)
         { bool: {
           filter: [
-            { term:   { 'instagram_ad.type.keyword': 'VIDEO' } },
+            { terms:  { 'instagram_ad.type.keyword': ['VIDEO', 'STORIES'] } },
             { exists: { field: 'thumbnail' } },
           ],
           must_not: [
             { wildcard: { 'thumbnail.keyword': { value: '*DefaultImage*' } } },
+            ...FB_BLOCKED_MEDIA('thumbnail'),
           ],
         } },
         { bool: {
-          must_not: [
-            { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
-          ],
           filter: [
             { bool: {
               should: [
@@ -121,9 +126,12 @@ const INSTAGRAM = [
               minimum_should_match: 1,
             } },
           ],
+          // ONE must_not array (a second key would silently drop the type exclusion).
           must_not: [
+            { terms: { 'instagram_ad.type.keyword': ['IMAGE', 'VIDEO', 'STORIES'] } },
             { wildcard: { 'new_nas_image_url.keyword': { value: '*DefaultImage*' } } },
             { wildcard: { 'othermedia.keyword': { value: '*DefaultImage*' } } },
+            ...FB_BLOCKED_MEDIA('new_nas_image_url', 'othermedia'),
           ],
         } },
       ],

@@ -108,9 +108,6 @@ const EXTRA_CONDITION = [
         },
         {
           bool: {
-            must_not: [
-              { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
-            ],
             filter: [
               {
                 bool: {
@@ -122,7 +119,11 @@ const EXTRA_CONDITION = [
                 },
               },
             ],
+            // ONE must_not array: a second `must_not` key in this object would
+            // silently replace the first, dropping the type exclusion and letting
+            // IMAGE/VIDEO ads with broken media through this branch.
             must_not: [
+              { terms: { 'facebook_ad.type.keyword': ['IMAGE', 'VIDEO'] } },
               { wildcard: { 'new_nas_image_url.keyword': DEFAULT_IMAGE_WILDCARD } },
               { wildcard: { 'othermedia.keyword': DEFAULT_IMAGE_WILDCARD } },
               ...blockedMediaMustNot('new_nas_image_url', 'othermedia'),

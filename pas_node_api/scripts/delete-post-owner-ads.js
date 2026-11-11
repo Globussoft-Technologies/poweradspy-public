@@ -828,7 +828,7 @@ async function deleteNasForNetwork(network, elastic, refs, concurrency = 4, deps
   let done = 0;
   const progress = () => {
     done += 1;
-    if (done % 100 === 0 || done === refs.size) {
+    if (!deps.quiet && (done % 100 === 0 || done === refs.size)) {
       console.log(`[${network}] NAS ${done}/${refs.size} processed (deleted ${result.deleted}, not deleted ${result.notDeleted.length})`);
     }
   };
@@ -1560,4 +1560,8 @@ module.exports = {
   deleteAdsBatched,
   nasKeyFromStoredPath,
   deleteNasFile,
+  scopedNetworkConfig,
+  closeNas,
+  nasBucket,
+  nasDeleteTransports,
 };

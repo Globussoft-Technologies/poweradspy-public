@@ -166,6 +166,11 @@ const config = {
       },
       maxRetries: fileConfig.databases?.elastic?.maxRetries,
       requestTimeoutMs: fileConfig.databases?.elastic?.requestTimeoutMs,
+      // HTTP pool of the ES client shared by every network on this node.
+      maxSockets: getVal(fileConfig.databases?.elastic?.maxSockets, 'DB_ELASTIC_MAX_SOCKETS', toInt),
+      maxFreeSockets: getVal(fileConfig.databases?.elastic?.maxFreeSockets, 'DB_ELASTIC_MAX_FREE_SOCKETS', toInt),
+      // Identical searches in flight at the same time share one ES request (no cache).
+      coalesceSearches: fileConfig.databases?.elastic?.coalesceSearches,
     },
     elastic_tiktok: {
       node: getVal(fileConfig.databases?.elastic_tiktok?.node, 'DB_ELASTIC_TIKTOK_NODE'),
@@ -175,6 +180,11 @@ const config = {
       },
       maxRetries: fileConfig.databases?.elastic?.maxRetries,
       requestTimeoutMs: fileConfig.databases?.elastic?.requestTimeoutMs,
+      // HTTP pool of the ES client shared by every network on this node.
+      maxSockets: getVal(fileConfig.databases?.elastic?.maxSockets, 'DB_ELASTIC_MAX_SOCKETS', toInt),
+      maxFreeSockets: getVal(fileConfig.databases?.elastic?.maxFreeSockets, 'DB_ELASTIC_MAX_FREE_SOCKETS', toInt),
+      // Identical searches in flight at the same time share one ES request (no cache).
+      coalesceSearches: fileConfig.databases?.elastic?.coalesceSearches,
     },
   },
 

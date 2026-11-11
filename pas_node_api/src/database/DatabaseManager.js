@@ -5,6 +5,7 @@ const http = require('http');
 const https = require('https');
 const config = require('../config');
 const logger = require('../logger');
+const { createSearchCoalescer } = require('./esSearchCoalescer');
 
 const log = logger.createChild('database-manager');
 
@@ -306,14 +307,18 @@ class DatabaseManager {
    * Create an HTTP/HTTPS agent with bounded connection-pool settings
    * to prevent socket/file-descriptor leaks.
    */
-  _createBoundedAgent(nodeUrl) {
+  _createBoundedAgent(nodeUrl, cfgSection = {}) {
     const isHttps = (nodeUrl || '').startsWith('https');
     const AgentClass = isHttps ? https.Agent : http.Agent;
     return new AgentClass({
       keepAlive: true,
       keepAliveMsecs: 30000,   // send TCP keep-alive probes every 30s
-      maxSockets: 15,          // max concurrent sockets to the ES node
-      maxFreeSockets: 5,       // max idle sockets kept in pool
+      // One client is shared by every network that points at the same ES node.
+      // With all networks on one cluster, an "All networks" search alone sends
+      // ~12 parallel requests, so the old fixed 15 sockets queued requests
+      // behind slow ones and caused per-network timeouts. Config-driven now.
+      maxSockets: cfgSection.maxSockets || 100,
+      maxFreeSockets: cfgSection.maxFreeSockets || 20,
       timeout: 60000,          // socket inactivity timeout 60s
     });
   }
@@ -331,7 +336,7 @@ class DatabaseManager {
       const cached = this._esClientCache.get(cacheKey);
       cached.refCount++;
       log.info(`[${slug}] Reusing shared ES client for ${elasticConfig.node} (refCount=${cached.refCount})`);
-      return { client: cached.client, esMajor: cached.esMajor };
+      return { client: cached.client, esMajor: cached.esMajor, search: cached.search };
     }
 
     // Resolve config section for timeouts
@@ -347,7 +352,7 @@ class DatabaseManager {
       requestTimeout: cfgSection.requestTimeoutMs || 30000,
       sniffOnStart: false,
       // Bounded HTTP agent to limit open sockets / file descriptors
-      agent: this._createBoundedAgent(nodes[0]),
+      agent: this._createBoundedAgent(nodes[0], cfgSection),
     };
     if (nodes.length > 1) {
       log.info(`[${slug}] Elasticsearch using ${nodes.length} nodes (round-robin): ${nodes.join(', ')}`);
@@ -374,15 +379,21 @@ class DatabaseManager {
     const esMajor = versionNumber ? parseInt(versionNumber.split('.')[0], 10) : null;
     log.info(`[${slug}] Elasticsearch connection healthy. Version: ${versionNumber || 'Unknown'}`);
 
-    this._esClientCache.set(cacheKey, { client, refCount: 1, esMajor });
-    return { client, esMajor };
+    // Identical searches in flight at the same moment share one ES request
+    // (no caching — see esSearchCoalescer.js). Shared across every network on
+    // this client. Disable with databases.<key>.coalesceSearches=false.
+    const rawSearch = (params, options) => client.search(params, options);
+    const search = cfgSection.coalesceSearches === false ? rawSearch : createSearchCoalescer(rawSearch);
+
+    this._esClientCache.set(cacheKey, { client, refCount: 1, esMajor, search });
+    return { client, esMajor, search };
   }
 
   // ─── Elasticsearch ──────────────────────────────────────
 
   async _connectElastic(slug, elasticConfig) {
     try {
-      const { client, esMajor } = await this._getOrCreateEsClient(slug, elasticConfig, 'elastic');
+      const { client, esMajor, search } = await this._getOrCreateEsClient(slug, elasticConfig, 'elastic');
 
       return {
         type: 'elasticsearch',
@@ -392,7 +403,7 @@ class DatabaseManager {
         // Preserve Elasticsearch transport options (for example requestTimeout)
         // instead of dropping them at this service wrapper boundary.
         get:    (params, options) => client.get(params, options),
-        search: (params, options) => client.search(params, options),
+        search: (params, options) => search(params, options),
         analyze:(params, options) => client.indices.analyze(params, options),
         count:  (params, options) => client.count(params, options),
         index: (params, options) => {
@@ -418,7 +429,7 @@ class DatabaseManager {
 
   async _connectTiktokElastic(slug, elasticConfig) {
     try {
-      const { client, esMajor } = await this._getOrCreateEsClient(slug, elasticConfig, 'elastic_tiktok');
+      const { client, esMajor, search } = await this._getOrCreateEsClient(slug, elasticConfig, 'elastic_tiktok');
 
       return {
         type: 'elasticsearch',
@@ -426,7 +437,7 @@ class DatabaseManager {
         esMajor,
         indexName: elasticConfig.index,
         // Keep the TikTok adapter behavior aligned with the main ES adapter.
-        search: (params, options) => client.search(params, options),
+        search: (params, options) => search(params, options),
         analyze:(params, options) => client.indices.analyze(params, options),
         count:  (params, options) => client.count(params, options),
         index:  (params, options) => client.index(params, options),
