@@ -405,7 +405,7 @@ export default function CopyrightClaims() {
                       ))}
                     </div>
                   )}
-                  <div className="text-xs text-gray-500 mt-2">Removing the ads that already exist is a separate step (takedown) and is not started by this decision.</div>
+                  <div className="text-xs text-gray-500 mt-2">The ads that already exist are not deleted by this decision itself. When the copyright check is switched on, the background jobs find them and remove them within a few minutes; follow this under Monitoring (Rejected ads, then the takedown runs).</div>
                 </section>
               )}
             </div>
