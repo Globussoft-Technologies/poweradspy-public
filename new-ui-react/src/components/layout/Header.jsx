@@ -1281,6 +1281,7 @@ const Header = ({
               `}
             >
               <AdFilterBar
+                onSearch={onSearch}
                 sdui={sdui}
                 platformOptions={platformOptions}
                 specificPlatforms={specificPlatforms}

@@ -1,6 +1,6 @@
-import React, { useMemo, useState, useRef, useEffect } from "react";
+import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronRight, Filter, SlidersHorizontal } from "lucide-react";
+import { Check, ChevronRight, Filter, SlidersHorizontal, FileSpreadsheet, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import PlatformTab, { PLATFORM_ASSET_MAP, PLATFORM_FULL_NAMES } from "../shared/PlatformTab";
 import RowSlider from "../shared/RowSlider";
@@ -12,6 +12,7 @@ import {
   hasActiveAiFilters,
   replaceAiFilters,
 } from "../../utils/aiQuickFilterPresets";
+import { downloadCustomKeywordSample, uploadCustomKeywordsFile, fetchMyCustomKeywords } from "../../services/api";
 
 // Maps SDUI sort labels/values to the stable Plan Control/legacy access ID.
 const SORT_TO_PLAN_ACCESS_ID = {
@@ -120,6 +121,72 @@ export const resolveActiveSortLabel = (sortTabs = [], sortBy) => {
   return match?.label ?? match ?? "";
 };
 
+// Custom Keyword dialog (Google only): download the sample sheet, upload the filled
+// one, and see your keywords + status. Searching is done from the main search bar.
+const CK_STATUS = { pending: "Pending", in_progress: "Scraping", done: "Done", no_ads_found: "No ads", failed: "Failed" };
+const CustomKeywordDialog = ({ onSearch, onClose }) => {
+  const [items, setItems] = useState([]);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      const res = await fetchMyCustomKeywords({ page: 1, pageSize: 50 });
+      if (res.code === 200) setItems(res.data.items);
+      else setMsg(res.code === 503 ? "Custom keywords are not available yet." : res.message);
+    } catch { setMsg("Could not load your keywords."); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const upload = async (file) => {
+    if (!file) return;
+    if (!/\.xlsx$/i.test(file.name)) { setMsg("Please choose the .xlsx sample sheet, filled in."); return; }
+    setBusy(true);
+    try {
+      const res = await uploadCustomKeywordsFile(file);
+      if (res.code === 200) { setMsg(`${res.data.added} added, ${res.data.duplicates} duplicate`); load(); }
+      else setMsg(res.code === 503 ? "Custom keywords are not available yet." : (res.message || "Upload failed."));
+    } catch { setMsg("Upload failed. Please try again."); }
+    finally { setBusy(false); }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Custom keywords">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative flex max-h-[80dvh] w-full max-w-sm flex-col rounded-xl border border-theme-border bg-theme-card p-4 shadow-2xl">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[13px] font-bold text-theme-text">Custom Keywords</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-theme-text-muted hover:text-theme-text"><X size={14} /></button>
+        </div>
+        <div className="flex gap-2 text-[11px] font-semibold">
+          <button type="button" onClick={() => downloadCustomKeywordSample().catch(() => setMsg("Could not download the sample."))} className="flex-1 rounded-lg border border-theme-border px-2 py-1.5 text-theme-text-secondary hover:text-theme-text">Download sample</button>
+          <label className={`flex-1 cursor-pointer rounded-lg border border-theme-border px-2 py-1.5 text-center text-theme-text-secondary hover:text-theme-text ${busy ? "opacity-50" : ""}`}>
+            {busy ? "Uploading…" : "Upload .xlsx"}
+            <input type="file" accept=".xlsx" className="hidden" disabled={busy} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
+          </label>
+        </div>
+        {msg && <p className="mt-2 text-[11px] text-theme-text-muted">{msg}</p>}
+        <p className="mt-3 text-[11px] text-theme-text-muted">Click a keyword to search it, or type it in the search bar. You also see your own ads for it.</p>
+        {items.length > 0 && (
+          <ul className="mt-2 divide-y divide-theme-border/60 overflow-y-auto rounded-lg border border-theme-border text-[12px]">
+            {items.map((k) => (
+              <li key={k.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                <button type="button" onClick={() => onSearch?.(k.keyword, "keyword")} className="min-w-0 truncate text-left text-theme-text hover:text-[#6b99ff]">{k.keyword}</button>
+                <span className="shrink-0 text-[10px] text-theme-text-muted">{CK_STATUS[k.status] || k.status}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+};
+
 /**
  * AdFilterBar - Consolidates all ad-level controls:
  * 1. Platform Tabs (with horizontal scroll)
@@ -143,6 +210,7 @@ const AdFilterBar = ({
   onSortRestricted,
   onAdTypeRestricted,
   onAiFilterRestricted,
+  onSearch,
   className = "",
   showAiToggleOnMobile = true,
   showPlatformsOnMobile = true,
@@ -262,6 +330,7 @@ const AdFilterBar = ({
 
   // Sort dropdown state (owned here, not lifted to AdGrid)
   const [showMoreTabs, setShowMoreTabs] = useState(false);
+  const [showCustomKeywords, setShowCustomKeywords] = useState(false);
   const moreTabsRef = useRef(null);
 
   useEffect(() => {
@@ -307,6 +376,14 @@ const AdFilterBar = ({
   const isQuoraOnly = activeLower.length === 1 && activeLower[0] === "quora";
   // ChatGPT Ads tab — its date picker offers Last Seen / First Seen.
   const isChatgptOnly = activeLower.length === 1 && activeLower[0] === "chatgptads";
+  // Custom Keyword (user-uploaded Excel of keywords): the button exists only when SDUI serves
+  // the `custom_keyword` navbar entry, and shows only on the networks it lists (Google).
+  const customKeywordDoc = (config?.navbar || []).find((doc) => doc?._id === "custom_keyword");
+  const customKeywordNetworks = Array.isArray(customKeywordDoc?.platform_applicability) && customKeywordDoc.platform_applicability.length
+    ? customKeywordDoc.platform_applicability.map((p) => String(p).toLowerCase())
+    : ["google"]; // the feature is Google-only when SDUI does not say otherwise
+  const showCustomKeywordButton = !!customKeywordDoc && customKeywordDoc.visible !== false &&
+    activeLower.length > 0 && activeLower.every((n) => customKeywordNetworks.includes(n));
   const visibleSortTabs = useMemo(() => {
     if (!isQuoraOnly) return sortTabs;
     return sortTabs.filter((tab) => {
@@ -595,6 +672,26 @@ const AdFilterBar = ({
           aligned to the screen gutters, whichever button opened it. */}
       <div className={`flex items-center gap-2 flex-wrap shrink-0 pwa:relative pwa:w-full pwa:flex-nowrap pwa:gap-1.5 ${pwaHideControls ? "pwa:hidden" : ""}`}>
 
+        {showCustomKeywordButton && (
+          <button
+            type="button"
+            title="Custom Keyword"
+            aria-label="Custom Keyword"
+            onClick={() => {
+              if (guest?.showGuestWarning("Please login to use custom keywords")) return;
+              setShowCustomKeywords(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[10px] font-bold transition-all border bg-theme-card text-white/60 border-theme-border hover:text-theme-text-secondary hover:border-theme-text-muted"
+          >
+            <FileSpreadsheet size={14} />
+          </button>
+        )}
+        {showCustomKeywords && (
+          <CustomKeywordDialog
+            onClose={() => setShowCustomKeywords(false)}
+            onSearch={onSearch && ((keyword, type) => { onSearch(keyword, type); setShowCustomKeywords(false); })}
+          />
+        )}
         <AdDateDropdown onDateChange={onDateChange} filterValues={sdui?.filterValues} isTikTok={specificPlatforms.length === 1 && specificPlatforms[0]?.toLowerCase() === "tiktok"} isAdmobOnly={isAdmobOnly} disableTooltips={disableTooltips} isChatgptOnly={isChatgptOnly} isFilterRestricted={isFilterRestricted} onRestricted={onDateRestricted} />
         {/* Ad Type Filter — hidden when no options available for current platform */}
         {AD_TYPE_OPTIONS.length > 0 && <div className="relative pwa:static" ref={adTypeFilterRef}>

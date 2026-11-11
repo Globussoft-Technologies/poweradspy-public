@@ -1037,6 +1037,24 @@
     ]
   },
   {
+    "_id": "custom_keyword",
+    "config_type": "navbar",
+    "title": "CUSTOM KEYWORD",
+    "rank": 99,
+    "collapsed_by_default": false,
+    "visible": true,
+    "icon": {
+      "type": "none",
+      "value": null
+    },
+    "meta": "Upload your own keywords and see only your ads for them. Shown on the networks listed in platform_applicability.",
+    "display_mode": "inline",
+    "platform_applicability": [
+      "google"
+    ],
+    "filters": []
+  },
+  {
     "_id": "engagement",
     "config_type": "sidebar",
     "title": "ENGAGEMENT",

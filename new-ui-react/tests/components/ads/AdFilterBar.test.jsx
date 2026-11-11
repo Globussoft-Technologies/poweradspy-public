@@ -16,6 +16,8 @@ vi.mock("lucide-react", () => ({
   Filter: () => <i data-testid="filter-ic" />,
   SlidersHorizontal: () => <i data-testid="sliders-ic" />,
   Smartphone: () => <i data-testid="phone-ic" />,
+  FileSpreadsheet: () => <i data-testid="sheet-ic" />,
+  X: () => <i data-testid="x-ic" />,
 }));
 
 // Mock the constants module entirely to skip the deep icon import tree
@@ -1043,5 +1045,26 @@ describe("AdFilterBar > isScrolled flag", () => {
   it("isScrolled=false uses flex-wrap px-3", () => {
     const { container } = render(<AdFilterBar {...baseProps} />);
     expect(container.firstChild.className).toMatch(/flex-wrap px-3/);
+  });
+});
+
+describe("AdFilterBar > Custom Keyword button (served by SDUI)", () => {
+  const ckDoc = { _id: "custom_keyword", visible: true, platform_applicability: ["google"], filters: [] };
+  const withCk = (activePlatforms, doc = ckDoc) => ({
+    ...baseSdui,
+    activePlatforms,
+    config: { ...baseSdui.config, navbar: [...(baseSdui.config.navbar || []), ...(doc ? [doc] : [])] },
+  });
+
+  it("shows when SDUI serves it and Google is the only network", () => {
+    const { getByLabelText } = render(<AdFilterBar {...baseProps} sdui={withCk(["google"])} />);
+    expect(getByLabelText("Custom Keyword")).toBeTruthy();
+  });
+
+  it("is hidden on other networks, when SDUI does not serve it, or when it is not visible", () => {
+    expect(render(<AdFilterBar {...baseProps} sdui={withCk(["facebook"])} />).queryByLabelText("Custom Keyword")).toBeNull();
+    expect(render(<AdFilterBar {...baseProps} sdui={withCk(["google", "facebook"])} />).queryByLabelText("Custom Keyword")).toBeNull();
+    expect(render(<AdFilterBar {...baseProps} sdui={withCk(["google"], null)} />).queryByLabelText("Custom Keyword")).toBeNull();
+    expect(render(<AdFilterBar {...baseProps} sdui={withCk(["google"], { ...ckDoc, visible: false })} />).queryByLabelText("Custom Keyword")).toBeNull();
   });
 });

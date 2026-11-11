@@ -7,6 +7,7 @@ const {
 } = require('../helpers/paramParser');
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
+const config = require('../../../config');
 const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
@@ -286,6 +287,18 @@ async function searchAds(req, db, logger) {
   if (p.target_keywords) builder.setTargetKeyword(ensureArray(p.target_keywords));
   if (p.tags)           builder.setTags(ensureArray(p.tags));
   if (p.lang)           builder.setLangDetect(ensureArray(p.lang));
+
+  // Custom keyword: on a keyword search the user's own uploaded-keyword ads also match
+  // (the builder ORs a "<userId>:<keyword>" tag into the keyword query). The user id comes
+  // from the token, never the request, so nobody sees ads found for another user's keyword.
+  // Does nothing while the feature flag is off.
+  if (p.keyword && config.customKeywords?.enabled) {
+    const uid = Number(req.user?.user_id ?? req.user?.id);
+    if (Number.isInteger(uid) && uid > 0) {
+      builder.setCustomKeywordUser(uid, config.customKeywords.maxKeywordLength);
+      p.custom_keyword_user = uid; // results now depend on the user, so the deep-pagination cursor key does too
+    }
+  }
 
   const apArr = p.ad_position ? ensureArray(p.ad_position) : [];
   if (apArr.length > 0) builder.setAdPosition(apArr);

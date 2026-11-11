@@ -211,6 +211,22 @@ async function updateVariantByAdId(exec, data, googleTextAdId) {
     [...Object.values(data), googleTextAdId]
   ));
 }
+/**
+ * Add one custom-keyword tag ("<userId>:<keyword>") to the variant's `custom_keyword` column — a
+ * '|'-joined list, same shape as target_keyword. No-op when the tag is already there. Needs the
+ * column from scripts/apply-custom-keywords-schema.js; callers treat a failure as non-fatal.
+ * @returns {string[]} the tags now stored.
+ */
+async function mergeVariantCustomKeyword(exec, googleTextAdId, token) {
+  const cur = found(await exec.query('SELECT custom_keyword FROM google_text_ad_variants WHERE google_text_ad_id = ? LIMIT 1', [googleTextAdId]));
+  if (cur.code !== 200) return [];
+  const list = String(cur.data[0].custom_keyword || '').split('|').filter(Boolean);
+  if (!list.includes(token)) {
+    list.push(token);
+    await exec.query('UPDATE google_text_ad_variants SET custom_keyword = ? WHERE google_text_ad_id = ?', [list.join('|'), googleTextAdId]);
+  }
+  return list;
+}
 async function getVariantByAdId(exec, googleTextAdId) {
   return found(await exec.query('SELECT id, target_keyword FROM google_text_ad_variants WHERE google_text_ad_id = ? LIMIT 1', [googleTextAdId]));
 }
@@ -302,7 +318,7 @@ module.exports = {
   getCountryOnly, insertCountryOnly,
   getCountry, insertCountry,
   getDomain, insertDomain, getDomainRegisteredDate,
-  insertVariant, updateVariantByAdId, getVariantByAdId,
+  insertVariant, updateVariantByAdId, mergeVariantCustomKeyword, getVariantByAdId,
   getAdCountry, insertAdCountry, bumpAdCountryCount,
   getAdCountryOnly, insertAdCountryOnly, bumpAdCountryOnlyCount,
   insertMetaData,

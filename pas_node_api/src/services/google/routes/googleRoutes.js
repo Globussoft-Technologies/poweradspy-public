@@ -33,6 +33,7 @@ const {
 } = require('../controllers/keywordListsController');
 const { importKeywordsFile } = require('../controllers/keywordImportController');
 const { getUrlForBuiltWith, updateBuiltWith } = require('../controllers/built-withController');
+const customKeywords = require('../controllers/customKeywordsController');
 const { authMiddleware } = require('../../../middleware/auth');
 const { planAccessMiddleware, requireIntelAccess, requireKeywordExplorerEnabled, hasKeywordExplorerAccess } = require('../../../middleware/planAccess');
 const config = require('../../../config');
@@ -522,6 +523,14 @@ function createGoogleRoutes(service) {
       return res.status(result.code === 200 ? 200 : result.code).json(result);
     })
   );
+
+  // ─── Custom keywords (user-uploaded Excel → MongoDB → scraper claims) ───────
+  // Off unless config.customKeywords.enabled (every endpoint then answers 503).
+  // User endpoints use the JWT; scraper endpoints have no JWT, like keyword-search/work.
+  router.get('/custom-keywords/sample', authMiddleware, asyncHandler(customKeywords.downloadSample));
+  router.post('/custom-keywords/upload', authMiddleware, customKeywords.uploadMiddleware, asyncHandler(customKeywords.uploadKeywords));
+  router.get('/custom-keywords', authMiddleware, asyncHandler(customKeywords.listMyKeywords));
+  router.post('/custom-keywords/next', asyncHandler(customKeywords.nextKeyword));
 
   // ─── Search-Audit Keywords (gtext → MongoDB google_audit_keywords) ──────────
   // GET  /api/v1/google/get-search-audit-keywords    — crawler pull (cursored batch)

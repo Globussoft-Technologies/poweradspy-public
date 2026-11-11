@@ -569,3 +569,18 @@ describe("services/sdui/services/sduiService > computeETag / computeVersion", ()
   // readUInt32BE produces unsigned values so version is always ≥ 0. Tracked
   // at https://github.com/Globussoft-Technologies/poweradspy/issues/237
 });
+
+describe("services/sdui/services/sduiService > filterConfigByPlatforms keeps filterless navbar entries", () => {
+  it("keeps a navbar doc that never had filters, but still drops one whose filters were all narrowed away", async () => {
+    const cfg = {
+      searchbar: [],
+      sidebar: [],
+      navbar: [
+        { _id: "custom_keyword", config_type: "navbar", visible: true, filters: [] },
+        { _id: "only_fb", config_type: "navbar", filters: [{ _id: "f", platform_applicability: ["facebook"], options: [] }] },
+      ],
+    };
+    const out = await svc.filterConfigByPlatforms(cfg, ["google"]);
+    expect(out.navbar.map((d) => d._id)).toEqual(["custom_keyword"]);
+  });
+});

@@ -24,7 +24,7 @@ const path = require('path');
 const config = require('../../../config');
 const repo = require('./repository');
 const { validateMetaAds } = require('./validate');
-const { normalizeGtextAd, checkGates } = require('./normalize');
+const { normalizeGtextAd, checkGates, customKeywordToken } = require('./normalize');
 const { buildDoc, searchIdQuery, firstHitId, firstHitSource, keywordArray, ES_INDEX } = require('./esDocBuilder');
 const { META_INSERT_COLUMNS } = require('./esColumns');
 const api = require('../../../insertion/helpers/apiClients');
@@ -163,8 +163,14 @@ async function insertPath(ctx, rawAd, { translation, network }) {
     await repo.insertAccountActivity(sql, { system_id: n.system_id, google_ad_id: result.googleTextAdId, platform: 10, is_unique: 1 }).catch(() => {});
   }
 
+  // custom keyword (user-uploaded keyword that led to this ad) — optional, never fails the ad
+  const customToken = customKeywordToken(n, config.customKeywords);
+  if (customToken) {
+    await repo.mergeVariantCustomKeyword(sql, result.googleTextAdId, customToken).catch((e) => log.warn('gtext custom_keyword SQL failed', { error: e.message }));
+  }
+
   // ES index (flat doc into google_ads_data_v2)
-  await indexAd(ctx, result, n, { translation, imageUrl, source }).catch((e) => log.warn('gtext ES index failed', { error: e.message }));
+  await indexAd(ctx, result, n, { translation, imageUrl, source, customToken }).catch((e) => log.warn('gtext ES index failed', { error: e.message }));
   api.adgptInsert(buildAdgptPayload(n, result, imageUrl));
 
   const warning = (n.type === 'IMAGE' && (!imageUrl || String(imageUrl).includes('Default'))) ? 'Image storage issue: the ad was saved, but its image could not be stored.' : null;
@@ -236,15 +242,21 @@ async function updatePath(ctx, rawAd, { translation, existingId, network }) {
     await repo.insertAccountActivity(sql, { system_id: n.system_id, google_ad_id: googleTextAdId, platform: 10, is_unique: 0 }).catch(() => {});
   }
 
+  // custom keyword — add this user's tag to the ad (SQL list + ES array); optional, never fails the ad
+  const customToken = customKeywordToken(n, config.customKeywords);
+  if (customToken) {
+    await repo.mergeVariantCustomKeyword(sql, googleTextAdId, customToken).catch((e) => log.warn('gtext custom_keyword SQL failed', { error: e.message }));
+  }
+
   // ES update (flat doc; carry over fields from existing _source)
-  await updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, mergedKeywords, lastSeen, daysRunning, network })
+  await updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, mergedKeywords, lastSeen, daysRunning, network, customToken })
     .catch((e) => log.warn('gtext ES update failed', { error: e.message }));
 
   return updated(googleTextAdId);
 }
 
 // ── ES index (INSERT) — build flat doc in-memory ──────────────────────────────
-async function indexAd(ctx, result, n, { translation, imageUrl, source }) {
+async function indexAd(ctx, result, n, { translation, imageUrl, source, customToken }) {
   const { db } = ctx;
   if (!db.elastic) return;
   // Live index from the configured client (cutover = config change); ES_INDEX is the fallback.
@@ -256,6 +268,7 @@ async function indexAd(ctx, result, n, { translation, imageUrl, source }) {
       post_owner_image: data.post_owner_image ?? null,
       new_nas_image_url: imageUrl ?? null,
       image_video_url: imageUrl ?? null,
+      ...(customToken ? { custom_keyword: [customToken] } : {}),
     },
   });
   // de-dup: reuse an existing _id if a doc already exists for this id; otherwise pin
@@ -268,7 +281,16 @@ async function indexAd(ctx, result, n, { translation, imageUrl, source }) {
 }
 
 // ── ES update (UPDATE) — partial doc, carrying over existing _source fields ────
-async function updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, mergedKeywords, lastSeen, daysRunning, network }) {
+// Atomically adds a custom-keyword tag to the ES array (no read-modify-write race when the same
+// ad is scraped for two keywords at once). `custom_keyword` stays an array of unique tags.
+const ADD_CUSTOM_KEYWORD_SCRIPT = {
+  lang: 'painless',
+  source: 'if (ctx._source.custom_keyword == null) { ctx._source.custom_keyword = [params.t]; } '
+    + 'else if (ctx._source.custom_keyword instanceof List) { if (!ctx._source.custom_keyword.contains(params.t)) { ctx._source.custom_keyword.add(params.t); } } '
+    + 'else if (ctx._source.custom_keyword != params.t) { ctx._source.custom_keyword = [ctx._source.custom_keyword, params.t]; }',
+};
+
+async function updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, mergedKeywords, lastSeen, daysRunning, network, customToken }) {
   const { db } = ctx;
   if (!db.elastic) return;
   const esIndex = db.elastic.indexName || ES_INDEX;
@@ -307,11 +329,15 @@ async function updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, 
 
   if (_id) {
     await db.elastic.update({ index: esIndex, type: 'doc', id: _id, body: { doc } });
+    if (customToken) {
+      await db.elastic.update({ index: esIndex, type: 'doc', id: _id, retry_on_conflict: 3, body: { script: { ...ADD_CUSTOM_KEYWORD_SCRIPT, params: { t: customToken } } } });
+    }
   } else {
     // No existing doc → index a fresh flat doc (recovery; SQL already updated). Pin
     // the ES _id to the internal id so a transient search miss can't spawn a second
     // auto-_id doc → no new duplicates.
-    const full = buildDoc(META_INSERT_COLUMNS, { ...src, ...doc }, { extra: { new_nas_image_url: newNas ?? null, image_video_url: newNas ?? null } });
+    const tags = customToken ? [...new Set([...[].concat(src.custom_keyword || []), customToken])] : null;
+    const full = buildDoc(META_INSERT_COLUMNS, { ...src, ...doc }, { extra: { new_nas_image_url: newNas ?? null, image_video_url: newNas ?? null, ...(tags ? { custom_keyword: tags } : {}) } });
     await db.elastic.index({ index: esIndex, type: full.type, id: String(googleTextAdId), body: full.body });
   }
 }

@@ -3660,6 +3660,46 @@ export const importGoogleKeywordsFile = async ({ file, user_id = 281 } = {}) => 
 export const importGoogleKeywordsText = ({ text, user_id = 281 } = {}) =>
   postGoogleIntel('keywords/import', { text, user_id });
 
+// ─── Google custom keywords (user uploads an Excel sheet; a scraper works through it) ───
+// The backend takes the user from the login token — nothing user-specific is sent here.
+const CUSTOM_KEYWORDS_URL = `${PAS_API_BASE}/api/v1/google/custom-keywords`;
+
+// Downloads the sample .xlsx through a temporary link (the endpoint needs the auth header).
+export const downloadCustomKeywordSample = async () => {
+  const res = await fetch(`${CUSTOM_KEYWORDS_URL}/sample`, { headers: { Authorization: `Bearer ${getPASToken()}` } });
+  await checkFor401(res);
+  if (!res.ok) throw new Error(`custom-keywords/sample failed: ${res.status}`);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'custom-keywords-sample.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
+
+// Returns the server's { code, message, data } as-is, including 400/503, so the dialog can show its message.
+export const uploadCustomKeywordsFile = async (file) => {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${CUSTOM_KEYWORDS_URL}/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getPASToken()}` },
+    body: form,
+  });
+  await checkFor401(res);
+  return res.json().catch(() => ({ code: res.status, message: 'Upload failed. Please try again.' }));
+};
+
+export const fetchMyCustomKeywords = async ({ page = 1, pageSize = 50, status } = {}) => {
+  const params = new URLSearchParams({ page, page_size: pageSize });
+  if (status) params.set('status', status);
+  const res = await fetch(`${CUSTOM_KEYWORDS_URL}?${params}`, { headers: { Authorization: `Bearer ${getPASToken()}` } });
+  await checkFor401(res);
+  return res.json().catch(() => ({ code: res.status, message: 'Could not load your keywords.' }));
+};
+
 /**
  * Creates a shareable link for an ad.
  * Backend hardcodes 7-day expiry.

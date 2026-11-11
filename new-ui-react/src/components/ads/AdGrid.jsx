@@ -1314,6 +1314,7 @@ const AdGrid = ({
         <div className="sticky top-0 z-30 bg-theme-bg pb-1.5 pt-2">
           <div>
             <AdFilterBar
+              onSearch={onSearch}
               pwaHideControls
               sdui={sdui}
               platformOptions={platformOptions}
@@ -1396,6 +1397,7 @@ const AdGrid = ({
             }`}
           >
             <AdFilterBar
+              onSearch={onSearch}
               pwaTrailing={isInstalledMobile ? (
                 <>
                   {SHOW_TOTAL_ADS_COUNT && adsCount !== null && (

@@ -93,4 +93,25 @@ function normalizeGtextAd(ad) {
   return out;
 }
 
-module.exports = { urldecode, cleanStr, fixAmp, stripNonBmp, versionLessThan, checkGates, normalizeGtextAd };
+/** One canonical form for a custom keyword: trimmed, single-spaced, lower-case ('|' is the SQL list separator, so it becomes a space). */
+function normCustomKeyword(s) {
+  return String(s ?? '').replace(/\|/g, ' ').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/**
+ * Custom keyword tag for an ad: "<userId>:<keyword>" (e.g. "281:nike shoes"), or null.
+ * The scraper sends `custom_keyword` + `custom_keyword_user_id` with the ad it scraped for a
+ * user's uploaded keyword. Tagging with the user id keeps one user's keywords invisible to
+ * the others. Optional and never fatal: a missing/invalid pair, or the feature being off,
+ * gives null and the ad is saved exactly as before.
+ */
+function customKeywordToken(ad, cfg) {
+  if (!cfg || !cfg.enabled) return null;
+  const keyword = normCustomKeyword(ad.custom_keyword);
+  const userId = Number(ad.custom_keyword_user_id);
+  if (!keyword || keyword.length > cfg.maxKeywordLength) return null;
+  if (!Number.isInteger(userId) || userId <= 0) return null;
+  return `${userId}:${keyword}`;
+}
+
+module.exports = { urldecode, cleanStr, fixAmp, stripNonBmp, versionLessThan, checkGates, normalizeGtextAd, normCustomKeyword, customKeywordToken };

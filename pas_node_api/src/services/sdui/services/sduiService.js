@@ -908,7 +908,11 @@ async function filterConfigByPlatforms(config, platforms) {
         }
         return newDoc;
       })
-      .filter(doc => isAdmobOnly || !doc.filters || doc.filters.length > 0);
+      // A document is dropped when platform narrowing stripped every filter it had.
+      // A navbar entry that never had filters (a plain control such as the Custom Keyword
+      // button, which the client shows or hides itself) has nothing to strip, so keep it.
+      .filter(doc => isAdmobOnly || !doc.filters || doc.filters.length > 0 ||
+        (type === 'navbar' && !(sourceConfig[type].find(d => d._id === doc._id)?.filters || []).length));
   }
   return filtered;
 }

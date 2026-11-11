@@ -621,6 +621,21 @@ const config = {
     realTimeStore: getVal(fileConfig.dailyKeyword?.realTimeStore, 'REAL_TIME_STORE') || 'on',
   },
 
+  // ─── Google custom keywords (user-uploaded Excel → MongoDB → scraper claims) — OFF by default ───
+  customKeywords: {
+    enabled: getVal(fileConfig.customKeywords?.enabled, 'CUSTOM_KEYWORDS_ENABLED', toBool) === true,
+    mongoSlug: getVal(fileConfig.customKeywords?.mongoSlug, 'CUSTOM_KEYWORDS_MONGO_SLUG') || '',
+    database: getVal(fileConfig.customKeywords?.database, 'CUSTOM_KEYWORDS_DATABASE') || '',
+    collection: getVal(fileConfig.customKeywords?.collection, 'CUSTOM_KEYWORDS_COLLECTION') || 'custom_keywords',
+    maxUploadMb: getVal(fileConfig.customKeywords?.maxUploadMb, 'CUSTOM_KEYWORDS_MAX_UPLOAD_MB', toInt) || 5,
+    maxRowsPerUpload: getVal(fileConfig.customKeywords?.maxRowsPerUpload, 'CUSTOM_KEYWORDS_MAX_ROWS', toInt) || 5000,
+    maxKeywordsPerUser: getVal(fileConfig.customKeywords?.maxKeywordsPerUser, 'CUSTOM_KEYWORDS_MAX_PER_USER', toInt) || 10000,
+    maxKeywordLength: getVal(fileConfig.customKeywords?.maxKeywordLength, 'CUSTOM_KEYWORDS_MAX_LENGTH', toInt) || 100,
+    maxAttempts: getVal(fileConfig.customKeywords?.maxAttempts, 'CUSTOM_KEYWORDS_MAX_ATTEMPTS', toInt) || 3,
+    retryDelayMinutes: getVal(fileConfig.customKeywords?.retryDelayMinutes, 'CUSTOM_KEYWORDS_RETRY_DELAY_MIN', toInt) || 10,
+    staleClaimMinutes: getVal(fileConfig.customKeywords?.staleClaimMinutes, 'CUSTOM_KEYWORDS_STALE_MINUTES', toInt) || 30,
+  },
+
   // ─── NEW keyword-search store (MongoDB) — additive, see docs/KEYWORD_SEARCH_REVAMP_MANIFEST.md ───
   keywordSearch: {
     enabled: getVal(fileConfig.keywordSearch?.enabled, 'KEYWORD_SEARCH_ENABLED', toBool) !== false,

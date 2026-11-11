@@ -81,6 +81,7 @@
         "city":    { "type": "keyword", "normalizer": "lowercase_normalizer" },
         "domain":  { "type": "keyword", "normalizer": "lowercase_normalizer" },
         "target_keyword": { "type": "keyword", "normalizer": "lowercase_normalizer" },
+        "custom_keyword": { "type": "keyword" },
         "lang_detect": { "type": "keyword", "normalizer": "lowercase_normalizer" },
         "built_with": { "type": "keyword", "normalizer": "lowercase_normalizer" },
         "built_with_analytics_tracking": { "type": "keyword", "normalizer": "lowercase_normalizer" },

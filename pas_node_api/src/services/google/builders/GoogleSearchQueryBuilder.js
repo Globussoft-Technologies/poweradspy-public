@@ -34,6 +34,7 @@ const {
   paginationDefaults,
   shouldProfile,
 } = require("../../common/helpers/esQueryHelpers");
+const { normCustomKeyword } = require("../insertion/normalize");
 
 const DEFAULT_GOOG_INDEX = process.env.GOOG_ELASTIC_INDEX || "google_ads_data_v2";
 
@@ -158,6 +159,8 @@ class GoogleSearchQueryBuilder {
   setGender(v) { this._params.gender = Array.isArray(v) ? v : [v]; return this; }
   setStatus(v) { this._params.status = Array.isArray(v) ? v : [v]; return this; }
   setTargetKeyword(v) { this._params.targetKeyword = Array.isArray(v) ? v : [v]; return this; }
+  // Logged-in user whose own custom-keyword ads may also match the keyword search.
+  setCustomKeywordUser(userId, maxLen) { this._params.customKeywordUser = { userId, maxLen }; return this; }
   setTags(v) { this._params.tags = Array.isArray(v) ? v : [v]; return this; }
   setBuiltWith(v) { this._params.builtWith = Array.isArray(v) ? v : [v]; return this; }
   setTrack(v) { this._params.track = Array.isArray(v) ? v : [v]; return this; }
@@ -215,11 +218,20 @@ class GoogleSearchQueryBuilder {
       const contentQuery = exact
         ? { multi_match: { query: clean, type: "phrase", fields: CONTENT_FIELDS } }
         : { multi_match: { query: clean, type: "best_fields", operator: "and", fields: CONTENT_FIELDS } };
-      if (this._params.transparencyKeywordSearch) return asFilter({ bool: {
-          should: [contentQuery, this._buildPostOwnerQuery(clean, exact)],
+      const base = this._params.transparencyKeywordSearch
+        ? { bool: { should: [contentQuery, this._buildPostOwnerQuery(clean, exact)], minimum_should_match: 1 } }
+        : contentQuery;
+      // The user's own custom-keyword ads also match: their ad text need not contain the word.
+      // The tag is "<userId>:<keyword>", so other users' ads never match.
+      const owner = this._params.customKeywordUser;
+      const customKw = owner ? normCustomKeyword(clean) : '';
+      if (customKw && customKw.length <= owner.maxLen) {
+        return asFilter({ bool: {
+          should: [base, { term: { custom_keyword: `${owner.userId}:${customKw}` } }],
           minimum_should_match: 1,
-      } });
-      return asFilter(contentQuery);
+        } });
+      }
+      return asFilter(base);
     });
   }
 
