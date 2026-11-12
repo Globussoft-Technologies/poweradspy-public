@@ -105,7 +105,6 @@ async function resolveChatgptads(adId) {
 
   const hit = firstHit(await esChat.search({
     index: 'chatgpt_search_mix',
-    type: 'doc',
     body: { query: { term: { ad_id: String(adId) } } },
   }));
   if (!hit) return { ok: false, reason: 'ad not found' };

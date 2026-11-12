@@ -130,7 +130,6 @@ async function updateBuiltWith(req, db, logger) {
           const index = db.elastic.indexName || LINKEDIN_ES_INDEX;
           await db.elastic.update({
             index,
-            type: 'doc',
             id: adId,
             body: {
               doc: {

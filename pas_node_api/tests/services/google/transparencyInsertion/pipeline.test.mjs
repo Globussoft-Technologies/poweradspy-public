@@ -473,7 +473,6 @@ describe('Google Transparency pipeline', () => {
     expect(media.uploadMultimedia).not.toHaveBeenCalled();
     expect(elastic.get).toHaveBeenCalledWith({
       index: 'google_ads_data_v2',
-      type: 'doc',
       id: '99',
     });
     expect(elastic.search).not.toHaveBeenCalled();

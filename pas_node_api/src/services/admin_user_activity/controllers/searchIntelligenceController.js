@@ -84,6 +84,7 @@ async function getIntelligenceStats(req, elastic, logger) {
       index: 'user_activities',
       body: {
         size: 0,
+        track_total_hits: true, // ES 7+ caps hits.total at 10,000 without this
         query: { bool: { filter: baseFilter(fromTs, toTs) } },
         aggs: {
           active_users: { cardinality: { field: 'user.id' } },
@@ -98,6 +99,7 @@ async function getIntelligenceStats(req, elastic, logger) {
       index: 'user_activities',
       body: {
         size: 0,
+        track_total_hits: true, // ES 7+ caps hits.total at 10,000 without this
         query: { bool: { filter: baseFilter(prevFromTs, prevToTs) } },
         aggs: {
           active_users: { cardinality: { field: 'user.id' } },
@@ -456,8 +458,10 @@ async function getOtherActivities(req, elastic, logger) {
       body: {
         size: pageSize,
         from: pageNum * pageSize,
+        track_total_hits: true, // ES 7+ caps hits.total at 10,000 without this
         query: { bool: { filter: filters } },
-        sort: [{ dateTime: { order: 'desc' } }, { _id: { order: 'desc' } }],
+        // ES 8+/9 disallow sorting on _id; dateTime alone orders the activity list.
+        sort: [{ dateTime: { order: 'desc' } }],
         _source: true,
       },
     });
@@ -672,13 +676,12 @@ async function purgeOldActivities(req, elastic, logger) {
               break;
             }
 
-            // Build bulk delete request with _type for ES 6.x compatibility
+            // Build bulk delete request (ES 9 is typeless — no _type in action lines)
             const bulkBody = [];
             for (const hit of hits) {
               bulkBody.push({
                 delete: {
                   _index: 'user_activities',
-                  _type: hit._type || '_doc',
                   _id: hit._id
                 }
               });

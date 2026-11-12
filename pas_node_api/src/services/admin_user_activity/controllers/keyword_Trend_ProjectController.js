@@ -639,8 +639,10 @@ async function getProjectActivity(req, elastic, logger) {
     const body = {
       size: pageSize,
       from: pageNum * pageSize,
+      track_total_hits: true, // ES 7+ caps hits.total at 10,000 without this
       query: { bool: { filter: filters } },
-      sort: [{ dateTime: { order: 'desc' } }, { _id: { order: 'desc' } }],
+      // ES 8+/9 disallow sorting on _id; dateTime alone orders the activity list.
+      sort: [{ dateTime: { order: 'desc' } }],
       _source: true,
     };
 

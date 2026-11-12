@@ -135,7 +135,6 @@ async function updateImageOcrDetails(postData, db, log) {
 
   const updateRes = await elastic.update({
     index: ES_INDEX,
-    type: 'doc',
     id: hits[0]._id,
     body: { doc: docValue, detect_noop: false },
   });

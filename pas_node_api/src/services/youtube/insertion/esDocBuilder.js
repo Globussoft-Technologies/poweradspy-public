@@ -75,7 +75,7 @@ function buildDoc(columns, data, opts = {}) {
     }
   }
   if (opts.extra) Object.assign(body, opts.extra);
-  return { index: ES_INDEX, type: 'doc', body };
+  return { index: ES_INDEX, body };
 }
 
 module.exports = { buildDoc, toEpoch, splitPipes, splitCsv, ES_INDEX };

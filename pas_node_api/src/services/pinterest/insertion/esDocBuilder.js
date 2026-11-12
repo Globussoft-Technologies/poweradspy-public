@@ -79,13 +79,12 @@ function buildPinterestSearchMixDoc(columns, row, opts = {}) {
   }
 
   if (opts.extra) Object.assign(body, opts.extra);
-  return { index, type: 'doc', body };
+  return { index, body };
 }
 
 function searchIdQuery(index, adInternalId) {
   return {
     index,
-    type: 'doc',
     body: { query: { term: { 'pinterest_ad.id': adInternalId } } },
   };
 }

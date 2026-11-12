@@ -64,12 +64,12 @@ function buildDoc(columns, data, opts = {}) {
     body[col] = ES_DATE_FIELDS[col] ? coerceEsDate(val, ES_DATE_FIELDS[col]) : sentinel(val);
   }
   if (opts.extra) Object.assign(body, opts.extra);
-  return { index: ES_INDEX, type: 'doc', body };
+  return { index: ES_INDEX, body };
 }
 
 /** ES query to find a doc's _id by the flat `id` field (PHP match { id }). */
 function searchIdQuery(index, internalId) {
-  return { index, type: 'doc', body: { query: { match: { id: internalId } } } };
+  return { index, body: { query: { match: { id: internalId } } } };
 }
 
 function firstHitId(esResponse) {

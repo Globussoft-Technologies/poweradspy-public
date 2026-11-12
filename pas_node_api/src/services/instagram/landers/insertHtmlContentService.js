@@ -80,7 +80,6 @@ async function updateAdDocument(adId, data, esWrapper, esDocId) {
   try {
     await esWrapper.update({
       index: 'instagram_search_mix',
-      type: 'doc',
       id: typeof esDocId === 'string' && esDocId ? esDocId : String(adId),
       body: {
         doc: {

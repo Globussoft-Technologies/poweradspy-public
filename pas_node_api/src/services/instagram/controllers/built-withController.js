@@ -107,7 +107,6 @@ async function updateBuiltWith(req, db, logger) {
           }
           await db.elastic.update({
             index,
-            type: 'doc',
             id: hits[0]._id,
             body: {
               doc: {

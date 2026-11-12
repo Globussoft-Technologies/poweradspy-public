@@ -34,7 +34,7 @@ async function processDelete(ref, ctx) {
     if (db.elastic) {
       try {
         const _id = firstHitId(await db.elastic.search(searchIdQuery(ES_INDEX, internalId)));
-        if (_id) await db.elastic.delete({ index: ES_INDEX, type: 'doc', id: _id });
+        if (_id) await db.elastic.delete({ index: ES_INDEX, id: _id });
       } catch (e) { log.warn('ES delete failed (SQL row already removed)', { id: internalId, error: e.message }); }
     }
     return { code: 200, status: 'ok', message: 'Data is deleted successfully !', data: { id: internalId } };

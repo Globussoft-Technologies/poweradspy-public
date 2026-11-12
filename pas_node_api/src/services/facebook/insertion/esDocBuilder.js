@@ -126,7 +126,7 @@ function buildSearchMixDoc(columns, row, opts = {}) {
   // Carry the SQL status into search so pending and failed ads can be hidden.
   if (row.copyright_status !== undefined && row.copyright_status !== null) body.copyright_status = Number(row.copyright_status);
 
-  return { index, type: 'doc', body };
+  return { index, body };
 }
 
 /**
@@ -136,7 +136,7 @@ function buildSearchMixDoc(columns, row, opts = {}) {
 function buildFacebookAdDoc(attrs, index = 'facebook_ad') {
   const body = {};
   for (const [k, v] of Object.entries(attrs || {})) body[k] = sentinel(v);
-  return { index: index.toLowerCase(), type: 'doc', body };
+  return { index: index.toLowerCase(), body };
 }
 
 /**
@@ -146,7 +146,6 @@ function buildFacebookAdDoc(attrs, index = 'facebook_ad') {
 function searchIdQuery(index, adInternalId) {
   return {
     index,
-    type: 'doc',
     body: { query: { term: { 'facebook_ad.id': adInternalId } } },
   };
 }

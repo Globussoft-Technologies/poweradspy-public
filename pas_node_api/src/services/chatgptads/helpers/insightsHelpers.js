@@ -80,7 +80,7 @@ async function fetchAvailableYears(elastic, filter) {
           years: {
             date_histogram: {
               field: 'last_seen',
-              interval: 'year',
+              calendar_interval: 'year', // ES 8+/9: legacy `interval` was removed
               format: 'yyyy',
               min_doc_count: 1,
             },

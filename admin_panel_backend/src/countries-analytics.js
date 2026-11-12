@@ -118,6 +118,9 @@ const countryStatsWithFilter = async (req, res) => {
       };
     }
 
+    // ES 7+ caps hits.total at 10,000 unless exact counting is requested.
+    if (responseType === "agg") query.track_total_hits = true;
+
     const countryCount = await searchAllInstances(
         ES_DATA[network]['index'],
       query,
@@ -128,7 +131,8 @@ const countryStatsWithFilter = async (req, res) => {
       countryCount?.type === "agg"
         ? {
             type: countryCount?.type,
-            total: countryCount?.data?.hits?.total,
+            // ES 7+ returns hits.total as { value, relation }.
+            total: countryCount?.data?.hits?.total?.value ?? countryCount?.data?.hits?.total,
             data: countryCount?.data?.aggregations?.countries_count.buckets.map(
               (e) => {
                 return { country: e?.key?.country, count: e?.doc_count };

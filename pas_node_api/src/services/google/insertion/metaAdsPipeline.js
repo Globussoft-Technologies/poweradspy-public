@@ -277,7 +277,7 @@ async function indexAd(ctx, result, n, { translation, imageUrl, source, customTo
   // already exist in ES, so this is collision-free.
   let _id;
   try { _id = firstHitId(await db.elastic.search(searchIdQuery(esIndex, result.googleTextAdId))); } catch { /* ignore */ }
-  await db.elastic.index({ index: esIndex, type: doc.type, id: _id || String(result.googleTextAdId), body: doc.body });
+  await db.elastic.index({ index: esIndex, id: _id || String(result.googleTextAdId), body: doc.body });
 }
 
 // ── ES update (UPDATE) — partial doc, carrying over existing _source fields ────
@@ -328,9 +328,9 @@ async function updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, 
   if (newNas) { doc.new_nas_image_url = newNas; doc.image_video_url = newNas; }
 
   if (_id) {
-    await db.elastic.update({ index: esIndex, type: 'doc', id: _id, body: { doc } });
+    await db.elastic.update({ index: esIndex, id: _id, body: { doc } });
     if (customToken) {
-      await db.elastic.update({ index: esIndex, type: 'doc', id: _id, retry_on_conflict: 3, body: { script: { ...ADD_CUSTOM_KEYWORD_SCRIPT, params: { t: customToken } } } });
+      await db.elastic.update({ index: esIndex, id: _id, retry_on_conflict: 3, body: { script: { ...ADD_CUSTOM_KEYWORD_SCRIPT, params: { t: customToken } } } });
     }
   } else {
     // No existing doc → index a fresh flat doc (recovery; SQL already updated). Pin
@@ -338,7 +338,7 @@ async function updateEsDoc(ctx, googleTextAdId, n, { translation, cur, domInfo, 
     // auto-_id doc → no new duplicates.
     const tags = customToken ? [...new Set([...[].concat(src.custom_keyword || []), customToken])] : null;
     const full = buildDoc(META_INSERT_COLUMNS, { ...src, ...doc }, { extra: { new_nas_image_url: newNas ?? null, image_video_url: newNas ?? null, ...(tags ? { custom_keyword: tags } : {}) } });
-    await db.elastic.index({ index: esIndex, type: full.type, id: String(googleTextAdId), body: full.body });
+    await db.elastic.index({ index: esIndex, id: String(googleTextAdId), body: full.body });
   }
 }
 

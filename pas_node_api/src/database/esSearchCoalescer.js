@@ -21,19 +21,20 @@ function createSearchCoalescer(searchFn, { maxKeyLength = 200000 } = {}) {
   const inFlight = new Map(); // key -> { promise, waiters }
   const stats = { started: 0, shared: 0 };
 
+  // @elastic/elasticsearch 9 returns the response body itself. A { body, statusCode, meta }
+  // envelope (v7 shape, or meta: true) holds non-cloneable connection objects in `meta`,
+  // so only its body is copied.
   const cloneResponse = (res) => {
     if (!res || typeof res !== 'object') return res;
-    // @elastic/elasticsearch 7.x: { body, statusCode, headers, meta, warnings }.
-    // `meta` holds the connection object, which cannot be cloned; keep it as is.
-    if ('body' in res && 'statusCode' in res) {
-      return { ...res, body: structuredClone(res.body), headers: res.headers ? { ...res.headers } : res.headers };
+    if ('statusCode' in res && res.body && typeof res.body === 'object') {
+      return { ...res, body: structuredClone(res.body) };
     }
     return structuredClone(res);
   };
 
   function coalescedSearch(params, options) {
     // Requests with transport options, callbacks or scroll contexts are never shared.
-    if (options !== undefined || typeof params !== 'object' || params === null || params.scroll || params.body?.scroll) {
+    if (options !== undefined || typeof params !== 'object' || params === null || params.scroll) {
       return searchFn(params, options);
     }
     let key;

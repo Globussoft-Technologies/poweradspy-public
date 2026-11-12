@@ -1,5 +1,9 @@
 require('dotenv').config();
-const elasticsearch = require('elasticsearch');
+const fs = require('fs');
+const { Client } = require('@elastic/elasticsearch');
+
+// ES 9 serves HTTPS with a self-signed CA; trust it when ELASTICSEARCH_CA_CERT is set.
+const CA_CERT_PATH = process.env.ELASTICSEARCH_CA_CERT || '';
 
 // Define multiple independent Elasticsearch instances
 const environment = process.env.ENVIRONMENT || 'DEV';
@@ -23,16 +27,21 @@ if (environment === 'PROD') {
 // Extracted so the no-auth branch is unit-testable; behavior is unchanged.
 function buildClient(config) {
     const clientConfig = {
-        host: config.host,
-        log: 'error',
+        node: config.host,
+        // Client v9 has no default request timeout; keep the legacy client's 30s.
+        requestTimeout: 30000,
     };
 
     // Add authentication only if it's provided
     if (config.auth) {
-        clientConfig.httpAuth = `${config.auth.username}:${config.auth.password}`;
+        clientConfig.auth = { username: config.auth.username, password: config.auth.password };
     }
 
-    return new elasticsearch.Client(clientConfig);
+    if (CA_CERT_PATH) {
+        clientConfig.tls = { ca: fs.readFileSync(CA_CERT_PATH) };
+    }
+
+    return new Client(clientConfig);
 }
 
 // Create a client for each Elasticsearch instance

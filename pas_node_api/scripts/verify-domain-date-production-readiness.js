@@ -671,6 +671,9 @@ async function checkElasticsearchNetwork(network, networkConfig, tableConfig, do
     requestTimeout: domainDate.esRequestTimeoutMs,
   };
   if (elastic.auth?.username || elastic.auth?.password) clientOptions.auth = elastic.auth;
+  // ES 9 serves HTTPS with a self-signed CA (http_ca.crt) — same lookup as DatabaseManager.
+  const caPath = elastic.caCert || require('../src/config').databases?.elastic?.caCert;
+  if (caPath) clientOptions.tls = { ca: require('fs').readFileSync(require('path').resolve(caPath)) };
   const client = new Client(clientOptions);
 
   try {

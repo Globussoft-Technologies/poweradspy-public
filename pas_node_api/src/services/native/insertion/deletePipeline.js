@@ -45,7 +45,7 @@ async function processDelete(ref, ctx) {
       try {
         const idx = db.elastic.indexName || ES_INDEX;
         const _id = firstHitId(await db.elastic.search(searchIdQuery(idx, internalId)));
-        if (_id) await db.elastic.delete({ index: idx, type: 'doc', id: _id });
+        if (_id) await db.elastic.delete({ index: idx, id: _id });
       } catch (e) {
         log.warn('ES delete failed', { id: internalId, error: e.message });
       }

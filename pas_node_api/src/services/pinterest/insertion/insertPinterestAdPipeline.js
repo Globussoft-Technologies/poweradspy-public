@@ -440,7 +440,7 @@ async function updatePath(ctx, n, { existingId, network }) {
         if (variantUpdate.target_keyword) {
           esUpdate['pinterest_ad_variants.target_keyword'] = variantUpdate.target_keyword.split('|');
         }
-        await db.elastic.update({ index: ES_INDEX, type: 'doc', id: _id, body: { doc: esUpdate } });
+        await db.elastic.update({ index: ES_INDEX, id: _id, body: { doc: esUpdate } });
       }
     } catch (e) {
       log.warn('ES update failed', { error: e.message, adId });
@@ -502,7 +502,7 @@ async function indexAd(ctx, pinterestAdId, n, result) {
 
   let _id;
   try { const f = await db.elastic.search(searchIdQuery(ES_INDEX, pinterestAdId)); _id = firstHitId(f); } catch { /* ignore */ }
-  await db.elastic.index({ index: doc.index, type: doc.type, id: _id || undefined, body: doc.body });
+  await db.elastic.index({ index: doc.index, id: _id || undefined, body: doc.body });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

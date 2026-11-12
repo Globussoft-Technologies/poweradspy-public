@@ -286,7 +286,7 @@ async function insertHtmlRedirectCountry(req, db, log) {
     // 7. ES overlay — best-effort, by _id = internal chatgptads_ad.id (same deterministic
     //    _id the insertion pipeline indexes with). An ES failure is logged; SQL stands.
     try {
-      await elastic.update({ index: ES_INDEX, type: 'doc', id: String(ad_id), body: { doc: buildLanderEsDoc(value) } });
+      await elastic.update({ index: ES_INDEX, id: String(ad_id), body: { doc: buildLanderEsDoc(value) } });
     } catch (esErr) {
       log?.error?.('chatgptads.landers.insertHtml ES update failed', { ad_id, error: esErr.message });
     }

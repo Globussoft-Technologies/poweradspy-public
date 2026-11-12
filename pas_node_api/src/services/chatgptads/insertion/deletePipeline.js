@@ -70,7 +70,7 @@ async function processDelete(ref, ctx) {
     let esSourceBefore = null;
     if (db.elastic) {
       try {
-        const got = await db.elastic.get({ index: ES_INDEX, type: 'doc', id: String(internalId) });
+        const got = await db.elastic.get({ index: ES_INDEX, id: String(internalId) });
         esSourceBefore = got?.body?._source || got?._source || null;
       } catch { /* no doc / not found — fine, nothing to carry over */ }
     }
@@ -90,7 +90,7 @@ async function processDelete(ref, ctx) {
         // Deterministic _id = internalId — no search first (search-then-delete races the
         // index's refresh_interval; see chatgptadsPipeline.js's indexAd() comment for the
         // live-tested failure mode this avoids). 404 (already gone) is expected, not an error.
-        await db.elastic.delete({ index: ES_INDEX, type: 'doc', id: String(internalId) });
+        await db.elastic.delete({ index: ES_INDEX, id: String(internalId) });
       } catch (e) {
         if (e?.statusCode === 404 || e?.meta?.statusCode === 404) {
           // already gone — nothing to do, not a failure

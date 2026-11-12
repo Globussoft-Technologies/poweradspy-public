@@ -88,7 +88,6 @@ async function getYoutubeAdsWithCountry(db, log) {
     const hitsPerAd = await Promise.all(usable.map((row) =>
       elastic.search({
         index: ES_INDEX,
-        type: 'doc',
         body: { query: { match: { ad_id: row.id } } },
       })
         .then(esHits)

@@ -381,7 +381,6 @@ async function insertHtmlRedirectCountry(req, db, log) {
       if (Object.keys(esUpdate).length > 0) {
         await db.elastic.update({
           index: 'quora_search_mix',
-          type: 'doc',
           id: String(item.ad_id),
           body: { doc: esUpdate }
         }).catch(err => {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-// Build a fake elasticsearch module with controllable Client constructor.
+// Build a fake @elastic/elasticsearch module with controllable Client constructor.
 const constructedClients = [];
 function FakeClient(cfg) {
   this.cfg = cfg;
@@ -11,7 +11,7 @@ function FakeClient(cfg) {
   this.search = vi.fn();
   constructedClients.push(this);
 }
-const elasticsearchPath = require.resolve("elasticsearch");
+const elasticsearchPath = require.resolve("@elastic/elasticsearch");
 require.cache[elasticsearchPath] = {
   id: elasticsearchPath, filename: elasticsearchPath, loaded: true,
   exports: { Client: FakeClient },
@@ -39,9 +39,9 @@ beforeEach(() => {
 });
 
 describe("es-connections/connection (PROD env)", () => {
-  it("constructs one client per host with httpAuth", () => {
+  it("constructs one client per host with auth", () => {
     expect(constructedClients.length).toBeGreaterThanOrEqual(4);
-    expect(constructedClients[0].cfg.httpAuth).toBe("u1:p1");
+    expect(constructedClients[0].cfg.auth).toEqual({ username: "u1", password: "p1" });
   });
 
   it("count search: returns {node, type, data} where data=count", async () => {
@@ -102,20 +102,20 @@ describe("es-connections/connection (ENVIRONMENT default fallback)", () => {
 });
 
 describe("es-connections/connection > buildClient", () => {
-  it("sets httpAuth when auth is provided (truthy branch)", () => {
+  it("sets auth when auth is provided (truthy branch)", () => {
     const before = constructedClients.length;
     searchAllInstances.buildClient({ host: "es-auth", auth: { username: "u", password: "p" } });
     const built = constructedClients[constructedClients.length - 1];
     expect(constructedClients.length).toBe(before + 1);
-    expect(built.cfg.host).toBe("es-auth");
-    expect(built.cfg.httpAuth).toBe("u:p");
+    expect(built.cfg.node).toBe("es-auth");
+    expect(built.cfg.auth).toEqual({ username: "u", password: "p" });
   });
 
-  it("omits httpAuth when auth is absent (falsy branch)", () => {
+  it("omits auth when auth is absent (falsy branch)", () => {
     searchAllInstances.buildClient({ host: "es-noauth" });
     const built = constructedClients[constructedClients.length - 1];
-    expect(built.cfg.host).toBe("es-noauth");
-    expect(built.cfg.httpAuth).toBeUndefined();
+    expect(built.cfg.node).toBe("es-noauth");
+    expect(built.cfg.auth).toBeUndefined();
   });
 });
 

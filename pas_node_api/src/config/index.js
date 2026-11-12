@@ -164,6 +164,9 @@ const config = {
         username: getVal(fileConfig.databases?.elastic?.username, 'DB_ELASTIC_USERNAME'),
         password: getVal(fileConfig.databases?.elastic?.password, 'DB_ELASTIC_PASSWORD'),
       },
+      // Path to the cluster's CA certificate (http_ca.crt) — ES 8+/9 serve HTTPS
+      // with a self-signed CA that clients must trust.
+      caCert: getVal(fileConfig.databases?.elastic?.caCert, 'DB_ELASTIC_CA_CERT'),
       maxRetries: fileConfig.databases?.elastic?.maxRetries,
       requestTimeoutMs: fileConfig.databases?.elastic?.requestTimeoutMs,
       // HTTP pool of the ES client shared by every network on this node.
@@ -178,6 +181,7 @@ const config = {
         username: getVal(fileConfig.databases?.elastic_tiktok?.username, 'DB_ELASTIC_TIKTOK_USERNAME'),
         password: getVal(fileConfig.databases?.elastic_tiktok?.password, 'DB_ELASTIC_TIKTOK_PASSWORD'),
       },
+      caCert: getVal(fileConfig.databases?.elastic_tiktok?.caCert, 'DB_ELASTIC_TIKTOK_CA_CERT'),
       maxRetries: fileConfig.databases?.elastic?.maxRetries,
       requestTimeoutMs: fileConfig.databases?.elastic?.requestTimeoutMs,
       // HTTP pool of the ES client shared by every network on this node.

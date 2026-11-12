@@ -115,13 +115,12 @@ async function setEsVideoUrl(meta, storedPath) {
   if (!elastic) throw new Error(`no ES client for network '${meta.network}'`);
   const found = await elastic.search({
     index: meta.esIndex,
-    type: 'doc',
     body: { size: 1, query: { term: { [meta.idField]: meta.idValue } } },
   });
   const _id = firstHitId(found);
   if (!_id) throw new Error('ES doc not found yet'); // indexing may lag the insert response — retry later
   await elastic.update({
-    index: meta.esIndex, type: 'doc', id: _id,
+    index: meta.esIndex, id: _id,
     body: { doc: { [field]: storedPath } },
   });
 }

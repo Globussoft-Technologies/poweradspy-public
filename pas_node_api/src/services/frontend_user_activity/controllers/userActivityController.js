@@ -428,7 +428,6 @@ async function saveAiPromptSearch(doc, meta) {
 async function indexActivity(elastic, doc) {
   return elastic.index({
     index: 'user_activities',
-    type:  'doc',
     body:  doc,
   });
 }
@@ -747,7 +746,6 @@ async function userActivityData(req, elastic, logger) {
 
     const result = await elastic.search({
       index: 'user_activities',
-      type:  'doc',
       body: {
         query: { bool: { must } },
         sort: [{ dateTime: { order: 'desc' } }],
@@ -820,7 +818,6 @@ async function userDetails(req, elastic, logger) {
 
     const result = await elastic.search({
       index: 'user_activities',
-      type:  'doc',
       body: {
         query: { bool: { must } },
         sort: [{ dateTime: { order: 'desc' } }],

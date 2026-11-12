@@ -395,7 +395,7 @@ async function indexAd(ctx, chatgptadsAdId, n, result) {
   // found live while testing back-to-back updates (country/hits silently went stale in ES
   // because the "latest" search hit returned was the stale duplicate, not the real update).
   // A fixed _id makes index() an atomic, unconditional overwrite — no search, no race.
-  await db.elastic.index({ index: doc.index, type: doc.type, id: String(chatgptadsAdId), body: doc.body });
+  await db.elastic.index({ index: doc.index, id: String(chatgptadsAdId), body: doc.body });
 }
 
 async function deleteEsDoc(ctx, chatgptadsAdId) {
@@ -404,7 +404,7 @@ async function deleteEsDoc(ctx, chatgptadsAdId) {
   // Same deterministic-_id reasoning as indexAd() above — delete directly by id, no search.
   // 404 (already gone / never indexed) is expected and harmless, not an error.
   try {
-    await db.elastic.delete({ index: ES_INDEX, type: 'doc', id: String(chatgptadsAdId) });
+    await db.elastic.delete({ index: ES_INDEX, id: String(chatgptadsAdId) });
   } catch (e) {
     if (e?.statusCode !== 404 && e?.meta?.statusCode !== 404) throw e;
   }

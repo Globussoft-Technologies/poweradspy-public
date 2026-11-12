@@ -51,7 +51,7 @@ describe('domain-date production readiness script', () => {
   });
 
   it('reads versions from packages that restrict package.json exports', () => {
-    expect(installedPackageVersion('@elastic/elasticsearch')).toMatch(/^7\./);
+    expect(installedPackageVersion('@elastic/elasticsearch')).toMatch(/^9\./);
     expect(installedPackageVersion('mysql2')).toMatch(/^3\./);
   });
 

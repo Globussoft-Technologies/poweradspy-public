@@ -114,7 +114,6 @@ vi.mock("../../../utils/Elasticsearch.js", () => ({
   },
   checkElasticsearchHealth: vi.fn(),
 }));
-vi.mock("elasticsearch", () => ({ default: { Client: function () {} } }));
 vi.mock("./dashboardValidation.js", () => ({
   default: {
     validatePayloadForBacklink: vi.fn((b) => ({ value: b, error: null })),
@@ -1250,8 +1249,9 @@ describe("dashboardService > getCompetitorsCountNew", () => {
     for (const client of [spies.esClient.server1, spies.esClient.server2]) {
       const request = client.msearch.mock.calls[0][0];
       expect(request.body).toHaveLength(2);
-      expect(request.maxConcurrentSearches).toBe(4);
-      expect(request.maxConcurrentShardRequests).toBe(2);
+      // Client v9 does not convert camelCase params, so snake_case is sent.
+      expect(request.max_concurrent_searches).toBe(4);
+      expect(request.max_concurrent_shard_requests).toBe(2);
       expect(request).not.toHaveProperty("request_cache");
       expect(request.body[1].aggs).toEqual(expect.objectContaining({
         unique_ads: expect.any(Object),

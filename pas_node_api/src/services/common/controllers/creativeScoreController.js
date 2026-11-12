@@ -214,6 +214,7 @@ async function getRunReports(req, res) {
       index: RUNS_INDEX,
       size: limit,
       body: {
+        track_total_hits: true, // ES 7+ caps hits.total at 10,000 without this
         query: { match_all: {} },
         sort: [{ run_at: { order: 'desc' } }],
         aggs: {

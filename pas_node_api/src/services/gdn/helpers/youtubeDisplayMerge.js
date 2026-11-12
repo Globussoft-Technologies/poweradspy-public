@@ -263,6 +263,7 @@ async function getYoutubeDisplayHits(upper, sort, p, logger) {
   const body = {
     from: 0,
     size: upper,
+    track_total_hits: true, // ES 7+ caps hits.total at 10,000 without this
     sort: [{ [ytField]: { order } }, { ad_id: 'desc' }],
     _source: ['ad_id', ytField],
     query: {

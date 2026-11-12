@@ -1,7 +1,7 @@
 import moment from "moment";
 import config from "config";
-import elasticsearch from "elasticsearch";
-import { esClient, esServers } from "../../utils/Elasticsearch.js";
+import { Client } from "@elastic/elasticsearch";
+import { esClient, esServers, buildClientOptions } from "../../utils/Elasticsearch.js";
 import logger from "../../resources/logs/logger.log.js";
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 
@@ -162,10 +162,12 @@ function dedicatedClient(conn) {
   if (!host || !String(host).trim()) return null;
   const cacheKey = `${host}|${conn.username || ""}`;
   if (!dedicatedClients[cacheKey]) {
-    dedicatedClients[cacheKey] = new elasticsearch.Client({
+    dedicatedClients[cacheKey] = new Client(buildClientOptions({
       host,
-      httpAuth: conn.username ? `${conn.username}:${conn.password}` : undefined,
-    });
+      username: conn.username,
+      password: conn.password,
+      caCert: conn.caCert,
+    }));
   }
   return dedicatedClients[cacheKey];
 }

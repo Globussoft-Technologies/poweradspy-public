@@ -929,7 +929,7 @@ async function searchDaily(net, q, days, country, custom) {
         // "private" or "limited", polluting this compared advertiser's own
         // trend line with unrelated companies' ad volume.
         query: { bool: { filter: [{ range: { [d.field]: { gte: fmt(start), lte: fmt(end), format: DATE_FMT } } }, ...(cc ? [cc] : [])], must: [{ match: { [advField]: { query: q, operator: 'and' } } }] } },
-        aggs: { dd: { date_histogram: { field: d.field, interval: 'day', format: 'yyyy-MM-dd' } } },
+        aggs: { dd: { date_histogram: { field: d.field, calendar_interval: 'day', format: 'yyyy-MM-dd' } } },
       },
     }, { requestTimeout: NET_REQUEST_TIMEOUT_MS });
     const map = {};

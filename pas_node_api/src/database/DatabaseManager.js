@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const config = require('../config');
@@ -307,7 +308,7 @@ class DatabaseManager {
    * Create an HTTP/HTTPS agent with bounded connection-pool settings
    * to prevent socket/file-descriptor leaks.
    */
-  _createBoundedAgent(nodeUrl, cfgSection = {}) {
+  _createBoundedAgent(nodeUrl, cfgSection = {}, ca = null) {
     const isHttps = (nodeUrl || '').startsWith('https');
     const AgentClass = isHttps ? https.Agent : http.Agent;
     return new AgentClass({
@@ -320,7 +321,18 @@ class DatabaseManager {
       maxSockets: cfgSection.maxSockets || 100,
       maxFreeSockets: cfgSection.maxFreeSockets || 20,
       timeout: 60000,          // socket inactivity timeout 60s
+      // ES 8+/9 use a self-signed CA; the agent must trust it for HTTPS.
+      ...(isHttps && ca ? { ca } : {}),
     });
+  }
+
+  /**
+   * Read the cluster CA certificate (http_ca.crt) if one is configured.
+   */
+  _readEsCaCert(elasticConfig, cfgSection) {
+    const caPath = elasticConfig.caCert || cfgSection.caCert;
+    if (!caPath) return null;
+    return fs.readFileSync(path.resolve(caPath));
   }
 
   /**
@@ -328,7 +340,11 @@ class DatabaseManager {
    * Returns the raw Client instance (shared — do NOT close per-network).
    */
   async _getOrCreateEsClient(slug, elasticConfig, dbConfigKey) {
-    const { Client } = require('@elastic/elasticsearch');
+    const es = require('@elastic/elasticsearch');
+    const { Client } = es;
+    // Node-http connection class: `HttpConnection` in client v8/v9, `Connection` in v7.
+    // Never pass undefined — the client would fail with "this.Connection is not a constructor".
+    const HttpConnection = es.HttpConnection || es.Connection;
     const cacheKey = this._esClientCacheKey(elasticConfig);
 
     // Re-use existing client for the same node+auth
@@ -346,13 +362,18 @@ class DatabaseManager {
     // request's coordinating node across them, so coordination/reduce load is
     // shared instead of pinning a single host (e.g. the master/app-facing node).
     const nodes = this._normalizeEsNodes(elasticConfig.node);
+    const ca = this._readEsCaCert(elasticConfig, cfgSection);
+    const agent = this._createBoundedAgent(nodes[0], cfgSection, ca);
     const clientOptions = {
       ...(nodes.length > 1 ? { nodes } : { node: nodes[0] }),
       maxRetries: cfgSection.maxRetries || 3,
       requestTimeout: cfgSection.requestTimeoutMs || 30000,
       sniffOnStart: false,
-      // Bounded HTTP agent to limit open sockets / file descriptors
-      agent: this._createBoundedAgent(nodes[0], cfgSection),
+      // Client v8+/9 defaults to an undici connection that ignores Node agents;
+      // HttpConnection keeps the bounded HTTP agent (limits open sockets / FDs).
+      ...(HttpConnection ? { Connection: HttpConnection } : {}),
+      agent: () => agent,
+      ...(ca ? { tls: { ca } } : {}),
     };
     if (nodes.length > 1) {
       log.info(`[${slug}] Elasticsearch using ${nodes.length} nodes (round-robin): ${nodes.join(', ')}`);
@@ -373,9 +394,8 @@ class DatabaseManager {
     await client.ping();
 
     const info = await client.info();
-    const versionNumber = info.body ? info.body.version.number : info.version ? info.version.number : null;
-    // Major version drives write-path behaviour: ES 6.x requires an explicit
-    // mapping type in index/update URLs, ES 7+/8 are typeless.
+    const versionNumber = info.version ? info.version.number : null;
+    // ES 9 is typeless; esMajor is kept for logging and version-specific checks.
     const esMajor = versionNumber ? parseInt(versionNumber.split('.')[0], 10) : null;
     log.info(`[${slug}] Elasticsearch connection healthy. Version: ${versionNumber || 'Unknown'}`);
 

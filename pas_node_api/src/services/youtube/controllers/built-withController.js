@@ -116,7 +116,6 @@ async function updateBuiltWith(req, db, logger) {
           const index = db.elastic.indexName || YOUTUBE_ES_INDEX;
           await db.elastic.update({
             index,
-            type: 'doc',
             id: adId,
             body: {
               doc: {

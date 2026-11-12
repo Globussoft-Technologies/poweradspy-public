@@ -293,7 +293,7 @@ async function indexAd(ctx, gdnAdId, n, { iso, imageUrl }, network) {
   // de-dup: reuse an existing _id if a doc already exists for this ad
   let _id;
   try { _id = firstHitId(await db.elastic.search(searchIdQuery(ES_INDEX, gdnAdId))); } catch { /* ignore */ }
-  await db.elastic.index({ index: doc.index, type: doc.type, id: _id || undefined, body: doc.body });
+  await db.elastic.index({ index: doc.index, id: _id || undefined, body: doc.body });
 }
 
 // ── ES update (UPDATE path) ─────────────────────────────────────────────────────
@@ -345,7 +345,7 @@ async function updateEsDoc(ctx, gdnAdId, n, { translation, cur, network }) {
   };
 
   if (_id) {
-    await db.elastic.update({ index: ES_INDEX, type: 'doc', id: _id, body: { doc: docFields } });
+    await db.elastic.update({ index: ES_INDEX, id: _id, body: { doc: docFields } });
   } else {
     // No existing doc (SQL update already succeeded) → index a fresh, complete doc.
     const joined = await repo.getJoinedAd(db.sql, 'gdn_ad.id', gdnAdId);
@@ -355,7 +355,7 @@ async function updateEsDoc(ctx, gdnAdId, n, { translation, cur, network }) {
       index: ES_INDEX,
       extra: { ...buildEsExtra(n, { iso: null, imageUrl: newNas }), ...docFields },
     });
-    await db.elastic.index({ index: doc.index, type: doc.type, body: doc.body });
+    await db.elastic.index({ index: doc.index, body: doc.body });
   }
 }
 

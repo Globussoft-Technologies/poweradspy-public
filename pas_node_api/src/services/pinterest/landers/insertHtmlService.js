@@ -398,7 +398,6 @@ async function insertHtmlRedirectCountry(req, db, log) {
         if (Object.keys(esUpdate).length > 0 && esDocId) {
           await db.elastic.update({
             index: 'pinterest_search_mix',
-            type: 'doc',
             id: esDocId,
             body: { doc: esUpdate }
           });

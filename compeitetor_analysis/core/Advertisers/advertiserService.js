@@ -250,7 +250,7 @@ class AdvertiserService {
   
           const makeAggBody = (field) => ({
             date_histogram: {
-              interval: "month",
+              calendar_interval: "month", // ES 8+/9: legacy `interval` was removed
               format: "MMMM",
               time_zone: "+05:30",
               min_doc_count: 1,
@@ -585,6 +585,8 @@ class AdvertiserService {
               index,
               size: 0,
               body: {
+                // ES 7+ caps hits.total at 10,000 unless exact counting is requested.
+                track_total_hits: true,
                 query: {
                   bool: {
                     must: [
@@ -596,7 +598,8 @@ class AdvertiserService {
               },
             });
 
-            const count = result.hits.total;
+            // ES 7+ returns hits.total as { value, relation }.
+            const count = result.hits.total?.value ?? result.hits.total;
 
             /* v8 ignore start -- verifiedConfigs' indexes are exhaustively dispatched here; the non-matching dispatch branch is unreachable */
             if (index === NETWORK_INDEXES.facebook) {
@@ -622,6 +625,8 @@ class AdvertiserService {
               index,
               size: 0,
               body: {
+                // ES 7+ caps hits.total at 10,000 unless exact counting is requested.
+                track_total_hits: true,
                 query: {
                   bool: {
                     must: [
@@ -633,7 +638,8 @@ class AdvertiserService {
               },
             });
 
-            const count = result.hits.total;
+            // ES 7+ returns hits.total as { value, relation }.
+            const count = result.hits.total?.value ?? result.hits.total;
 
             /* v8 ignore start -- verifiedConfigs' indexes are exhaustively dispatched here; the non-matching dispatch branch is unreachable */
             if (index === NETWORK_INDEXES.facebook) {
@@ -882,7 +888,7 @@ class AdvertiserService {
             aggs: {
               monthly_cta: {
                 date_histogram: {
-                  interval: "month",
+                  calendar_interval: "month", // ES 8+/9: legacy `interval` was removed
                   format: "MMMM",
                   time_zone: "+05:30",
                   min_doc_count: 1,
@@ -1250,11 +1256,10 @@ class AdvertiserService {
               };
 
              
-              const monthlyRes = await client.search({ 
-                index: cfg.index, 
+              const monthlyRes = await client.search({
+                index: cfg.index,
                 body: monthlyBody,
-                requestTimeout: 30000 
-              }).catch(err => {
+              }, { requestTimeout: 30000 }).catch(err => {
                 console.error("[ERROR] Monthly aggregation failed for", cfg.platform, err);
                 logger.error("[ERROR] Monthly aggregation failed:", err);
                 return { aggregations: { by_month: { buckets: [] } } };
@@ -1314,11 +1319,10 @@ class AdvertiserService {
               };
 
             
-              const dailyRes = await client.search({ 
-                index: cfg.index, 
+              const dailyRes = await client.search({
+                index: cfg.index,
                 body: dailyBody,
-                requestTimeout: 30000 
-              }).catch(err => {
+              }, { requestTimeout: 30000 }).catch(err => {
                 console.error("[ERROR] Daily aggregation failed for", cfg.platform, err);
                 logger.error("[ERROR] Daily aggregation failed:", err);
                 return { aggregations: { by_day: { buckets: [] } } };
@@ -1366,11 +1370,10 @@ class AdvertiserService {
               };
 
               
-              const yearlyRes = await client.search({ 
-                index: cfg.index, 
+              const yearlyRes = await client.search({
+                index: cfg.index,
                 body: yearlyBody,
-                requestTimeout: 30000 
-              }).catch(err => {
+              }, { requestTimeout: 30000 }).catch(err => {
                 console.error("[ERROR] Yearly aggregation failed for", cfg.platform, err);
                 logger.error("[ERROR] Yearly aggregation failed:", err);
                 return { aggregations: { by_year: { buckets: [] } } };
@@ -2248,7 +2251,7 @@ class AdvertiserService {
               aggs: {
                 monthly_ads: {
                   date_histogram: {
-                    interval: "month",
+                    calendar_interval: "month", // ES 8+/9: legacy `interval` was removed
                     format: "MMMM",
                     time_zone: "+05:30",
                     min_doc_count: 1,

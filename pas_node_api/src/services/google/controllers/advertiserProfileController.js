@@ -100,7 +100,7 @@ async function getAdvertiserProfile(req, db, logger) {
       // histogram bucket (up to hundreds at interval=day) is what made this
       // endpoint slow; a trend LINE only needs approximate per-point counts.
       trend: {
-        date_histogram: { field: 'last_seen', interval, format, min_doc_count: 1 },
+        date_histogram: { field: 'last_seen', calendar_interval: interval, format, min_doc_count: 1 },
         aggs: { ads: BUCKET_UNIQUE_ADS },
       },
     },

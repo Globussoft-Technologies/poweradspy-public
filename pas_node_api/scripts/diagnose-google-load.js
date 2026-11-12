@@ -103,13 +103,13 @@ async function diagnoseElastic(elastic, thresholdSec) {
   heading(`GOOGLE — Elasticsearch (index: ${elastic.indexName})`);
   const client = elastic.client;
 
-  const health = (await client.cluster.health()).body || (await client.cluster.health());
+  const health = await client.cluster.health().then((r) => r.body ?? r) || (await client.cluster.health());
   console.log(`cluster: status=${health.status} nodes=${health.number_of_nodes} unassigned_shards=${health.unassigned_shards}`);
   if (health.number_of_nodes === 1) {
     console.log('(single-node cluster — every query, merge, and GC competes for the SAME cpu, no relief valve)');
   }
 
-  const stats = (await client.nodes.stats({ metric: ['jvm', 'os', 'process', 'thread_pool'] })).body
+  const stats = await client.nodes.stats({ metric: ['jvm', 'os', 'process', 'thread_pool'] }).then((r) => r.body ?? r)
     || (await client.nodes.stats({ metric: ['jvm', 'os', 'process', 'thread_pool'] }));
 
   let worstPool = null;
@@ -129,7 +129,7 @@ async function diagnoseElastic(elastic, thresholdSec) {
   }
 
   console.log('\n--- Live tasks (what is actually running right now) ---');
-  const tasks = (await client.tasks.list({ detailed: true, actions: '*search*,*bulk*' })).body
+  const tasks = await client.tasks.list({ detailed: true, actions: '*search*,*bulk*' }).then((r) => r.body ?? r)
     || (await client.tasks.list({ detailed: true, actions: '*search*,*bulk*' }));
   const running = [];
   for (const node of Object.values(tasks.nodes || {})) {
@@ -143,7 +143,7 @@ async function diagnoseElastic(elastic, thresholdSec) {
   const longRunning = running.filter((t) => t.runningMs >= thresholdSec * 1000);
 
   console.log('\n--- Hot threads (what the CPU is actually doing) ---');
-  const hot = (await client.nodes.hotThreads({ threads: 3 })).body || (await client.nodes.hotThreads({ threads: 3 }));
+  const hot = await client.nodes.hotThreads({ threads: 3 }).then((r) => r.body ?? r) || (await client.nodes.hotThreads({ threads: 3 }));
   const hotText = String(hot);
   console.log(hotText.split('\n').slice(0, 40).join('\n'));
 

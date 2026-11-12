@@ -18,8 +18,9 @@ const { ClientCtor, configGetSpy, loggerInfoSpy, loggerErrorSpy, lastClients } =
   };
 });
 
-vi.mock("elasticsearch", () => ({ default: { Client: ClientCtor } }));
-vi.mock("config", () => ({ default: { get: configGetSpy } }));
+vi.mock("@elastic/elasticsearch", () => ({ Client: ClientCtor }));
+// config.has("ELASTICSEARCH_CA_CERT") → false, so no CA file is read.
+vi.mock("config", () => ({ default: { get: configGetSpy, has: () => false } }));
 vi.mock("../../resources/logs/logger.log.js", () => ({
   default: { info: loggerInfoSpy, error: loggerErrorSpy, warn: vi.fn() },
 }));
@@ -102,8 +103,17 @@ describe("utils/Elasticsearch", () => {
   });
 });
 
-describe("utils/Elasticsearch > createElasticClient httpAuth branch", () => {
-  it("constructs a client without httpAuth when no username/password", async () => {
+describe("utils/Elasticsearch > createElasticClient auth branch", () => {
+  it("constructs a client with node, auth and a 30s requestTimeout", async () => {
+    await modulePromise;
+    expect(lastClients[0].opts).toEqual({
+      node: "value:SEARCH_HOSTS",
+      auth: { username: "value:TEST_ELASTICSEARCH_USER", password: "value:TEST_ELASTICSEARCH_PASS" },
+      requestTimeout: 30000,
+    });
+  });
+
+  it("constructs a client without auth when no username/password", async () => {
     // Reload with username/password explicitly empty so the ternary's false branch runs.
     configGetSpy.mockReset();
     configGetSpy.mockImplementation((key) => {
@@ -113,6 +123,6 @@ describe("utils/Elasticsearch > createElasticClient httpAuth branch", () => {
     lastClients.length = 0;
     vi.resetModules();
     await import("../../utils/Elasticsearch.js");
-    expect(lastClients[0].opts.httpAuth).toBeUndefined();
+    expect(lastClients[0].opts.auth).toBeUndefined();
   });
 });

@@ -5,7 +5,7 @@
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
     "dotenv": "^16.4.7",
-    "elasticsearch": "^16.7.3",
+    "@elastic/elasticsearch": "^9.0.0",
     "event": "^1.0.0",
     "express": "^4.21.2",
     "ioredis": "^5.6.1",

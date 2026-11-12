@@ -120,7 +120,6 @@ async function updateNasImage(req, db, logger) {
     for (const hit of hits) {
       const res = await db.elastic.update({
         index,
-        type: 'doc',
         id: hit._id,
         body: { doc: { new_nas_image_url: nasPath }, detect_noop: false },
       });

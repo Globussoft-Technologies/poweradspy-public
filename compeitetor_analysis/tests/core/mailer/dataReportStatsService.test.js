@@ -26,8 +26,17 @@ vi.mock("moment", () => {
   return { default: m };
 });
 vi.mock("config", () => ({ default: { get: configGet } }));
-vi.mock("elasticsearch", () => ({ default: { Client: ClientCtor } }));
-vi.mock("../../../utils/Elasticsearch.js", () => ({ esClient, esServers }));
+vi.mock("@elastic/elasticsearch", () => ({ Client: ClientCtor }));
+vi.mock("../../../utils/Elasticsearch.js", () => ({
+  esClient,
+  esServers,
+  // Same shape as the real buildClientOptions (CA file reading left out).
+  buildClientOptions: ({ host, username, password }) => ({
+    node: host,
+    ...(username ? { auth: { username, password } } : {}),
+    requestTimeout: 30000,
+  }),
+}));
 vi.mock("../../../resources/logs/logger.log.js", () => ({
   default: { error: loggerError, info: vi.fn(), warn: vi.fn() },
 }));
@@ -96,14 +105,15 @@ describe("dataReportStatsService > getDataReportStats", () => {
     configGet.mockReturnValue({ facebook: { host: "ded-host", username: "u", password: "p" } });
     await load();
     await svc();
-    expect(ClientCtor).toHaveBeenCalledWith(expect.objectContaining({ host: "ded-host", httpAuth: "u:p" }));
+    expect(ClientCtor).toHaveBeenCalledWith(expect.objectContaining({ node: "ded-host", auth: { username: "u", password: "p" } }));
   });
 
-  it("dedicated conn without username → httpAuth undefined", async () => {
+  it("dedicated conn without username → auth undefined", async () => {
     configGet.mockReturnValue({ facebook: { host: "ded-host" } });
     await load();
     await svc();
-    expect(ClientCtor).toHaveBeenCalledWith(expect.objectContaining({ host: "ded-host", httpAuth: undefined }));
+    expect(ClientCtor).toHaveBeenCalledWith(expect.objectContaining({ node: "ded-host" }));
+    expect(ClientCtor.mock.calls[0][0].auth).toBeUndefined();
   });
 
   it("dedicated conn with blank host → ignored (falls back to shared)", async () => {

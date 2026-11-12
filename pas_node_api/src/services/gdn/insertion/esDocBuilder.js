@@ -104,14 +104,13 @@ function buildSearchMixDoc(columns, row, opts = {}) {
   // Caller-supplied extras (lang_detect, states, city, image_url, new_nas_image_url, platform, …) win.
   if (opts.extra) Object.assign(body, opts.extra);
 
-  return { index, type: 'doc', body };
+  return { index, body };
 }
 
 /** ES query body to find a doc's _id by gdn_ad.id (PHP searchID). */
 function searchIdQuery(index, adInternalId) {
   return {
     index,
-    type: 'doc',
     body: { query: { term: { 'gdn_ad.id': adInternalId } } },
   };
 }

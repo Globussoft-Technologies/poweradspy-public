@@ -107,7 +107,18 @@ vi.mock("../../../core/mailer/emailService.js", () => ({
     sendCompetitorMemberMail: emailSendCompetitorMemberMailSpy,
   },
 }));
-vi.mock("config", () => ({ default: { get: configGetSpy } }));
+// `has` is read by utils/Elasticsearch.js (optional ELASTICSEARCH_CA_CERT).
+vi.mock("config", () => ({ default: { get: configGetSpy, has: () => false } }));
+// After vi.doUnmock of utils/Elasticsearch.js the real module loads; the v9 client
+// validates node URLs ("cfg:..." from the config mock is rejected), so stub it.
+vi.mock("@elastic/elasticsearch", () => ({
+  Client: function Client() {
+    this.search = vi.fn();
+    this.count = vi.fn();
+    this.ping = vi.fn();
+    this.close = vi.fn();
+  },
+}));
 vi.mock("p-limit", () => ({ default: pLimitFn }));
 // brandCcMember/member/emailAudit/bounceGuard pull in real mongoose models whose
 // `.find().lean()` calls buffer forever without a DB connection (causing the test

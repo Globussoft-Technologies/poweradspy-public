@@ -61,7 +61,8 @@ async function getAdsByAdvertiser(req, db, logger) {
             }
           });
 
-          const hit = esRes.body?.hits?.hits?.[0]?._source;
+          // Client v9 returns the body directly; v7 wrapped it in `.body`.
+          const hit = (esRes?.body ?? esRes)?.hits?.hits?.[0]?._source;
 
           if (hit?.new_nas_image_url) {
             value.image_video_url = hit.new_nas_image_url;

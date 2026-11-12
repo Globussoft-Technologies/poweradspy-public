@@ -131,7 +131,7 @@ async function fetchAvailableYears(db, postOwnerName) {
           years: {
             date_histogram: {
               field: 'facebook_ad.last_seen',
-              interval: 'year',
+              calendar_interval: 'year', // ES 8+/9: legacy `interval` was removed
               format: 'yyyy',
               min_doc_count: 1,
             },

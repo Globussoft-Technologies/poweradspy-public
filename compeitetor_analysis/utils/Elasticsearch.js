@@ -1,4 +1,5 @@
-import elasticsearch from "elasticsearch";
+import fs from "fs";
+import { Client } from "@elastic/elasticsearch";
 import config from "config";
 import logger from "../resources/logs/logger.log.js";
 import {
@@ -27,12 +28,24 @@ function withResolvedIndex(client) {
   });
 }
 
+// ES 9 serves HTTPS with a self-signed CA; trust it when a CA path is configured.
+const caCertPath = config.has("ELASTICSEARCH_CA_CERT") ? config.get("ELASTICSEARCH_CA_CERT") : null;
+
+// Options shared by every @elastic/elasticsearch client in this service.
+function buildClientOptions({ host, username, password, caCert }) {
+  const ca = caCert || caCertPath;
+  return {
+    node: host,
+    ...(username ? { auth: { username, password } } : {}),
+    ...(ca ? { tls: { ca: fs.readFileSync(ca) } } : {}),
+    // Client v9 has no default request timeout; keep the legacy client's 30s.
+    requestTimeout: 30000,
+  };
+}
+
 const createElasticClient = (serverData) => {
   logger.info(`Creating Elasticsearch client for ${serverData.host}`);
-  const client = new elasticsearch.Client({
-    host: serverData.host,
-    httpAuth: serverData.username ? `${serverData.username}:${serverData.password}` : undefined,
-  });
+  const client = new Client(buildClientOptions(serverData));
   return withResolvedIndex(client);
 };
 
@@ -94,4 +107,4 @@ async function closeClients() {
   }
 }
 
-export { esClient, esServers, checkElasticsearchHealth, closeClients };
+export { esClient, esServers, checkElasticsearchHealth, closeClients, buildClientOptions };

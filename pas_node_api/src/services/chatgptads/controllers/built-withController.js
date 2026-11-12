@@ -162,7 +162,6 @@ async function updateOutgoingBuiltWithStatus(req, db, logger) {
           const index = db.elastic.indexName || CHATGPTADS_ES_INDEX;
           await db.elastic.update({
             index,
-            type: 'doc',
             id: String(adId),
             body: {
               doc: {

@@ -270,7 +270,6 @@ async function updateEsDoc(es, index, hit, doc) {
   if (!hit || !Object.keys(doc).length) return { updated: false, reason: 'no_es_doc_or_no_fields' };
   await es.update({
     index,
-    type: 'doc',
     id: hit._id,
     body: { doc },
     refresh: 'wait_for',

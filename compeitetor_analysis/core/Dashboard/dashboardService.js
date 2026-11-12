@@ -15,7 +15,6 @@ import { esClient,esServers, checkElasticsearchHealth } from "../../utils/Elasti
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";
 import { getDisplayableMediaFilter } from "../../utils/displayableMediaFilters.js";
 import { COUNTRIES as HANDLED_COUNTRIES } from "../../config/countries.js";
-import elasticsearch from "elasticsearch";
 import { withLimit } from "../../utils/esLoadGuard.js";
 import DashboardValidation from "./dashboardValidation.js";
 import moment from "moment";
@@ -2619,8 +2618,9 @@ async insertpaidSearch(req,res){
             // silently assuming it owns the whole cluster.
             const result = await withLimit(serverName, () => client.msearch({
               index: cfg.index,
-              maxConcurrentSearches: COMPETITOR_MSEARCH_MAX_CONCURRENT_SEARCHES,
-              maxConcurrentShardRequests: COMPETITOR_MSEARCH_MAX_CONCURRENT_SHARD_REQUESTS,
+              // Client v9 sends parameter names as-is (no camelCase conversion).
+              max_concurrent_searches: COMPETITOR_MSEARCH_MAX_CONCURRENT_SEARCHES,
+              max_concurrent_shard_requests: COMPETITOR_MSEARCH_MAX_CONCURRENT_SHARD_REQUESTS,
               // ES 6.8 rejects request_cache as a top-level _msearch query
               // parameter, which would make every network silently return zero.
               body,

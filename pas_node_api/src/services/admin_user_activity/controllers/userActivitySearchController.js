@@ -510,6 +510,7 @@ async function getSummaryStats(req, elastic, logger) {
 
     const body = {
       size: 0,
+      track_total_hits: true, // ES 7+ caps hits.total at 10,000 without this
       query: { bool: { filter: filters } },
       aggs: {
         other_types: { terms: { field: 'filterType.keyword',  size: 20, order: { _count: 'desc' } } },

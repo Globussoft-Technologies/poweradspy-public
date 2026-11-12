@@ -479,14 +479,14 @@ async function indexAd(ctx, facebookAdId, n, result, network) {
   const doc = buildSearchMixDoc(LIBRARY_INSERT_COLUMNS, row, { index: ES_INDEX, userCountries, adCountries, extra });
   let _id;
   try { _id = firstHitId(await db.elastic.search(searchIdQuery(ES_INDEX, facebookAdId))); } catch { /* ignore */ }
-  await db.elastic.index({ index: doc.index, type: doc.type, id: _id || undefined, body: doc.body });
+  await db.elastic.index({ index: doc.index, id: _id || undefined, body: doc.body });
 }
 
 async function deleteEsDoc(ctx, facebookAdId) {
   const { db } = ctx;
   if (!db.elastic) return;
   const _id = firstHitId(await db.elastic.search(searchIdQuery(ES_INDEX, facebookAdId)));
-  if (_id) await db.elastic.delete({ index: ES_INDEX, type: 'doc', id: _id });
+  if (_id) await db.elastic.delete({ index: ES_INDEX, id: _id });
 }
 
 /** Read the old ES doc's cron-populated fields to carry over on UPDATE re-index. */

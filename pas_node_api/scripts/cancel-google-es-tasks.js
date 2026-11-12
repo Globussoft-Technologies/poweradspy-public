@@ -47,7 +47,7 @@ async function main() {
   }
 
   // ─── Find + (optionally) cancel every long-running search task ───
-  const tasks = (await client.tasks.list({ detailed: true, actions: '*search*' })).body
+  const tasks = await client.tasks.list({ detailed: true, actions: '*search*' }).then((r) => r.body ?? r)
     || (await client.tasks.list({ detailed: true, actions: '*search*' }));
 
   const running = [];

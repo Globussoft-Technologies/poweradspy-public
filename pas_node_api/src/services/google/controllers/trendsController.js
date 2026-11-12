@@ -56,7 +56,7 @@ async function getAdTrends(req, db, logger) {
     query,
     aggs: {
       trend: {
-        date_histogram: { field: dateField, interval, format, min_doc_count: 1 },
+        date_histogram: { field: dateField, calendar_interval: interval, format, min_doc_count: 1 },
         aggs: histAggs,
       },
     },

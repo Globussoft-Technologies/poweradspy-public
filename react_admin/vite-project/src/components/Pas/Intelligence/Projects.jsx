@@ -20,7 +20,7 @@ const TagList = ({ items, bg, border, color, forceExpand = false }) => {
   return (
     <div style={{ display: "flex", flexWrap: forceExpand ? "wrap" : "wrap", gap: "4px", flexDirection: forceExpand ? "column" : "row", alignItems: forceExpand ? "flex-start" : "center" }}>
       {visible.map((item, i) => (
-        <span key={i} style={{ background: bg, border: `1px solid ${border}`, color, padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: forceExpand ? "normal" : "nowrap", wordBreak: forceExpand ? "break-word" : "normal" }}>
+        <span key={i} style={{ background: bg, border: `1px solid ${border}`, color, padding: "2px 8px", borderRadius: "4px", fontSize: "11px", whiteSpace: "normal", wordBreak: "break-word", overflowWrap: "anywhere", maxWidth: "100%", boxSizing: "border-box" }}>
           {item}
         </span>
       ))}

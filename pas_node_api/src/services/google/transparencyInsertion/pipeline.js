@@ -377,7 +377,6 @@ async function processTransparencyAd(payload, ctx) {
         if (typeof ctx.db.elastic.get === 'function') {
           const response = await ctx.db.elastic.get({
             index: esIndex,
-            type: 'doc',
             id: String(saved.googleTextAdId),
           });
           existingEs = response?.body?._source || response?._source || {};
@@ -662,7 +661,6 @@ async function processTransparencyAd(payload, ctx) {
       try {
         await ctx.db.elastic.index({
           index: esIndex,
-          type: 'doc',
           id: String(saved.googleTextAdId),
           body: document,
         });

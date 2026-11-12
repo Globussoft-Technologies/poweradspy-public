@@ -98,7 +98,6 @@ async function getGoogleAdsWithCountry(db, log) {
     const hitsPerAd = await Promise.all(ads.map((row) =>
       elastic.search({
         index: ES_INDEX,
-        type: 'doc',
         body: { query: { match: { id: row.id } } },
       })
         .then(esHits)

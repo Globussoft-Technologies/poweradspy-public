@@ -92,7 +92,6 @@ async function main() {
 
   const esResult = await db.elastic.search({
     index,
-    type: 'doc',
     body: {
       size: 1000,
       query: { term: { platform: 18 } },

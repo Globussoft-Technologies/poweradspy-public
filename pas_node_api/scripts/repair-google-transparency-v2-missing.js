@@ -19,7 +19,6 @@ async function fetchDocuments(client, index, ids) {
   if (!ids.length) return new Map();
   const response = await client.mget({
     index,
-    type: 'doc',
     body: { ids: ids.map(String) },
   });
   const documents = responseBody(response).docs || [];
@@ -68,7 +67,7 @@ async function main() {
 
   const body = [];
   for (const id of recoverableIds) {
-    body.push({ index: { _index: TARGET_INDEX, _type: 'doc', _id: String(id) } });
+    body.push({ index: { _index: TARGET_INDEX, _id: String(id) } });
     body.push({ ...legacyDocuments.get(id), id, platform: 18 });
   }
   const result = responseBody(await db.elastic.client.bulk({ refresh: 'wait_for', body }));

@@ -38,7 +38,7 @@ async function processDelete(ref, ctx) {
 
     if (db.elastic) {
       try {
-        await db.elastic.delete({ index: ES_INDEX, type: 'doc', id: String(internalId) });
+        await db.elastic.delete({ index: ES_INDEX, id: String(internalId) });
       } catch (e) {
         log.warn('linkedin ES delete failed (SQL row already removed)', { id: internalId, error: e.message });
       }

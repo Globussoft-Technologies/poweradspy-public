@@ -432,7 +432,7 @@ async function updatePath(ctx, n, { translation, existingId, network }) {
           esUpdate['native_ad.nas_url'] = uploadedMedia.image_video_url;
           esUpdate['native_ad.aws_url'] = uploadedMedia.image_video_url;
         }
-        await db.elastic.update({ index: db.elastic.indexName || ES_INDEX, type: 'doc', id: _id, body: { doc: esUpdate } });
+        await db.elastic.update({ index: db.elastic.indexName || ES_INDEX, id: _id, body: { doc: esUpdate } });
       }
     } catch (e) {
       log.warn('ES update failed', { error: e.message, adId });
@@ -466,7 +466,7 @@ async function indexAd(ctx, nativeAdId, n, result) {
 
   let _id;
   try { const f = await db.elastic.search(searchIdQuery(idx, nativeAdId)); _id = firstHitId(f); } catch { /* ignore */ }
-  await db.elastic.index({ index: doc.index, type: doc.type, id: _id || undefined, body: doc.body });
+  await db.elastic.index({ index: doc.index, id: _id || undefined, body: doc.body });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

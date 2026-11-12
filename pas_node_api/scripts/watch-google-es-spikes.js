@@ -42,7 +42,7 @@ async function captureSpike(client, cpuPct, loadAvg) {
   log(`>>> SPIKE DETECTED: cpu=${cpuPct}% load1m=${loadAvg} — capturing full snapshot...`);
 
   try {
-    const tasksResp = (await client.tasks.list({ detailed: true, actions: 'indices:data/read/search' })).body
+    const tasksResp = await client.tasks.list({ detailed: true, actions: 'indices:data/read/search' }).then((r) => r.body ?? r)
       || (await client.tasks.list({ detailed: true, actions: 'indices:data/read/search' }));
     const running = [];
     for (const node of Object.values(tasksResp.nodes || {})) {
@@ -63,7 +63,7 @@ async function captureSpike(client, cpuPct, loadAvg) {
   }
 
   try {
-    const hot = (await client.nodes.hotThreads({ threads: 5 })).body || (await client.nodes.hotThreads({ threads: 5 }));
+    const hot = await client.nodes.hotThreads({ threads: 5 }).then((r) => r.body ?? r) || (await client.nodes.hotThreads({ threads: 5 }));
     log('  hot threads:');
     console.log(String(hot).split('\n').slice(0, 60).join('\n'));
   } catch (err) {
@@ -71,7 +71,7 @@ async function captureSpike(client, cpuPct, loadAvg) {
   }
 
   try {
-    const statsResp = (await client.nodes.stats({ metric: ['thread_pool'] })).body
+    const statsResp = await client.nodes.stats({ metric: ['thread_pool'] }).then((r) => r.body ?? r)
       || (await client.nodes.stats({ metric: ['thread_pool'] }));
     for (const node of Object.values(statsResp.nodes || {})) {
       for (const pool of ['search', 'write', 'bulk', 'get', 'merge']) {
@@ -105,7 +105,7 @@ async function main() {
 
   while (!stopped) {
     try {
-      const statsResp = (await client.nodes.stats({ metric: ['os'] })).body || (await client.nodes.stats({ metric: ['os'] }));
+      const statsResp = await client.nodes.stats({ metric: ['os'] }).then((r) => r.body ?? r) || (await client.nodes.stats({ metric: ['os'] }));
       let maxCpu = 0;
       let maxLoad = 0;
       for (const node of Object.values(statsResp.nodes || {})) {

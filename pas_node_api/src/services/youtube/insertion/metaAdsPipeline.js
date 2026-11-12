@@ -300,7 +300,7 @@ async function indexAd(ctx, youtubeAdId, n, extras, network) {
   if (!row) return;
   const data = await buildFlatData(db, row, youtubeAdId, n, extras);
   const doc = buildDoc(META_INSERT_COLUMNS, data, { extra: buildEsExtra(n, row, extras) });
-  await db.elastic.index({ index: doc.index, type: doc.type, id: String(youtubeAdId), body: doc.body });
+  await db.elastic.index({ index: doc.index, id: String(youtubeAdId), body: doc.body });
 }
 
 // ── ES update (UPDATE) — partial doc addressed by _id = internal id ────────────
@@ -320,14 +320,14 @@ async function updateEsDoc(ctx, youtubeAdId, n, { cur, lastSeen, daysRunning, ne
     source: splitPipes(n.source),
   };
   try {
-    await db.elastic.update({ index: ES_INDEX, type: 'doc', id: String(youtubeAdId), body: { doc } });
+    await db.elastic.update({ index: ES_INDEX, id: String(youtubeAdId), body: { doc } });
   } catch (err) {
     const joined = await repo.getJoinedAd(db.sql, 'youtube_ad.id', youtubeAdId);
     const row = joined[0];
     if (!row) return;
     const data = await buildFlatData(db, row, youtubeAdId, n, { mediaUrl: row.video_url, thumbUrl: row.thumbnail_url, postOwnerImage: row.post_owner_image, isImage: IMAGE_TYPES.has(String(row.type)) });
     const full = buildDoc(META_INSERT_COLUMNS, data, { extra: { ...buildEsExtra(n, row, {}), ...doc } });
-    await db.elastic.index({ index: full.index, type: full.type, id: String(youtubeAdId), body: full.body });
+    await db.elastic.index({ index: full.index, id: String(youtubeAdId), body: full.body });
   }
 }
 

@@ -69,13 +69,13 @@ async function reindexOne(sql, elastic, chatgptadsAdId) {
   const doc = buildChatgptSearchMixDoc(CHATGPTADS_COLUMNS, row, { index: ES_INDEX, extra });
   // Deterministic _id (= chatgptads_ad.id), same reasoning as chatgptadsPipeline.js's
   // indexAd() — no search-then-reuse-found-_id race.
-  await elastic.index({ index: doc.index, type: doc.type, id: String(chatgptadsAdId), body: doc.body });
+  await elastic.index({ index: doc.index, id: String(chatgptadsAdId), body: doc.body });
   return 'indexed';
 }
 
 async function deleteOne(elastic, chatgptadsAdId) {
   try {
-    await elastic.delete({ index: ES_INDEX, type: 'doc', id: String(chatgptadsAdId) });
+    await elastic.delete({ index: ES_INDEX, id: String(chatgptadsAdId) });
   } catch (e) {
     if (e?.statusCode !== 404 && e?.meta?.statusCode !== 404) throw e;
   }

@@ -140,7 +140,7 @@ async function fetchAvailableYears(elastic, index, filter) {
               // spelling, but it's rejected by older clusters with
               // "unknown field [calendar_interval], parser not found".
               // `interval: 'year'` works on every ES version we target.
-              interval: 'year',
+              calendar_interval: 'year', // ES 8+/9: legacy `interval` was removed
               format: 'yyyy',
               min_doc_count: 1,
             },

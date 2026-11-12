@@ -115,7 +115,6 @@ function buildSearchMixDoc(columns, row, opts = {}) {
 
   return {
     index,
-    type: '_doc',
     body,
   };
 }

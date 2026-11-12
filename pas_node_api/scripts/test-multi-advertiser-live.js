@@ -200,6 +200,13 @@ async function main() {
         requestTimeout: 20000,
         maxRetries: 1,
         ...(cfg.auth?.username ? { auth: { username: cfg.auth.username, password: cfg.auth.password || '' } } : {}),
+        // ES 9 serves HTTPS with a self-signed CA (http_ca.crt) — same lookup as DatabaseManager.
+        ...(() => {
+          const appConfig = require('../src/config');
+          const caPath = cfg.caCert
+            || appConfig.databases?.[slug === 'tiktok' ? 'elastic_tiktok' : 'elastic']?.caCert;
+          return caPath ? { tls: { ca: require('fs').readFileSync(require('path').resolve(caPath)) } } : {};
+        })(),
       });
       clients.set(key, client);
     }

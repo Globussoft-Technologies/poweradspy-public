@@ -108,7 +108,6 @@ async function updateAdCategory(adId, categories, db, log) {
       if (hits.length > 0) {
         await db.elastic.update({
           index: 'reddit_search_mix',
-          type: 'doc',
           id: hits[0]._id,
           body: {
             doc: {
@@ -565,7 +564,6 @@ async function insertHtmlRedirectCountry(req, db, log) {
         if (Object.keys(esUpdate).length > 0 && esDocId) {
           await db.elastic.update({
             index: 'reddit_search_mix',
-            type: 'doc',
             id: esDocId,
             body: { doc: esUpdate }
           });

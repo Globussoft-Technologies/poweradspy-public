@@ -107,12 +107,12 @@ function buildSearchMixDoc(columns, row, opts = {}) {
   }
 
   if (opts.extra) Object.assign(body, opts.extra);
-  return { index, type: 'doc', body };
+  return { index, body };
 }
 
 /** ES query to find a doc's _id by instagram_ad.id. */
 function searchIdQuery(index, adInternalId) {
-  return { index, type: 'doc', body: { query: { term: { 'instagram_ad.id': adInternalId } } } };
+  return { index, body: { query: { term: { 'instagram_ad.id': adInternalId } } } };
 }
 
 function firstHitId(esResponse) {

@@ -44,6 +44,7 @@ async function getLatestVideoAdUrls(req, db, logger) {
     index: db.elastic.indexName || QR_INDEX,
     body: {
       size: limit,
+      track_total_hits: true, // ES 7+ caps hits.total at 10,000 without this
       // Latest first — highest ad id is the most recently inserted ad.
       sort: [{ [ID_FIELD]: 'desc' }],
       query: {

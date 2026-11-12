@@ -169,11 +169,11 @@ async function checkElastic(slug, elastic, reportedNodes, flags) {
   const nodeKey = elastic.indexName ? `${slug}:${elastic.indexName}` : slug;
   console.log(`\n[${slug}] Elasticsearch (index: ${elastic.indexName || 'n/a'})`);
   try {
-    const health = (await client.cluster.health()).body || (await client.cluster.health());
+    const health = await client.cluster.health().then((r) => r.body ?? r) || (await client.cluster.health());
     console.log(`  cluster: status=${health.status} nodes=${health.number_of_nodes} active_shards=${health.active_shards} relocating=${health.relocating_shards} initializing=${health.initializing_shards} unassigned=${health.unassigned_shards}`);
     if (health.status !== 'green') flags.push(`Elasticsearch(${slug}): cluster status is "${health.status}" (unassigned_shards=${health.unassigned_shards}).`);
 
-    const stats = (await client.nodes.stats({ metric: ['jvm', 'os', 'process', 'thread_pool'] })).body
+    const stats = await client.nodes.stats({ metric: ['jvm', 'os', 'process', 'thread_pool'] }).then((r) => r.body ?? r)
       || (await client.nodes.stats({ metric: ['jvm', 'os', 'process', 'thread_pool'] }));
     for (const [nodeId, node] of Object.entries(stats.nodes || {})) {
       const heapPct = node.jvm?.mem?.heap_used_percent;
@@ -199,7 +199,7 @@ async function checkElastic(slug, elastic, reportedNodes, flags) {
 
     if (!reportedNodes.has(nodeKey) && (health.status !== 'green')) {
       try {
-        const hot = (await client.nodes.hotThreads()).body || (await client.nodes.hotThreads());
+        const hot = await client.nodes.hotThreads().then((r) => r.body ?? r) || (await client.nodes.hotThreads());
         console.log(`\n  hot threads (truncated):\n${String(hot).split('\n').slice(0, 25).join('\n')}`);
       } catch { /* hot threads is best-effort */ }
     }

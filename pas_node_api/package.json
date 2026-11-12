@@ -18,7 +18,7 @@
     "test:load": "npx autocannon -c 100 -d 10 -p 10 http://localhost:3000/health"
   },
   "dependencies": {
-    "@elastic/elasticsearch": "^7.17.14",
+    "@elastic/elasticsearch": "^9.0.0",
     "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^11.6.0",

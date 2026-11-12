@@ -364,7 +364,7 @@ async function indexAd(ctx, linkedinAdId, n, extras, network) {
   if (!row) return;
   const data = await buildFlatData(db, row, linkedinAdId, n, extras);
   const doc = buildDoc(META_INSERT_COLUMNS, data, { extra: buildEsExtra(n, row, extras) });
-  await db.elastic.index({ index: doc.index, type: doc.type, id: String(linkedinAdId), body: doc.body });
+  await db.elastic.index({ index: doc.index, id: String(linkedinAdId), body: doc.body });
 }
 
 // ── ES update (UPDATE) — partial doc addressed by _id = internal id ────────────
@@ -386,7 +386,7 @@ async function updateEsDoc(ctx, linkedinAdId, n, { cur, lastSeen, daysRunning, n
   };
 
   try {
-    await db.elastic.update({ index: ES_INDEX, type: 'doc', id: String(linkedinAdId), body: { doc } });
+    await db.elastic.update({ index: ES_INDEX, id: String(linkedinAdId), body: { doc } });
   } catch (err) {
     // No doc yet (SQL already updated) → index a fresh, complete one.
     const joined = await repo.getJoinedAd(db.sql, 'linkedin_ad.id', linkedinAdId);
@@ -394,7 +394,7 @@ async function updateEsDoc(ctx, linkedinAdId, n, { cur, lastSeen, daysRunning, n
     if (!row) return;
     const data = await buildFlatData(db, row, linkedinAdId, n, { imageUrl: row.image_url, postOwnerImage: row.post_owner_image, source: n.source });
     const full = buildDoc(META_INSERT_COLUMNS, data, { extra: { ...buildEsExtra(n, row, {}), ...doc } });
-    await db.elastic.index({ index: full.index, type: full.type, id: String(linkedinAdId), body: full.body });
+    await db.elastic.index({ index: full.index, id: String(linkedinAdId), body: full.body });
   }
 }
 

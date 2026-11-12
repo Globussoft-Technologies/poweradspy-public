@@ -57,14 +57,14 @@ function buildChatgptSearchMixDoc(columns, row, opts = {}) {
   }
 
   if (opts.extra) Object.assign(body, opts.extra);
-  return { index, type: 'doc', body };
+  return { index, body };
 }
 
 // Queries by the INTERNAL numeric id (ES field `id`, mapped `long`, = chatgptads_ad.id) —
 // NOT the external `ad_id` string field. Matches facebook's searchIdQuery, which queries
 // `facebook_ad.id` (its own internal-id ES field), not `facebook_ad.ad_id`.
 function searchIdQuery(index, adInternalId) {
-  return { index, type: 'doc', body: { query: { term: { id: Number(adInternalId) } } } };
+  return { index, body: { query: { term: { id: Number(adInternalId) } } } };
 }
 
 function firstHitId(esResponse) {

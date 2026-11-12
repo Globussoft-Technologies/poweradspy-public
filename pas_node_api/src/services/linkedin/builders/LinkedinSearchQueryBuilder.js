@@ -515,7 +515,8 @@ class LinkedinSearchQueryBuilder {
       );
     }
 
-    const baseSort = [{ [this._sortField]: this._sortMethod }, { _id: 'desc' }];
+    // Tie-breaker: ad_id (long, same value as _id). ES 8+/9 disallow sorting on _id.
+    const baseSort = [{ [this._sortField]: this._sortMethod }, { ad_id: 'desc' }];
     const sort = isPriorityOffset ? [{ _score: 'desc' }, ...baseSort] : baseSort;
 
     const body = {

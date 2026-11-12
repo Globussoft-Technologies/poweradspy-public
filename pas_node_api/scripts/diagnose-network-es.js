@@ -58,7 +58,7 @@ async function main() {
   heading('CLUSTER HEALTH');
   try {
     const t1 = Date.now();
-    const health = (await client.cluster.health({ timeout: '10s' })).body || (await client.cluster.health({ timeout: '10s' }));
+    const health = await client.cluster.health({ timeout: '10s' }).then((r) => r.body ?? r) || (await client.cluster.health({ timeout: '10s' }));
     console.log(`(${Date.now() - t1}ms) status=${health.status} nodes=${health.number_of_nodes} active_shards=${health.active_shards} unassigned_shards=${health.unassigned_shards} initializing_shards=${health.initializing_shards} relocating_shards=${health.relocating_shards}`);
     if (health.status !== 'green') console.log('  >> cluster is NOT green — this alone can explain slow/hanging queries.');
   } catch (err) {
@@ -68,7 +68,7 @@ async function main() {
   heading(`INDEX HEALTH: ${index}`);
   try {
     const t2 = Date.now();
-    const idxHealth = (await client.cluster.health({ index, timeout: '10s' })).body || (await client.cluster.health({ index, timeout: '10s' }));
+    const idxHealth = await client.cluster.health({ index, timeout: '10s' }).then((r) => r.body ?? r) || (await client.cluster.health({ index, timeout: '10s' }));
     console.log(`(${Date.now() - t2}ms) status=${idxHealth.status} active_shards=${idxHealth.active_shards} unassigned_shards=${idxHealth.unassigned_shards}`);
   } catch (err) {
     console.log(`FAILED: ${err.message}`);
@@ -77,7 +77,7 @@ async function main() {
   heading('NODE STATS (jvm / os / thread_pool)');
   try {
     const t3 = Date.now();
-    const stats = (await client.nodes.stats({ metric: ['jvm', 'os', 'thread_pool'] })).body
+    const stats = await client.nodes.stats({ metric: ['jvm', 'os', 'thread_pool'] }).then((r) => r.body ?? r)
       || (await client.nodes.stats({ metric: ['jvm', 'os', 'thread_pool'] }));
     console.log(`(${Date.now() - t3}ms)`);
     for (const node of Object.values(stats.nodes || {})) {
@@ -95,7 +95,7 @@ async function main() {
 
   heading('PENDING TASKS');
   try {
-    const pending = (await client.cluster.pendingTasks()).body || (await client.cluster.pendingTasks());
+    const pending = await client.cluster.pendingTasks().then((r) => r.body ?? r) || (await client.cluster.pendingTasks());
     const tasks = pending.tasks || [];
     console.log(`${tasks.length} pending task(s)`);
     tasks.slice(0, 10).forEach((t) => console.log(`  [${t.time_in_queue}] priority=${t.priority} source=${t.source}`));
@@ -116,7 +116,7 @@ async function main() {
 
   heading('HOT THREADS');
   try {
-    const hot = (await client.nodes.hotThreads({ threads: 3 })).body || (await client.nodes.hotThreads({ threads: 3 }));
+    const hot = await client.nodes.hotThreads({ threads: 3 }).then((r) => r.body ?? r) || (await client.nodes.hotThreads({ threads: 3 }));
     console.log(String(hot).split('\n').slice(0, 40).join('\n'));
   } catch (err) {
     console.log(`FAILED: ${err.message}`);

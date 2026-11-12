@@ -82,13 +82,12 @@ function buildNativeSearchMixDoc(columns, row, opts = {}) {
 
   if (opts.extra) Object.assign(body, opts.extra);
 
-  return { index, type: 'doc', body };
+  return { index, body };
 }
 
 function searchIdQuery(index, adInternalId) {
   return {
     index,
-    type: 'doc',
     body: { query: { term: { 'native_ad.id': adInternalId } } },
   };
 }

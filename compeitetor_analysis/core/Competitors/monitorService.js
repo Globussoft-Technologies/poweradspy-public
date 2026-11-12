@@ -12,7 +12,6 @@ import emailService from "../mailer/emailService.js"
 import { newSendId, logSend } from "../mailer/emailAudit.js";
 import { isBlacklisted, BLACKLISTED_SKIP_REASON } from "../mailer/bounceGuard.js";
 import config from "config";
-import elasticsearch from "elasticsearch";
 import moment from "moment";
 import pLimit from "p-limit";
 import { NETWORK_INDEXES } from "../../utils/networkIndexes.js";

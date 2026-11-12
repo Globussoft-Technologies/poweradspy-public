@@ -85,6 +85,8 @@ const NETWORKS = {
     ],
   },
   google: {
+    // ES index used by the app for google (config's google connection points at google_ads_data).
+    esIndex: 'google_ads_data_v2',
     mainTable: 'google_text_ad', sqlLastSeen: 'datetime',
     esIdField: 'id', esLastSeenField: 'last_seen',
     repo: '../src/services/google/insertion/repository',
@@ -180,7 +182,10 @@ Options:
                             row (orphans) are deleted on --apply (reported only in dry-run); docs whose
                             SQL row still exists (stale ES last_seen) are never deleted, only reported.
   --skip-es-count           Skip the ES count in the dry-run (if the ES range query errors).
-  --help                    Show this help.
+  --invalid-dates           Also (or only) delete ads whose last_seen is NULL, 0000-00-00, 1970 or any
+                            date before 2000. Confirm phrase: DELETE_ADS_BY_YEAR:invalid-dates
+                            (with --year 2019: DELETE_ADS_BY_YEAR:2019,invalid-dates).
+  --help                   Show this help.
 `.trim();
 }
 
@@ -190,7 +195,7 @@ function parseArgs(argv) {
   const opts = {
     years: [], yearsRaw: '', networks: [...ALL_NETWORKS], apply: false, confirm: null,
     limit: null, batchSize: DEFAULT_BATCH, sleepMs: DEFAULT_SLEEP_MS,
-    esSweep: false, skipEsCount: false, help: false,
+    esSweep: false, skipEsCount: false, invalidDates: false, help: false,
   };
   const val = (i, flag) => {
     const v = argv[i + 1];
@@ -210,6 +215,7 @@ function parseArgs(argv) {
     else if (a === '--sleep-ms') opts.sleepMs = Number(val(i++, a));
     else if (a === '--es-sweep') opts.esSweep = true;
     else if (a === '--skip-es-count') opts.skipEsCount = true;
+    else if (a === '--invalid-dates') opts.invalidDates = true;
     else if (a === '--help' || a === '-h') opts.help = true;
     else throw new Error(`Unknown argument: ${a}`);
   }
@@ -217,13 +223,16 @@ function parseArgs(argv) {
 
   const thisYear = new Date().getUTCFullYear();
   opts.years = [...new Set(String(opts.yearsRaw).split(',').map((s) => s.trim()).filter(Boolean))];
-  if (!opts.years.length) throw new Error('--year is required (e.g. --year 2019).');
+  if (!opts.years.length && !opts.invalidDates) {
+    throw new Error('--year is required (e.g. --year 2019), or use --invalid-dates.');
+  }
   for (const y of opts.years) {
     if (!/^\d{4}$/.test(y) || Number(y) < 2000 || Number(y) > thisYear) {
-      throw new Error(`Invalid year "${y}". Use a 4-digit year between 2000 and ${thisYear}.`);
+      throw new Error(`Invalid year "${y}". Use a 4-digit year between 2000 and ${thisYear} (for 0000/1970 dates use --invalid-dates).`);
     }
   }
   opts.years = opts.years.map(Number).sort((a, b) => a - b);
+  if (opts.invalidDates) opts.years.push(INVALID);
   opts.networks = [...new Set(opts.networks)];
   for (const n of opts.networks) {
     if (!NETWORKS[n]) throw new Error(`Unsupported network "${n}". Allowed: ${ALL_NETWORKS.join(', ')}`);
@@ -239,7 +248,8 @@ function parseArgs(argv) {
 }
 
 function confirmPhrase(opts) {
-  return `DELETE_ADS_BY_YEAR:${opts.yearsRaw}`;
+  const parts = [opts.yearsRaw, opts.invalidDates ? 'invalid-dates' : ''].filter(Boolean);
+  return `DELETE_ADS_BY_YEAR:${parts.join(',')}`;
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -254,7 +264,35 @@ function yearBounds(year, kind) {
   return { from: `${year}-01-01 00:00:00`, to: `${year + 1}-01-01 00:00:00` };
 }
 
+// Special "year": ads whose last_seen is NULL / zero date (0000-00-00) / 1970 / anything before 2000.
+const INVALID = 'invalid';
+const VALID_FROM = { datetime: '2000-01-01 00:00:00', epoch: Math.floor(Date.UTC(2000, 0, 1) / 1000) };
+
+/** SQL condition on last_seen for a year (or INVALID). Returns { cond, params }. */
+function sqlPeriod(spec, year) {
+  if (year === INVALID) {
+    return { cond: '(last_seen IS NULL OR last_seen < ?)', params: [VALID_FROM[spec.sqlLastSeen]] };
+  }
+  const b = yearBounds(year, spec.sqlLastSeen);
+  return { cond: '(last_seen >= ? AND last_seen < ?)', params: [b.from, b.to] };
+}
+
 function esLastSeenRange(spec, year) {
+  if (year === INVALID) {
+    const epoch = (spec.esLastSeen || spec.sqlLastSeen) === 'epoch';
+    const lt = epoch
+      ? { lt: VALID_FROM.epoch }
+      : { lt: VALID_FROM.datetime, format: 'yyyy-MM-dd HH:mm:ss' };
+    return {
+      bool: {
+        should: [
+          { range: { [spec.esLastSeenField]: lt } },
+          { bool: { must_not: { exists: { field: spec.esLastSeenField } } } },
+        ],
+        minimum_should_match: 1,
+      },
+    };
+  }
   if ((spec.esLastSeen || spec.sqlLastSeen) === 'epoch') {
     const b = yearBounds(year, 'epoch');
     return { range: { [spec.esLastSeenField]: { gte: b.from, lt: b.to } } };
@@ -358,12 +396,12 @@ async function addMissingFkChildren(sql, spec, statements) {
 // ── counts (dry-run) ────────────────────────────────────────────────────────
 
 async function sqlCount(sql, spec, year) {
-  const b = yearBounds(year, spec.sqlLastSeen);
+  const p = sqlPeriod(spec, year);
   const rows = await sql.query(
     `SELECT COUNT(*) AS c, MIN(id) AS min_id, MAX(id) AS max_id
        FROM ${spec.mainTable}
-      WHERE last_seen >= ? AND last_seen < ?`,
-    [b.from, b.to]
+      WHERE ${p.cond}`,
+    p.params
   );
   const r = rows[0] || {};
   return { count: Number(r.c || 0), minId: r.min_id ?? null, maxId: r.max_id ?? null };
@@ -380,19 +418,19 @@ async function esCount(elastic, spec, year) {
 // ── delete ──────────────────────────────────────────────────────────────────
 
 async function selectBatch(sql, spec, year, afterId, size) {
-  const b = yearBounds(year, spec.sqlLastSeen);
+  const p = sqlPeriod(spec, year);
   // LIMIT is inlined (validated integer) — mysql2 execute() rejects a bound LIMIT on some servers.
   return sql.query(
     `SELECT id FROM ${spec.mainTable}
-      WHERE id > ? AND last_seen >= ? AND last_seen < ?
+      WHERE id > ? AND ${p.cond}
       ORDER BY id ASC
       LIMIT ${Number(size)}`,
-    [afterId, b.from, b.to]
+    [afterId, ...p.params]
   );
 }
 
 async function deleteBatch({ network, spec, db, statements, year, ids }) {
-  const b = yearBounds(year, spec.sqlLastSeen);
+  const p = sqlPeriod(spec, year);
   const conn = await db.sql.getConnection();
   const q = async (s, p) => (await conn.execute(s, p))[0];
   let fkOff = false;
@@ -404,9 +442,9 @@ async function deleteBatch({ network, spec, db, statements, year, ids }) {
     const marks = ids.map(() => '?').join(',');
     const locked = await q(
       `SELECT id FROM ${spec.mainTable}
-        WHERE id IN (${marks}) AND last_seen >= ? AND last_seen < ?
+        WHERE id IN (${marks}) AND ${p.cond}
         FOR UPDATE`,
-      [...ids, b.from, b.to]
+      [...ids, ...p.params]
     );
     const keep = locked.map((r) => r.id);
     if (!keep.length) {
@@ -451,7 +489,12 @@ async function deleteBatch({ network, spec, db, statements, year, ids }) {
       body: { query: esIdsQuery(spec, keep) },
     }));
     if (Array.isArray(esRes.failures) && esRes.failures.length) {
-      throw new Error(`ES delete_by_query reported ${esRes.failures.length} failure(s): ${JSON.stringify(esRes.failures[0])}`);
+      const f = esRes.failures[0] || {};
+      const reason = f.cause?.reason || f.reason || JSON.stringify(f).slice(0, 200);
+      const hint = /FORBIDDEN\/8/.test(reason)
+        ? ` — index "${db.elastic.indexName}" has index.blocks.write=true (see ES upgrade runbook step 1.9)`
+        : /FORBIDDEN\/12/.test(reason) ? ' — index is read-only (disk flood-stage watermark)' : '';
+      throw new Error(`ES delete failed for ${esRes.failures.length} doc(s): ${reason}${hint}`);
     }
 
     // 4. commit.
@@ -508,7 +551,8 @@ function sourceValue(source, field) {
 async function esOrphanSweep({ network, spec, db, year, apply }) {
   const client = db.elastic.client;
   const index = db.elastic.indexName;
-  const out = { esInRange: 0, orphans: 0, orphanDeleted: 0, stale: 0, staleSamples: [], orphanSamples: [] };
+  const out = { esInRange: 0, orphans: 0, orphanDeleted: 0, stale: 0, pending: 0, staleSamples: [], orphanSamples: [] };
+  const p = sqlPeriod(spec, year);
   let page = unwrap(await client.search({
     index, scroll: '2m', size: 1000,
     body: { query: esLastSeenRange(spec, year), sort: ['_doc'], _source: [spec.esIdField, spec.esLastSeenField] },
@@ -525,8 +569,9 @@ async function esOrphanSweep({ network, spec, db, year, apply }) {
       const existing = new Map();
       if (ids.length) {
         const rows = await db.sql.query(
-          `SELECT id, last_seen FROM ${spec.mainTable} WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
-        for (const r of rows) existing.set(Number(r.id), r.last_seen);
+          `SELECT id, last_seen, IFNULL(${p.cond}, 0) AS in_year
+             FROM ${spec.mainTable} WHERE id IN (${ids.map(() => '?').join(',')})`, [...p.params, ...ids]);
+        for (const r of rows) existing.set(Number(r.id), { lastSeen: r.last_seen, inYear: Number(r.in_year) === 1 });
       }
 
       const orphanHits = [];
@@ -534,9 +579,15 @@ async function esOrphanSweep({ network, spec, db, year, apply }) {
         const raw = sourceValue(h._source, spec.esIdField);
         const id = raw !== undefined && raw !== null && /^\d+$/.test(String(raw)) ? Number(raw) : null;
         if (id !== null && existing.has(id)) {
-          out.stale += 1;
-          if (out.staleSamples.length < 10) {
-            out.staleSamples.push({ id, esLastSeen: sourceValue(h._source, spec.esLastSeenField), sqlLastSeen: existing.get(id) });
+          const row = existing.get(id);
+          if (row.inYear) {
+            // SQL last_seen is in this year too → the main SQL+ES pass deletes it (dry-run: not yet).
+            out.pending += 1;
+          } else {
+            out.stale += 1;
+            if (out.staleSamples.length < 10) {
+              out.staleSamples.push({ id, esLastSeen: sourceValue(h._source, spec.esLastSeenField), sqlLastSeen: row.lastSeen });
+            }
           }
         } else {
           orphanHits.push(h);
@@ -567,7 +618,9 @@ async function esOrphanSweep({ network, spec, db, year, apply }) {
   }
   if (apply && out.orphanDeleted) await client.indices.refresh({ index }).catch(() => {});
   console.log(`[${network}] ${year} ES sweep: in range ${out.esInRange} | orphans (no SQL row) ${out.orphans}`
-    + `${apply ? ` → deleted ${out.orphanDeleted}` : ' (dry-run, not deleted)'} | stale (SQL row exists, kept) ${out.stale}`);
+    + `${apply ? ` → deleted ${out.orphanDeleted}` : ' (dry-run, not deleted)'}`
+    + ` | to delete by main pass (SQL last_seen also in ${year}) ${out.pending}`
+    + ` | stale (SQL last_seen in another year, kept) ${out.stale}`);
   if (out.orphanSamples.length) console.log(`[${network}] ${year} orphan samples: ${JSON.stringify(out.orphanSamples)}`);
   if (out.staleSamples.length) console.log(`[${network}] ${year} stale samples (NOT deleted): ${JSON.stringify(out.staleSamples)}`);
   return out;
@@ -606,13 +659,17 @@ async function main(argv = process.argv.slice(2)) {
   try {
     for (const network of opts.networks) {
       const { spec, statements } = prepared[network];
-      const db = dbManager.getConnections(network);
+      const conns = dbManager.getConnections(network);
       const dbName = networksConfig[network]?.database?.sql?.database || '?';
-      if (!db?.sql || !db?.elastic) {
+      if (!conns?.sql || !conns?.elastic) {
         console.error(`[${network}] SKIPPED — SQL or ES connection unavailable.`);
         report.networks[network] = { error: 'connection unavailable' };
         continue;
       }
+      // Per-network ES index override (e.g. google → google_ads_data_v2); same client/node.
+      const db = spec.esIndex
+        ? { ...conns, elastic: { ...conns.elastic, indexName: spec.esIndex } }
+        : conns;
       report.networks[network] = { database: dbName, esIndex: db.elastic.indexName, mainTable: spec.mainTable, years: {} };
       console.log(`\n[${network}] db=${dbName} table=${spec.mainTable} es=${db.elastic.indexName}`);
       try {
@@ -667,7 +724,7 @@ async function main(argv = process.argv.slice(2)) {
       const parts = [`SQL=${e.sqlCount ?? '-'}`];
       if (e.esCountByLastSeen !== undefined) parts.push(`ES(by last_seen)=${e.esCountByLastSeen}`);
       if (opts.apply) parts.push(`deleted SQL=${e.sqlDeleted ?? 0} ES=${e.esDeleted ?? 0}`);
-      if (e.esSweep) parts.push(`sweep: orphans=${e.esSweep.orphans}${opts.apply ? ` deleted=${e.esSweep.orphanDeleted}` : ''} stale(kept)=${e.esSweep.stale}`);
+      if (e.esSweep) parts.push(`sweep: orphans=${e.esSweep.orphans}${opts.apply ? ` deleted=${e.esSweep.orphanDeleted}` : ''}${e.esSweep.pending ? ` to-delete=${e.esSweep.pending}` : ''} stale(kept)=${e.esSweep.stale}`);
       if (e.error) parts.push(`ERROR: ${e.error}`);
       console.log(`  ${network.padEnd(10)} ${year}  ${parts.join('  ')}`);
     }
