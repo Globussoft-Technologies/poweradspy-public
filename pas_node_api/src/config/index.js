@@ -638,6 +638,15 @@ const config = {
   // ─── Google custom keywords (user-uploaded Excel → MongoDB → scraper claims) — OFF by default ───
   customKeywords: {
     enabled: getVal(fileConfig.customKeywords?.enabled, 'CUSTOM_KEYWORDS_ENABLED', toBool) === true,
+    // EXCLUSIVE allow-list (same contract as imageGen / chatgptads): empty = everyone (while enabled);
+    // non-empty = ONLY these user IDs see the button, can upload, search their own ads, and have
+    // their keywords scraped. JSON array in config.json, or comma-separated in CUSTOM_KEYWORDS_ALLOWED_USER_IDS.
+    allowedUserIds: (() => {
+      const raw = getVal(fileConfig.customKeywords?.allowedUserIds, 'CUSTOM_KEYWORDS_ALLOWED_USER_IDS');
+      if (Array.isArray(raw)) return raw.map((v) => String(v).trim()).filter(Boolean);
+      if (typeof raw === 'string' && raw.trim()) return raw.split(',').map((s) => s.trim()).filter(Boolean);
+      return [];
+    })(),
     mongoSlug: getVal(fileConfig.customKeywords?.mongoSlug, 'CUSTOM_KEYWORDS_MONGO_SLUG') || '',
     database: getVal(fileConfig.customKeywords?.database, 'CUSTOM_KEYWORDS_DATABASE') || '',
     collection: getVal(fileConfig.customKeywords?.collection, 'CUSTOM_KEYWORDS_COLLECTION') || 'custom_keywords',

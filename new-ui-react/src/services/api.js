@@ -3664,15 +3664,33 @@ export const importGoogleKeywordsText = ({ text, user_id = 281 } = {}) =>
 // The backend takes the user from the login token — nothing user-specific is sent here.
 const CUSTOM_KEYWORDS_URL = `${PAS_API_BASE}/api/v1/google/custom-keywords`;
 
-// Downloads the sample .xlsx through a temporary link (the endpoint needs the auth header).
-export const downloadCustomKeywordSample = async () => {
-  const res = await fetch(`${CUSTOM_KEYWORDS_URL}/sample`, { headers: { Authorization: `Bearer ${getPASToken()}` } });
+// Whether this user gets Custom Keyword at all (config customKeywords.enabled + allowedUserIds).
+// Cached per login token, so the three filter-bar mounts share one request.
+let customKeywordAccessCache = { token: null, promise: null };
+export const getCustomKeywordAccess = () => {
+  const token = getPASToken();
+  if (customKeywordAccessCache.promise && customKeywordAccessCache.token === token) return customKeywordAccessCache.promise;
+  const promise = (async () => {
+    const res = await fetch(`${CUSTOM_KEYWORDS_URL}/access`, { headers: { Authorization: `Bearer ${token}` } });
+    await checkFor401(res);
+    if (!res.ok) throw new Error(`custom-keywords/access failed: ${res.status}`);
+    return res.json();
+  })();
+  customKeywordAccessCache = { token, promise };
+  promise.catch(() => { customKeywordAccessCache = { token: null, promise: null }; });
+  return promise;
+};
+
+// Downloads the sample sheet ('xlsx' or 'csv') through a temporary link (the endpoint needs the auth header).
+export const downloadCustomKeywordSample = async (format = 'xlsx') => {
+  const type = format === 'csv' ? 'csv' : 'xlsx';
+  const res = await fetch(`${CUSTOM_KEYWORDS_URL}/sample?format=${type}`, { headers: { Authorization: `Bearer ${getPASToken()}` } });
   await checkFor401(res);
   if (!res.ok) throw new Error(`custom-keywords/sample failed: ${res.status}`);
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'custom-keywords-sample.xlsx';
+  a.download = `custom-keywords-sample.${type}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -3680,16 +3698,37 @@ export const downloadCustomKeywordSample = async () => {
 };
 
 // Returns the server's { code, message, data } as-is, including 400/503, so the dialog can show its message.
-export const uploadCustomKeywordsFile = async (file) => {
+// With an `onProgress(percent)` callback it uploads through XMLHttpRequest, because fetch cannot report upload progress.
+export const uploadCustomKeywordsFile = async (file, onProgress) => {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${CUSTOM_KEYWORDS_URL}/upload`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${getPASToken()}` },
-    body: form,
+  if (typeof onProgress !== 'function') {
+    const res = await fetch(`${CUSTOM_KEYWORDS_URL}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getPASToken()}` },
+      body: form,
+    });
+    await checkFor401(res);
+    return res.json().catch(() => ({ code: res.status, message: 'Upload failed. Please try again.' }));
+  }
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${CUSTOM_KEYWORDS_URL}/upload`);
+    xhr.setRequestHeader('Authorization', `Bearer ${getPASToken()}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && e.total > 0) onProgress(Math.min(100, Math.round((e.loaded / e.total) * 100)));
+    };
+    xhr.onerror = () => reject(new Error('Network error while uploading'));
+    xhr.onload = async () => {
+      try {
+        await checkFor401({ status: xhr.status });
+        let body;
+        try { body = JSON.parse(xhr.responseText); } catch { body = { code: xhr.status, message: 'Upload failed. Please try again.' }; }
+        resolve(body);
+      } catch (err) { reject(err); }
+    };
+    xhr.send(form);
   });
-  await checkFor401(res);
-  return res.json().catch(() => ({ code: res.status, message: 'Upload failed. Please try again.' }));
 };
 
 export const fetchMyCustomKeywords = async ({ page = 1, pageSize = 50, status } = {}) => {

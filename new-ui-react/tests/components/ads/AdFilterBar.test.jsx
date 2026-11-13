@@ -4,7 +4,17 @@
 // See https://github.com/Globussoft-Technologies/poweradspy/issues/249
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, act } from "@testing-library/react";
+import { render, fireEvent, act, waitFor, screen } from "@testing-library/react";
+
+const accessMock = vi.hoisted(() => vi.fn());
+const ckApi = vi.hoisted(() => ({ download: vi.fn(), upload: vi.fn(), list: vi.fn() }));
+vi.mock("../../../src/services/api", async (importOriginal) => ({
+  ...(await importOriginal()),
+  getCustomKeywordAccess: (...args) => accessMock(...args),
+  downloadCustomKeywordSample: (...args) => ckApi.download(...args),
+  uploadCustomKeywordsFile: (...args) => ckApi.upload(...args),
+  fetchMyCustomKeywords: (...args) => ckApi.list(...args),
+}));
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({ t: (k) => k }),
@@ -18,6 +28,10 @@ vi.mock("lucide-react", () => ({
   Smartphone: () => <i data-testid="phone-ic" />,
   FileSpreadsheet: () => <i data-testid="sheet-ic" />,
   X: () => <i data-testid="x-ic" />,
+  UploadCloud: () => <i data-testid="upload-ic" />,
+  CheckCircle2: () => <i data-testid="ok-ic" />,
+  XCircle: () => <i data-testid="fail-ic" />,
+  Loader2: () => <i data-testid="spin-ic" />,
 }));
 
 // Mock the constants module entirely to skip the deep icon import tree
@@ -1048,23 +1062,193 @@ describe("AdFilterBar > isScrolled flag", () => {
   });
 });
 
-describe("AdFilterBar > Custom Keyword button (served by SDUI)", () => {
+describe("AdFilterBar > Custom Keyword button (SDUI document + backend access)", () => {
   const ckDoc = { _id: "custom_keyword", visible: true, platform_applicability: ["google"], filters: [] };
   const withCk = (activePlatforms, doc = ckDoc) => ({
     ...baseSdui,
     activePlatforms,
     config: { ...baseSdui.config, navbar: [...(baseSdui.config.navbar || []), ...(doc ? [doc] : [])] },
   });
+  beforeEach(() => { accessMock.mockReset(); accessMock.mockResolvedValue({ data: { enabled: true } }); });
 
-  it("shows when SDUI serves it and Google is the only network", () => {
-    const { getByLabelText } = render(<AdFilterBar {...baseProps} sdui={withCk(["google"])} />);
-    expect(getByLabelText("Custom Keyword")).toBeTruthy();
+  it("shows when SDUI serves it, Google is the only network, and the backend allows this user", async () => {
+    const { findByLabelText } = render(<AdFilterBar {...baseProps} sdui={withCk(["google"])} />);
+    expect(await findByLabelText("Custom Keyword")).toBeTruthy();
   });
 
-  it("is hidden on other networks, when SDUI does not serve it, or when it is not visible", () => {
+  it("stays hidden when the backend says this user has no access, or the check fails", async () => {
+    accessMock.mockResolvedValue({ data: { enabled: false } });
+    const denied = render(<AdFilterBar {...baseProps} sdui={withCk(["google"])} />);
+    await waitFor(() => expect(accessMock).toHaveBeenCalled());
+    expect(denied.queryByLabelText("Custom Keyword")).toBeNull();
+    denied.unmount();
+
+    accessMock.mockReset();
+    accessMock.mockRejectedValue(new Error("404"));
+    const failed = render(<AdFilterBar {...baseProps} sdui={withCk(["google"])} />);
+    await waitFor(() => expect(accessMock).toHaveBeenCalled());
+    expect(failed.queryByLabelText("Custom Keyword")).toBeNull();
+  });
+
+  it("is hidden on other networks, when SDUI does not serve it, or when it is not visible, without asking the backend", () => {
     expect(render(<AdFilterBar {...baseProps} sdui={withCk(["facebook"])} />).queryByLabelText("Custom Keyword")).toBeNull();
     expect(render(<AdFilterBar {...baseProps} sdui={withCk(["google", "facebook"])} />).queryByLabelText("Custom Keyword")).toBeNull();
     expect(render(<AdFilterBar {...baseProps} sdui={withCk(["google"], null)} />).queryByLabelText("Custom Keyword")).toBeNull();
     expect(render(<AdFilterBar {...baseProps} sdui={withCk(["google"], { ...ckDoc, visible: false })} />).queryByLabelText("Custom Keyword")).toBeNull();
+    expect(accessMock).not.toHaveBeenCalled();
+  });
+
+  it("guests never see it and never trigger the access call", () => {
+    const { queryByLabelText } = render(<AdFilterBar {...baseProps} guest={{ isGuest: true, showGuestWarning: vi.fn() }} sdui={withCk(["google"])} />);
+    expect(queryByLabelText("Custom Keyword")).toBeNull();
+    expect(accessMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("AdFilterBar > Custom Keyword dialog: sample, upload component, file types", () => {
+  const ckDoc = { _id: "custom_keyword", visible: true, platform_applicability: ["google"], filters: [] };
+  const sdui = { ...baseSdui, activePlatforms: ["google"], config: { ...baseSdui.config, navbar: [...(baseSdui.config.navbar || []), ckDoc] } };
+
+  const openDialog = async () => {
+    render(<AdFilterBar {...baseProps} sdui={sdui} />);
+    fireEvent.click(await screen.findByLabelText("Custom Keyword"));
+    await screen.findByText("Custom Keywords");
+  };
+  const fileInput = () => document.body.querySelector('input[type="file"]');
+  const makeFile = (name, content = "keyword\nnike\n") => new File([content], name);
+  const pick = (...names) => fireEvent.change(fileInput(), { target: { files: names.map((n) => makeFile(n)) } });
+  // An upload we can finish by hand, so the "uploading" state can be looked at.
+  const pendingUpload = () => {
+    const calls = [];
+    ckApi.upload.mockImplementation((file, onProgress) => new Promise((resolve) => { calls.push({ file, onProgress, resolve }); }));
+    return calls;
+  };
+
+  beforeEach(() => {
+    accessMock.mockReset();
+    accessMock.mockResolvedValue({ data: { enabled: true } });
+    ckApi.download.mockReset();
+    ckApi.download.mockResolvedValue(undefined);
+    ckApi.upload.mockReset();
+    ckApi.upload.mockResolvedValue({ code: 200, data: { added: 2, duplicates: 1 } });
+    ckApi.list.mockReset();
+    ckApi.list.mockResolvedValue({ code: 200, data: { items: [] } });
+  });
+
+  it("offers the sample in both .xlsx and .csv", async () => {
+    await openDialog();
+    fireEvent.click(screen.getByText("Sample .xlsx"));
+    fireEvent.click(screen.getByText("Sample .csv"));
+    expect(ckApi.download.mock.calls.map((c) => c[0])).toEqual(["xlsx", "csv"]);
+  });
+
+  it("has a click-or-drag drop area and the picker only offers .csv and .xlsx", async () => {
+    await openDialog();
+    expect(screen.getByText("Click to upload")).toBeTruthy();
+    expect(screen.getByText(/or drag and drop/)).toBeTruthy();
+    expect(fileInput().getAttribute("accept")).toBe(".csv,.xlsx");
+  });
+
+  it("shows the file as a row with its size, a progress bar, then Complete with the result", async () => {
+    const calls = pendingUpload();
+    await openDialog();
+    pick("keywords.csv");
+
+    expect(await screen.findByText("keywords.csv")).toBeTruthy();
+    expect(screen.getByText("13 B")).toBeTruthy();
+    expect(screen.getByText("Uploading…")).toBeTruthy();
+    expect(typeof calls[0].onProgress).toBe("function"); // progress is reported to the row
+
+    act(() => calls[0].onProgress(40));
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("40");
+    expect(screen.getByText("40%")).toBeTruthy();
+
+    act(() => calls[0].onProgress(100));
+    expect(screen.getByText("Processing…")).toBeTruthy();
+
+    await act(async () => calls[0].resolve({ code: 200, data: { added: 2, duplicates: 1, invalid: [{ row: 4, reason: "longer than 100 characters" }] } }));
+    expect(await screen.findByText("Complete")).toBeTruthy();
+    expect(screen.getByText("2 added · 1 duplicate")).toBeTruthy();
+    expect(screen.getByText("Row 4: longer than 100 characters")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(ckApi.list).toHaveBeenCalledTimes(2); // the keyword list is reloaded after a successful upload
+  });
+
+  it("accepts .csv and .xlsx (any letter case)", async () => {
+    await openDialog();
+    pick("keywords.csv");
+    await waitFor(() => expect(ckApi.upload).toHaveBeenCalledTimes(1));
+    pick("KEYWORDS.XLSX");
+    await waitFor(() => expect(ckApi.upload).toHaveBeenCalledTimes(2));
+    expect((await screen.findAllByText("Complete")).length).toBe(2);
+  });
+
+  it("accepts a file dropped on the drop area", async () => {
+    await openDialog();
+    const zone = screen.getByText("Click to upload").closest("label");
+    fireEvent.dragOver(zone);
+    fireEvent.drop(zone, { dataTransfer: { files: [makeFile("dropped.xlsx")] } });
+    expect(await screen.findByText("dropped.xlsx")).toBeTruthy();
+    await waitFor(() => expect(ckApi.upload).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Complete")).toBeTruthy();
+  });
+
+  it("uploads several files one after the other, in order", async () => {
+    const calls = pendingUpload();
+    await openDialog();
+    pick("one.csv", "two.csv");
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0].file.name).toBe("one.csv");
+    await act(async () => calls[0].resolve({ code: 200, data: { added: 1, duplicates: 0 } }));
+    await waitFor(() => expect(calls.length).toBe(2));
+    expect(calls[1].file.name).toBe("two.csv");
+  });
+
+  it("rejects any other type as a failed row with a clear error, and never uploads it", async () => {
+    await openDialog();
+    pick("notes.pdf");
+    expect(await screen.findByText(/Unsupported file type ".pdf"\. Only \.csv and \.xlsx files are allowed/)).toBeTruthy();
+    pick("noextension");
+    expect(await screen.findByText(/Unsupported file type\. Only \.csv and \.xlsx/)).toBeTruthy();
+    pick("data.csv.exe");
+    expect(await screen.findByText(/Unsupported file type "\.exe"/)).toBeTruthy();
+    expect(screen.getAllByText("Failed").length).toBe(3);
+    expect(screen.queryByText("Try again")).toBeNull(); // trying the same wrong file again would not help
+    expect(ckApi.upload).not.toHaveBeenCalled();
+  });
+
+  it("explains that old .xls files must be saved as .xlsx or .csv", async () => {
+    await openDialog();
+    pick("old.xls");
+    expect(await screen.findByText(/Old Excel files \(\.xls\) are not supported/)).toBeTruthy();
+    expect(ckApi.upload).not.toHaveBeenCalled();
+  });
+
+  it("shows the server's message when it rejects the file, without a retry", async () => {
+    ckApi.upload.mockResolvedValue({ code: 400, message: 'The first row must have a column named "keyword".' });
+    await openDialog();
+    pick("keywords.csv");
+    expect(await screen.findByText(/column named "keyword"/)).toBeTruthy();
+    expect(screen.getByText("Failed")).toBeTruthy();
+    expect(screen.queryByText("Try again")).toBeNull();
+  });
+
+  it("offers Try again after a server or network failure, and the retry can succeed", async () => {
+    ckApi.upload.mockRejectedValueOnce(new Error("network down"));
+    await openDialog();
+    pick("keywords.csv");
+    expect(await screen.findByText("Upload failed. Please try again.")).toBeTruthy();
+    fireEvent.click(screen.getByText("Try again"));
+    expect(await screen.findByText("Complete")).toBeTruthy();
+    expect(ckApi.upload).toHaveBeenCalledTimes(2);
+    expect(ckApi.upload.mock.calls[1][0].name).toBe("keywords.csv"); // the same file is sent again
+  });
+
+  it("removes a row from the list without touching saved keywords", async () => {
+    await openDialog();
+    pick("keywords.csv");
+    expect(await screen.findByText("Complete")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Remove keywords.csv from the list"));
+    expect(screen.queryByText("keywords.csv")).toBeNull();
   });
 });

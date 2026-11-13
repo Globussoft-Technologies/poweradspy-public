@@ -4,8 +4,8 @@
  * Google custom keywords (MongoDB) — user-uploaded keyword list that a scraper works through.
  *
  *   User (JWT)
- *     GET  /api/v1/google/custom-keywords/sample   download the Excel template
- *     POST /api/v1/google/custom-keywords/upload   multipart `file` (.xlsx, one `keyword` column)
+ *     GET  /api/v1/google/custom-keywords/sample   download the template (?format=xlsx|csv, default xlsx)
+ *     POST /api/v1/google/custom-keywords/upload   multipart `file` (.csv or .xlsx, one `keyword` column)
  *     GET  /api/v1/google/custom-keywords          the caller's own keywords + status
  *   Scraper (no JWT, `x-scraper-name` header)
  *     POST /api/v1/google/custom-keywords/next     close my last keyword, hand me the next one
@@ -25,7 +25,7 @@ const ExcelJS = require('exceljs');
 const dbManager = require('../../../database/DatabaseManager');
 const logger = require('../../../logger');
 const config = require('../../../config');
-const { normCustomKeyword } = require('../insertion/normalize');
+const { normCustomKeyword, customKeywordAllowed } = require('../insertion/normalize');
 
 const log = logger.createChild('google-custom-keywords');
 
@@ -57,6 +57,22 @@ function ensureIndexes(col) {
   return indexesReady;
 }
 
+// Express middleware for the user routes (after authMiddleware): feature off -> 503; a user who is
+// not in customKeywords.allowedUserIds gets a plain 404, so the feature leaves no trace for them.
+function requireAccess(req, res, next) {
+  const cfg = config.customKeywords;
+  if (!cfg.enabled) return res.status(503).json({ code: 503, message: 'custom keywords feature is not enabled', data: null });
+  if (!customKeywordAllowed(cfg, req.user?.user_id ?? req.user?.id)) {
+    return res.status(404).json({ code: 404, status: 'rejected', message: 'Not found.' });
+  }
+  return next();
+}
+
+// GET /custom-keywords/access — the one ungated user route: tells the frontend whether to show the feature.
+function accessProbe(req, res) {
+  res.json({ code: 200, status: 'ok', message: 'Access.', data: { enabled: customKeywordAllowed(config.customKeywords, req.user?.user_id ?? req.user?.id) } });
+}
+
 // Returns the collection (indexes ready) or sends the error response and returns null.
 async function useCollection(res) {
   if (!config.customKeywords.enabled) {
@@ -82,13 +98,22 @@ const publicDoc = (d) => ({
   lastError: d.lastError || null, createdAt: d.createdAt, completedAt: d.completedAt || null,
 });
 
-// ── Upload middleware: .xlsx only, size capped, friendly errors ───────────────
+// ── Upload middleware: .csv or .xlsx only, size capped, friendly errors ───────
+const ALLOWED_EXT = ['.csv', '.xlsx'];
+
+// The message a user sees for any other file type.
+function unsupportedTypeMessage(fileName) {
+  const ext = path.extname(String(fileName || '')).toLowerCase();
+  if (ext === '.xls') return 'Old Excel files (.xls) are not supported. Open it in Excel, save it as .xlsx or .csv, and upload again.';
+  return `Unsupported file type${ext ? ` "${ext}"` : ''}. Only .csv and .xlsx files are allowed. Download the sample sheet and upload it in one of those formats.`;
+}
+
 const upload = multer({
   dest: path.join(os.tmpdir(), 'pas-custom-keywords'),
   limits: { fileSize: config.customKeywords.maxUploadMb * 1024 * 1024, files: 1 },
   fileFilter: (req, file, cb) => {
-    if (path.extname(file.originalname || '').toLowerCase() === '.xlsx') return cb(null, true);
-    req.invalidFileType = true;
+    if (ALLOWED_EXT.includes(path.extname(file.originalname || '').toLowerCase())) return cb(null, true);
+    req.invalidFileName = file.originalname || '';
     return cb(null, false);
   },
 }).single('file');
@@ -96,18 +121,33 @@ const upload = multer({
 const uploadMiddleware = (req, res, next) => upload(req, res, (err) => {
   if (!err) return next();
   const message = err.code === 'LIMIT_FILE_SIZE'
-    ? `The file is too large. Please upload an Excel (.xlsx) file under ${config.customKeywords.maxUploadMb} MB.`
-    : 'We could not read the uploaded file. Please upload the Excel (.xlsx) sample sheet.';
+    ? `The file is too large. Please upload a .csv or .xlsx file under ${config.customKeywords.maxUploadMb} MB.`
+    : 'We could not read the uploaded file. Please upload the sample sheet as .csv or .xlsx.';
   return res.status(400).json({ code: 400, message, data: null });
 });
 
-// ── GET /custom-keywords/sample ───────────────────────────────────────────────
+// ── GET /custom-keywords/sample?format=xlsx|csv (default xlsx) ────────────────
+const SAMPLE_KEYWORDS = ['nike running shoes', 'best crm software', 'gym bag'];
+
 async function downloadSample(req, res) {
+  const format = String(req.query?.format || 'xlsx').toLowerCase();
+  if (format !== 'xlsx' && format !== 'csv') {
+    return res.status(400).json({ code: 400, message: "format must be 'xlsx' or 'csv'", data: null });
+  }
+
+  if (format === 'csv') {
+    // UTF-8 BOM so Excel opens it with the right encoding; the reader accepts it again.
+    const body = `\uFEFFkeyword\r\n${SAMPLE_KEYWORDS.join('\r\n')}\r\n`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="custom-keywords-sample.csv"');
+    return res.send(body);
+  }
+
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Keywords');
   ws.columns = [{ header: 'keyword', key: 'keyword', width: 40 }];
   ws.getRow(1).font = { bold: true };
-  ['nike running shoes', 'best crm software', 'gym bag'].forEach((k) => ws.addRow({ keyword: k }));
+  SAMPLE_KEYWORDS.forEach((k) => ws.addRow({ keyword: k }));
 
   const help = wb.addWorksheet('Instructions');
   help.getColumn(1).width = 90;
@@ -115,21 +155,65 @@ async function downloadSample(req, res) {
     'Fill the "keyword" column on the Keywords sheet, one keyword per row.',
     'Delete the three example rows before uploading.',
     `Up to ${config.customKeywords.maxRowsPerUpload} keywords per file, each up to ${config.customKeywords.maxKeywordLength} characters.`,
-    'Duplicate keywords are ignored. Save as .xlsx and upload it from the Custom Keyword button.',
-  ].forEach((t) => help.addRow([t]));
+    'Duplicate keywords are ignored. Upload it as .xlsx or .csv from the Custom Keyword button.',
+  ].forEach((line) => help.addRow([line]));
 
   const buf = await wb.xlsx.writeBuffer();
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', 'attachment; filename="custom-keywords-sample.xlsx"');
-  res.send(Buffer.from(buf));
+  return res.send(Buffer.from(buf));
 }
 
-// ── Excel parsing: first sheet, header row must contain a "keyword" column ────
-async function readKeywordRows(filePath) {
+// ── Content check: the extension alone can be faked (a PDF renamed to .csv), so look at the bytes ──
+// Returns an error message, or '' when the file really is what its extension says.
+function checkFileContent(filePath, ext) {
+  const fd = fs.openSync(filePath, 'r');
+  let buf;
+  try {
+    const raw = Buffer.alloc(4096);
+    buf = raw.subarray(0, fs.readSync(fd, raw, 0, raw.length, 0));
+  } finally { fs.closeSync(fd); }
+
+  if (buf.length === 0) return 'The file is empty. Please add your keywords and upload it again.';
+  const startsWith = (...bytes) => bytes.every((b, i) => buf[i] === b);
+  const isZip = startsWith(0x50, 0x4b, 0x03, 0x04); // .xlsx is a zip
+  const isOldExcel = startsWith(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1); // legacy .xls / .doc
+  if (String(ext).toLowerCase() === '.xlsx') {
+    if (isZip) return '';
+    if (isOldExcel) return 'This is an old Excel (.xls) file saved with an .xlsx name. Open it in Excel and save it as .xlsx or .csv.';
+    return 'This is not a valid Excel (.xlsx) file. Open your sheet in Excel and save it as .xlsx, or upload a .csv file.';
+  }
+  // .csv must be plain text: no zip/old-Excel signature and no binary (NUL) bytes.
+  if (isZip) return 'This is an Excel file saved with a .csv name. Rename it to .xlsx, or export your sheet as CSV.';
+  if (isOldExcel) return 'This is an old Excel (.xls) file saved with a .csv name. Open it in Excel and export it as CSV.';
+  if (buf.includes(0)) return 'This is not a text CSV file (it looks binary or UTF-16). Export your sheet as "CSV UTF-8" and upload again.';
+  return '';
+}
+
+// ── File parsing (.csv or .xlsx): first sheet, header row must contain a "keyword" column ──
+// Excel in some locales saves CSV with ';' (or tabs): pick the delimiter from the header line.
+function sniffCsvDelimiter(filePath) {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(2048);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    const head = buf.toString('utf8', 0, n).replace(/^\uFEFF/, '').split(/\r?\n/)[0] || '';
+    if (head.includes(',')) return ',';
+    if (head.includes(';')) return ';';
+    if (head.includes('\t')) return '\t';
+    return ',';
+  } finally { fs.closeSync(fd); }
+}
+
+async function readKeywordRows(filePath, ext = '.xlsx') {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(filePath);
+  if (String(ext).toLowerCase() === '.csv') {
+    await wb.csv.readFile(filePath, { parserOptions: { delimiter: sniffCsvDelimiter(filePath) } });
+  } else {
+    await wb.xlsx.readFile(filePath);
+  }
   const ws = wb.worksheets[0];
-  if (!ws) return { error: 'The Excel file has no sheets.' };
+  if (!ws) return { error: 'The file has no data.' };
 
   let col = 0;
   ws.getRow(1).eachCell((cell, n) => {
@@ -155,12 +239,16 @@ async function uploadKeywords(req, res) {
     if (!col) return;
     const userId = userIdOf(req);
     if (!userId) return res.status(401).json({ code: 401, message: 'Unauthorized', data: null });
-    if (req.invalidFileType) return res.status(400).json({ code: 400, message: 'Only Excel (.xlsx) files are supported. Please upload the sample sheet.', data: null });
-    if (!req.file) return res.status(400).json({ code: 400, message: 'No file uploaded. Send the Excel file in the "file" field.', data: null });
+    if (req.invalidFileName !== undefined) return res.status(400).json({ code: 400, message: unsupportedTypeMessage(req.invalidFileName), data: null });
+    if (!req.file) return res.status(400).json({ code: 400, message: 'No file uploaded. Send a .csv or .xlsx file in the "file" field.', data: null });
+
+    const fileExt = path.extname(req.file.originalname || '');
+    const contentError = checkFileContent(filePath, fileExt);
+    if (contentError) return res.status(400).json({ code: 400, message: contentError, data: null });
 
     let parsed;
-    try { parsed = await readKeywordRows(filePath); } catch (e) {
-      return res.status(400).json({ code: 400, message: 'We could not read this Excel file. Please upload the sample sheet saved as .xlsx.', data: null });
+    try { parsed = await readKeywordRows(filePath, fileExt); } catch (e) {
+      return res.status(400).json({ code: 400, message: 'We could not read this file. Please upload the sample sheet saved as .csv or .xlsx.', data: null });
     }
     if (parsed.error) return res.status(400).json({ code: 400, message: parsed.error, data: null });
 
@@ -310,9 +398,13 @@ async function nextKeyword(req, res) {
     }
 
     // 2. Claim the next: oldest pending (retry delay passed) or a stale in_progress.
+    //    With an allow-list, only keywords owned by allowed users are handed out.
+    const owners = (cfg.allowedUserIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+    const ownerFilter = (cfg.allowedUserIds || []).length ? { userId: { $in: owners } } : {};
     const staleBefore = new Date(now.getTime() - cfg.staleClaimMinutes * 60000);
     const doc = await col.findOneAndUpdate(
       {
+        ...ownerFilter,
         $or: [
           { status: 'pending', retryAfter: { $lte: now.getTime() } },
           { status: 'in_progress', claimedAt: { $lt: staleBefore } },
@@ -325,7 +417,7 @@ async function nextKeyword(req, res) {
     const claimed = doc?.value !== undefined ? doc.value : doc; // driver v6+ returns the doc itself
     // Progress for the scraper: keywords still waiting (not counting the one just handed out)
     // and all keywords of all users. Both are cheap (indexed count / collection metadata).
-    const [left, total] = await Promise.all([col.countDocuments({ status: 'pending' }), col.estimatedDocumentCount()]);
+    const [left, total] = await Promise.all([col.countDocuments({ status: 'pending', ...ownerFilter }), col.estimatedDocumentCount()]);
     return res.json({
       code: 200,
       message: claimed ? 'claimed' : 'no pending keywords',
@@ -343,4 +435,4 @@ async function nextKeyword(req, res) {
   }
 }
 
-module.exports = { uploadMiddleware, downloadSample, uploadKeywords, listMyKeywords, nextKeyword, _test: { normKeyword, readKeywordRows } };
+module.exports = { uploadMiddleware, requireAccess, accessProbe, downloadSample, uploadKeywords, listMyKeywords, nextKeyword, _test: { normKeyword, readKeywordRows, unsupportedTypeMessage, checkFileContent } };

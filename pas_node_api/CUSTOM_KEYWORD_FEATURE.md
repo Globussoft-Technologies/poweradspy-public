@@ -4,7 +4,7 @@ Status: code complete, **off by default**. Not yet merged or deployed. Last upda
 
 ## What it does
 
-A user uploads an Excel sheet of their own keywords. A scraper works through them, scrapes Google ads for each keyword and stores the ads in SQL and Elasticsearch. When the user searches that keyword, they see the normal ads **plus their own scraped ads**. Nobody else sees those ads.
+A user uploads a sheet (.csv or .xlsx) of their own keywords. A scraper works through them, scrapes Google ads for each keyword and stores the ads in SQL and Elasticsearch. When the user searches that keyword, they see the normal ads **plus their own scraped ads**. Nobody else sees those ads.
 
 - Google only. New ads only (no backfill).
 - User-specific: ownership and visibility are per user. Only the scraper work queue is shared.
@@ -14,7 +14,7 @@ A user uploads an Excel sheet of their own keywords. A scraper works through the
 ```
 USER                                   SCRAPER                                  SEARCH
 1. Custom Keyword button (SDUI)        4. POST /custom-keywords/next            8. user types a keyword in the
-2. download sample .xlsx                  -> keyword + userId + left/total         normal Keyword search (Google tab)
+2. download sample (.xlsx or .csv)       -> keyword + userId + left/total         normal Keyword search (Google tab)
 3. upload filled sheet                 5. scrape Google for the keyword         9. query = normal match
    -> Mongo, owner = id from JWT       6. POST /insertion/gtAdsData                 OR tag "<token user id>:<keyword>"
                                           + custom_keyword                     10. user sees normal + own ads
@@ -30,12 +30,18 @@ Normalization: `|` becomes a space, then trim, collapse spaces, lower-case.
 
 Everything returns **503** while `customKeywords.enabled` is false.
 
+**Who gets it (`customKeywords.allowedUserIds`)** — same contract as `imageGen` / `chatgptads`:
+- `enabled` false → nobody.
+- `enabled` true, `allowedUserIds` empty → every logged-in user.
+- `enabled` true, `allowedUserIds` has ids → **only those user ids**: the button shows only for them, the user routes answer a plain **404** to everyone else, their keyword search gets the own-ads clause only if they are on the list, and `/next` hands out only keywords owned by listed users.
+
 ### User (header `Authorization: Bearer <JWT>`; the user id always comes from the token)
 
 | Call | Purpose |
 |---|---|
-| `GET /sample` | Download the sample `.xlsx` (sheet `Keywords`, column `keyword`, plus an `Instructions` sheet) |
-| `POST /upload` | multipart field `file` (`.xlsx`, first sheet, header `keyword`). Returns `received`, `added`, `duplicates`, `invalid[]` (row + reason), `notAddedOverLimit` |
+| `GET /access` | Whether this user gets the feature: `{ data: { enabled: true|false } }`. The frontend reads it to show or hide the button. Needs only the login token. |
+| `GET /sample?format=xlsx\|csv` | Download the sample: `.xlsx` (default; sheet `Keywords`, column `keyword`, plus an `Instructions` sheet) or `.csv` (UTF-8, header `keyword`). Any other `format` is a 400. |
+| `POST /upload` | multipart field `file`: **`.csv` or `.xlsx` only** (first sheet, header `keyword`, case-insensitive). CSV may be comma, semicolon or tab separated and may start with a BOM. Any other type gets a 400 with a clear message (`.xls` is told to save as `.xlsx` or `.csv`). Returns `received`, `added`, `duplicates`, `invalid[]` (row + reason), `notAddedOverLimit` |
 | `GET /?page=&page_size=&status=&q=` | The caller's own keywords, with status and counts |
 
 ### Scraper (no JWT; header `x-scraper-name`)
@@ -112,7 +118,7 @@ The button is driven by SDUI, nothing hardcoded. Add this navbar document (admin
 }
 ```
 
-Behaviour: the button shows only when the document exists, is `visible`, and Google is the only selected network (a missing platform list means Google). Hide it with `visible: false` or delete the document. The seed file `sduiConfig.json` already contains it for fresh databases.
+Behaviour: the button shows only when the document exists, is `visible`, Google is the only selected network (a missing platform list means Google), **and** `GET /custom-keywords/access` says this user is allowed. Guests never see it. Hide it with `visible: false` or delete the document. The seed file `sduiConfig.json` already contains it for fresh databases.
 
 `filterConfigByPlatforms` was changed to keep navbar documents that never had filters. Without that fix the button appeared and then disappeared when the config was refetched for the selected networks.
 
@@ -121,6 +127,7 @@ Behaviour: the button shows only when the document exists, is `visible`, and Goo
 | Key | Default | Env |
 |---|---|---|
 | `enabled` | `false` | `CUSTOM_KEYWORDS_ENABLED` |
+| `allowedUserIds` | `[]` (everyone) | `CUSTOM_KEYWORDS_ALLOWED_USER_IDS` (comma-separated) |
 | `mongoSlug` / `database` / `collection` | keyword-search slug / its database / `custom_keywords` | `CUSTOM_KEYWORDS_MONGO_SLUG` / `_DATABASE` / `_COLLECTION` |
 | `maxUploadMb` | 5 | `CUSTOM_KEYWORDS_MAX_UPLOAD_MB` |
 | `maxRowsPerUpload` | 5000 | `CUSTOM_KEYWORDS_MAX_ROWS` |
@@ -144,9 +151,9 @@ Backend (`pas_node_api`)
 - `scripts/apply-custom-keywords-schema.js` — ES mapping + SQL column (new)
 
 Frontend (`new-ui-react`)
-- `src/components/ads/AdFilterBar.jsx` — SDUI-driven button and the dialog (download, upload, keyword list)
+- `src/components/ads/AdFilterBar.jsx` — SDUI-driven button and the dialog: two sample downloads, a click-or-drag upload area with one row per file (name, size, progress bar, Complete / Failed + Try again), and the keyword list
 - `src/components/layout/Header.jsx`, `ads/AdGrid.jsx` — pass `onSearch` to the filter bar
-- `src/services/api.js` — `downloadCustomKeywordSample`, `uploadCustomKeywordsFile`, `fetchMyCustomKeywords`
+- `src/services/api.js` — `downloadCustomKeywordSample(format)`, `uploadCustomKeywordsFile(file, onProgress)` (XMLHttpRequest when a progress callback is given), `fetchMyCustomKeywords`, `getCustomKeywordAccess`
 
 Tests: `tests/services/google/customKeywords.test.mjs` (20), `tests/services/sdui/services/sduiService.test.mjs`, `new-ui-react/tests/components/ads/AdFilterBar.test.jsx`.
 
@@ -156,7 +163,7 @@ Tests: `tests/services/google/customKeywords.test.mjs` (20), `tests/services/sdu
 2. ES mapping: `node scripts/apply-custom-keywords-schema.js --apply --only=es`
 3. SQL column, in a quiet window: `... --apply --only=sql` (needs MySQL >= 8.0.12, refuses MariaDB; uses `ALGORITHM=INSTANT`). The script is a dry run without `--apply`, and safe to run twice.
 4. Add the `custom_keyword` SDUI document (above).
-5. Turn on `customKeywords.enabled` and restart the backend.
+5. Turn on `customKeywords.enabled`, set `allowedUserIds` (for example `["72479"]`; leave `[]` for everyone) and restart the backend.
 6. Brief the scraper team: use `/next`, send `custom_keyword` and `custom_keyword_user_id` on every ad.
 7. Deploy the frontend.
 
@@ -166,8 +173,8 @@ Start the backend with `CUSTOM_KEYWORDS_ENABLED=true` and `CUSTOM_KEYWORDS_DATAB
 
 ```bash
 B=http://localhost:3000/api/v1/google/custom-keywords
-curl -H "Authorization: Bearer TOKEN" "$B/sample" -o sample.xlsx
-curl -H "Authorization: Bearer TOKEN" -F "file=@sample.xlsx" "$B/upload"
+curl -H "Authorization: Bearer TOKEN" "$B/sample" -o sample.xlsx               # or "$B/sample?format=csv" -o sample.csv
+curl -H "Authorization: Bearer TOKEN" -F "file=@sample.xlsx" "$B/upload"         # or file=@sample.csv
 curl -H "Authorization: Bearer TOKEN" "$B?status=pending"
 curl -X POST -H "x-scraper-name: scraper-1" -H "Content-Type: application/json" -d '{"status":"done"}' "$B/next"
 ```
@@ -189,6 +196,6 @@ In PowerShell use `curl.exe` and write the body as `'{\"status\":\"done\"}'`.
 
 ## Open points
 
-- Should uploads be limited to certain plans? Today any logged-in user can upload up to `maxKeywordsPerUser`.
+- Access is per user id (`allowedUserIds`), not per plan. Say so if a plan-based rule is also wanted.
 - Optional: let `/next` take `?user_id=` so a scraper can work for one user only.
 - Clicking a keyword in the dialog runs a normal keyword search, which is recorded like any typed keyword search.

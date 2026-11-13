@@ -8,6 +8,7 @@ const {
 const { SAFE_FROM, buildQueryHash, saveCursor, getCursor } = require('../../../utils/searchCursorCache');
 const { getLanguageMap, resolveLanguageName } = require('../../../utils/languageMap');
 const config = require('../../../config');
+const { customKeywordAllowed } = require('../insertion/normalize');
 const {
   applyAiMetaFilters,
   addAiMetaVisibleCountAgg,
@@ -291,8 +292,8 @@ async function searchAds(req, db, logger) {
   // Custom keyword: on a keyword search the user's own uploaded-keyword ads also match
   // (the builder ORs a "<userId>:<keyword>" tag into the keyword query). The user id comes
   // from the token, never the request, so nobody sees ads found for another user's keyword.
-  // Does nothing while the feature flag is off.
-  if (p.keyword && config.customKeywords?.enabled) {
+  // Does nothing while the feature is off, or for users outside customKeywords.allowedUserIds.
+  if (p.keyword && customKeywordAllowed(config.customKeywords, req.user?.user_id ?? req.user?.id)) {
     const uid = Number(req.user?.user_id ?? req.user?.id);
     if (Number.isInteger(uid) && uid > 0) {
       builder.setCustomKeywordUser(uid, config.customKeywords.maxKeywordLength);

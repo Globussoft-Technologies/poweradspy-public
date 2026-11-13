@@ -697,3 +697,114 @@ describe("api > no-token branch: Authorization header omitted when getPASToken()
     noAuth();
   });
 });
+
+describe("api > custom keyword sample and access", () => {
+  const blobRes = () => ({ ok: true, status: 200, blob: async () => new Blob(["x"]) });
+  beforeEach(() => {
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+  });
+
+  it("downloadCustomKeywordSample asks for the chosen format and names the file for it", async () => {
+    const names = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function () { names.push(this.download); });
+    globalThis.fetch.mockResolvedValue(blobRes());
+    await api.downloadCustomKeywordSample("csv");
+    await api.downloadCustomKeywordSample("xlsx");
+    await api.downloadCustomKeywordSample(); // default
+    await api.downloadCustomKeywordSample("pdf"); // unknown falls back to xlsx
+    expect(globalThis.fetch.mock.calls.map((c) => c[0].split("custom-keywords")[1])).toEqual([
+      "/sample?format=csv", "/sample?format=xlsx", "/sample?format=xlsx", "/sample?format=xlsx",
+    ]);
+    expect(names).toEqual(["custom-keywords-sample.csv", "custom-keywords-sample.xlsx", "custom-keywords-sample.xlsx", "custom-keywords-sample.xlsx"]);
+    expect(globalThis.fetch.mock.calls[0][1].headers.Authorization).toBe("Bearer tk");
+    click.mockRestore();
+  });
+
+  it("downloadCustomKeywordSample throws when the server refuses", async () => {
+    globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 404 });
+    await expect(api.downloadCustomKeywordSample("csv")).rejects.toThrow("404");
+  });
+
+  it("getCustomKeywordAccess is one shared request per login token, and retries after a failure", async () => {
+    globalThis.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ data: { enabled: true } }) });
+    const a = await api.getCustomKeywordAccess();
+    const b = await api.getCustomKeywordAccess();
+    expect(a).toEqual({ data: { enabled: true } });
+    expect(b).toEqual(a);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+
+    getAuthTokenSpy.mockReturnValue("other-user");
+    await api.getCustomKeywordAccess();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2); // new token = new request
+
+    getAuthTokenSpy.mockReturnValue("third");
+    globalThis.fetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    await expect(api.getCustomKeywordAccess()).rejects.toThrow("500");
+    await api.getCustomKeywordAccess(); // a failure is not cached
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("api > uploadCustomKeywordsFile", () => {
+  let xhr;
+  class FakeXHR {
+    constructor() { xhr = this; this.headers = {}; this.upload = {}; }
+    open(method, url) { this.method = method; this.url = url; }
+    setRequestHeader(k, v) { this.headers[k] = v; }
+    send(body) { this.body = body; }
+  }
+  beforeEach(() => { vi.stubGlobal("XMLHttpRequest", FakeXHR); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+  const file = () => new File(["keyword\nnike\n"], "k.csv");
+
+  it("without a progress callback it is a plain fetch", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ code: 200, data: { added: 1 } }) });
+    expect(await api.uploadCustomKeywordsFile(file())).toEqual({ code: 200, data: { added: 1 } });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(xhr).toBeUndefined();
+  });
+
+  it("with a progress callback it posts through XMLHttpRequest, reports percent and resolves the server JSON", async () => {
+    const seen = [];
+    const p = api.uploadCustomKeywordsFile(file(), (pct) => seen.push(pct));
+    expect(xhr.method).toBe("POST");
+    expect(xhr.url).toContain("/custom-keywords/upload");
+    expect(xhr.headers.Authorization).toBe("Bearer tk");
+    expect(xhr.body.get("file").name).toBe("k.csv");
+    xhr.upload.onprogress({ lengthComputable: true, loaded: 50, total: 200 });
+    xhr.upload.onprogress({ lengthComputable: true, loaded: 200, total: 200 });
+    xhr.upload.onprogress({ lengthComputable: false, loaded: 1, total: 0 }); // ignored
+    xhr.status = 200;
+    xhr.responseText = JSON.stringify({ code: 200, data: { added: 3 } });
+    await xhr.onload();
+    expect(await p).toEqual({ code: 200, data: { added: 3 } });
+    expect(seen).toEqual([25, 100]);
+  });
+
+  it("a 400 response body is passed through; a non-JSON body becomes a generic error", async () => {
+    const a = api.uploadCustomKeywordsFile(file(), () => {});
+    xhr.status = 400;
+    xhr.responseText = JSON.stringify({ code: 400, message: "Unsupported file type" });
+    await xhr.onload();
+    expect(await a).toEqual({ code: 400, message: "Unsupported file type" });
+
+    const b = api.uploadCustomKeywordsFile(file(), () => {});
+    xhr.status = 502;
+    xhr.responseText = "<html>bad gateway</html>";
+    await xhr.onload();
+    expect(await b).toEqual({ code: 502, message: "Upload failed. Please try again." });
+  });
+
+  it("a network error rejects, and so does a 401", async () => {
+    const a = api.uploadCustomKeywordsFile(file(), () => {});
+    xhr.onerror();
+    await expect(a).rejects.toThrow("Network error");
+
+    const b = api.uploadCustomKeywordsFile(file(), () => {});
+    xhr.status = 401;
+    xhr.responseText = "{}";
+    await xhr.onload();
+    await expect(b).rejects.toThrow();
+  });
+});

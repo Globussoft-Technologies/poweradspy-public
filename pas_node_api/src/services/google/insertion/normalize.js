@@ -114,4 +114,15 @@ function customKeywordToken(ad, cfg) {
   return `${userId}:${keyword}`;
 }
 
-module.exports = { urldecode, cleanStr, fixAmp, stripNonBmp, versionLessThan, checkGates, normalizeGtextAd, normCustomKeyword, customKeywordToken };
+/**
+ * Who gets Custom Keyword (config.customKeywords): feature off -> nobody; on with an empty
+ * allowedUserIds -> everyone; on with ids -> only those user IDs (compared as strings).
+ */
+function customKeywordAllowed(cfg, userId) {
+  if (!cfg || !cfg.enabled) return false;
+  const allow = cfg.allowedUserIds || [];
+  if (!allow.length) return true;
+  return userId !== undefined && userId !== null && allow.includes(String(userId));
+}
+
+module.exports = { urldecode, cleanStr, fixAmp, stripNonBmp, versionLessThan, checkGates, normalizeGtextAd, normCustomKeyword, customKeywordToken, customKeywordAllowed };

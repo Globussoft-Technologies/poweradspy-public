@@ -527,9 +527,11 @@ function createGoogleRoutes(service) {
   // ─── Custom keywords (user-uploaded Excel → MongoDB → scraper claims) ───────
   // Off unless config.customKeywords.enabled (every endpoint then answers 503).
   // User endpoints use the JWT; scraper endpoints have no JWT, like keyword-search/work.
-  router.get('/custom-keywords/sample', authMiddleware, asyncHandler(customKeywords.downloadSample));
-  router.post('/custom-keywords/upload', authMiddleware, customKeywords.uploadMiddleware, asyncHandler(customKeywords.uploadKeywords));
-  router.get('/custom-keywords', authMiddleware, asyncHandler(customKeywords.listMyKeywords));
+  // User routes also need customKeywords.allowedUserIds access (empty list = everyone, else a 404 for others).
+  router.get('/custom-keywords/access', authMiddleware, customKeywords.accessProbe);
+  router.get('/custom-keywords/sample', authMiddleware, customKeywords.requireAccess, asyncHandler(customKeywords.downloadSample));
+  router.post('/custom-keywords/upload', authMiddleware, customKeywords.requireAccess, customKeywords.uploadMiddleware, asyncHandler(customKeywords.uploadKeywords));
+  router.get('/custom-keywords', authMiddleware, customKeywords.requireAccess, asyncHandler(customKeywords.listMyKeywords));
   router.post('/custom-keywords/next', asyncHandler(customKeywords.nextKeyword));
 
   // ─── Search-Audit Keywords (gtext → MongoDB google_audit_keywords) ──────────

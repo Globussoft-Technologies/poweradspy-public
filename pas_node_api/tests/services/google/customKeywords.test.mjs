@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
@@ -9,6 +9,13 @@ const { normCustomKeyword, customKeywordToken } = require('../../../src/services
 const { processMetaAd } = require('../../../src/services/google/insertion/metaAdsPipeline');
 
 const CFG = { enabled: true, maxKeywordLength: 100 };
+
+// The tests must not depend on the local config.json allow-list: start every test with it empty (= everyone).
+{
+  const _allowed = config.customKeywords.allowedUserIds;
+  beforeEach(() => { config.customKeywords.allowedUserIds = []; });
+  afterAll(() => { config.customKeywords.allowedUserIds = _allowed; });
+}
 
 describe('custom keyword helpers', () => {
   it('normalizes: trim, collapse spaces, lower-case, "|" becomes a space', () => {
@@ -251,5 +258,244 @@ describe('scraper /next (the only scraper call)', () => {
     const r = res();
     await nextKeyword({ get: () => 'scraper-1', body: {}, query: {} }, r);
     expect(r.code).toBe(503);
+  });
+});
+
+describe('allowedUserIds (who gets Custom Keyword)', () => {
+  const { customKeywordAllowed } = require('../../../src/services/google/insertion/normalize');
+  const dbManager = require('../../../src/database/DatabaseManager');
+  const ctl = require('../../../src/services/google/controllers/customKeywordsController');
+  const { searchAds } = require('../../../src/services/google/controllers/adSearchController');
+  const prev = { enabled: config.customKeywords.enabled };
+  const prevGetMongo = dbManager.getMongo;
+  afterEach(() => { config.customKeywords.enabled = prev.enabled; dbManager.getMongo = prevGetMongo; });
+  const res = () => { const r = { code: 200 }; r.status = (c) => { r.code = c; return r; }; r.json = (b) => { r.body = b; return r; }; return r; };
+
+  it('helper: off = nobody, empty list = everyone, ids = only those (compared as strings)', () => {
+    expect(customKeywordAllowed({ enabled: false, allowedUserIds: [] }, 1)).toBe(false);
+    expect(customKeywordAllowed({ enabled: true, allowedUserIds: [] }, 1)).toBe(true);
+    expect(customKeywordAllowed({ enabled: true }, 1)).toBe(true);
+    expect(customKeywordAllowed({ enabled: true, allowedUserIds: ['72479'] }, 72479)).toBe(true);
+    expect(customKeywordAllowed({ enabled: true, allowedUserIds: ['72479'] }, '72479')).toBe(true);
+    expect(customKeywordAllowed({ enabled: true, allowedUserIds: ['72479'] }, 1)).toBe(false);
+    expect(customKeywordAllowed({ enabled: true, allowedUserIds: ['72479'] }, undefined)).toBe(false);
+  });
+
+  it('user routes: 503 when off, 404 for a user outside the list, next() for an allowed user', () => {
+    const run = (user) => { const r = res(); const next = vi.fn(); ctl.requireAccess({ user }, r, next); return { r, next }; };
+    config.customKeywords.enabled = false;
+    expect(run({ user_id: 72479 }).r.code).toBe(503);
+    config.customKeywords.enabled = true;
+    config.customKeywords.allowedUserIds = ['72479'];
+    expect(run({ user_id: 305 }).r.code).toBe(404);
+    expect(run({ user_id: 305 }).next).not.toHaveBeenCalled();
+    expect(run({ user_id: 72479 }).next).toHaveBeenCalled();
+    config.customKeywords.allowedUserIds = [];
+    expect(run({ user_id: 305 }).next).toHaveBeenCalled();
+  });
+
+  it('/access probe tells the frontend whether to show the feature', () => {
+    const probe = (user) => { const r = res(); ctl.accessProbe({ user }, r); return r.body.data.enabled; };
+    config.customKeywords.enabled = true;
+    config.customKeywords.allowedUserIds = ['72479'];
+    expect(probe({ user_id: 72479 })).toBe(true);
+    expect(probe({ user_id: 305 })).toBe(false);
+    config.customKeywords.enabled = false;
+    expect(probe({ user_id: 72479 })).toBe(false);
+  });
+
+  it('search: only an allowed user gets their own-ads clause', async () => {
+    config.customKeywords.enabled = true;
+    config.customKeywords.allowedUserIds = ['281'];
+    const body = async (uid) => {
+      const search = vi.fn(async () => ({ hits: { hits: [], total: { value: 0 } } }));
+      await searchAds({ body: { user_id: uid, keyword: 'nike' }, query: {}, user: { user_id: uid } }, { elastic: { indexName: 'i', search } }, { info() {}, error() {}, warn() {} });
+      return JSON.stringify(search.mock.calls[0][0].body);
+    };
+    expect(await body(281)).toContain('"custom_keyword":"281:nike"');
+    expect(await body(305)).not.toContain('custom_keyword');
+  });
+
+  it('/next: with an allow-list only allowed owners are claimed and counted; without one, no owner filter', async () => {
+    config.customKeywords.enabled = true;
+    const col = {
+      createIndexes: vi.fn(async () => []), findOne: vi.fn(async () => null), updateOne: vi.fn(async () => ({ modifiedCount: 0 })),
+      findOneAndUpdate: vi.fn(async () => null), countDocuments: vi.fn(async () => 0), estimatedDocumentCount: vi.fn(async () => 0),
+    };
+    dbManager.getMongo = () => ({ db: { collection: () => col }, client: { db: () => ({ collection: () => col }) } });
+    const call = async () => { const r = res(); await ctl.nextKeyword({ get: () => 's1', body: {}, query: {} }, r); };
+
+    config.customKeywords.allowedUserIds = ['72479', 'abc', '281'];
+    await call();
+    expect(col.findOneAndUpdate.mock.calls.at(-1)[0].userId).toEqual({ $in: [72479, 281] });
+    expect(col.countDocuments.mock.calls.at(-1)[0]).toEqual({ status: 'pending', userId: { $in: [72479, 281] } });
+
+    config.customKeywords.allowedUserIds = [];
+    await call();
+    expect('userId' in col.findOneAndUpdate.mock.calls.at(-1)[0]).toBe(false);
+    expect(col.countDocuments.mock.calls.at(-1)[0]).toEqual({ status: 'pending' });
+  });
+});
+
+describe('sample download and upload: .csv and .xlsx only', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const express = require('express');
+  const request = require('supertest');
+  const ExcelJS = require('exceljs');
+  const dbManager = require('../../../src/database/DatabaseManager');
+  const ctl = require('../../../src/services/google/controllers/customKeywordsController');
+  const prevGetMongo = dbManager.getMongo;
+  const prevEnabled = config.customKeywords.enabled;
+  const tmpUploads = path.join(os.tmpdir(), 'pas-custom-keywords');
+  let saved;
+
+  const makeApp = (userId = 72479) => {
+    const app = express();
+    app.use((req, _res, next) => { req.user = { user_id: userId }; next(); });
+    app.get('/sample', ctl.requireAccess, ctl.downloadSample);
+    app.post('/upload', ctl.requireAccess, ctl.uploadMiddleware, ctl.uploadKeywords);
+    return app;
+  };
+  const leftovers = () => (fs.existsSync(tmpUploads) ? fs.readdirSync(tmpUploads).length : 0);
+  const xlsxBuffer = async (rows, header = 'keyword') => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Keywords');
+    ws.addRow([header]);
+    rows.forEach((r) => ws.addRow([r]));
+    return Buffer.from(await wb.xlsx.writeBuffer());
+  };
+
+  beforeEach(() => {
+    config.customKeywords.enabled = true;
+    config.customKeywords.allowedUserIds = [];
+    saved = [];
+    const col = {
+      createIndexes: async () => [],
+      countDocuments: async () => 0,
+      bulkWrite: async (ops) => { ops.forEach((o) => saved.push(o.updateOne.update.$setOnInsert)); return { upsertedCount: ops.length }; },
+    };
+    dbManager.getMongo = () => ({ db: { collection: () => col }, client: { db: () => ({ collection: () => col }) } });
+  });
+  afterEach(() => { config.customKeywords.enabled = prevEnabled; dbManager.getMongo = prevGetMongo; });
+
+  it('sample: xlsx by default, csv on request, anything else is a 400', async () => {
+    const x = await request(makeApp()).get('/sample').buffer(true).parse((res, cb) => { const c = []; res.on('data', (d) => c.push(d)); res.on('end', () => cb(null, Buffer.concat(c))); });
+    expect(x.status).toBe(200);
+    expect(x.headers['content-type']).toContain('spreadsheetml');
+    expect(x.headers['content-disposition']).toContain('custom-keywords-sample.xlsx');
+    expect(x.body.slice(0, 2).toString()).toBe('PK'); // an .xlsx is a zip
+
+    const c = await request(makeApp()).get('/sample?format=csv');
+    expect(c.status).toBe(200);
+    expect(c.headers['content-type']).toContain('text/csv');
+    expect(c.headers['content-disposition']).toContain('custom-keywords-sample.csv');
+    expect(c.text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean)).toEqual(['keyword', 'nike running shoes', 'best crm software', 'gym bag']);
+
+    const bad = await request(makeApp()).get('/sample?format=pdf');
+    expect(bad.status).toBe(400);
+    expect(bad.body.message).toContain("'xlsx' or 'csv'");
+  });
+
+  it('upload: a .csv file works (comma, BOM, any header case)', async () => {
+    const before = leftovers();
+    const csv = Buffer.from('\uFEFFKeyword\r\nnike shoes\r\n"best, crm"\r\n  gym bag  \r\nnike shoes\r\n');
+    const r = await request(makeApp()).post('/upload').attach('file', csv, 'my-keywords.csv');
+    expect(r.status).toBe(200);
+    expect(r.body.data).toMatchObject({ received: 4, added: 3, duplicates: 1 });
+    expect(saved.map((d) => d.keyword)).toEqual(['nike shoes', 'best, crm', 'gym bag']);
+    expect(saved.every((d) => d.userId === 72479 && d.status === 'pending')).toBe(true);
+    expect(leftovers()).toBe(before); // the temp file is removed
+  });
+
+  it('upload: a semicolon-separated .csv (Excel in some locales) works', async () => {
+    const r = await request(makeApp()).post('/upload').attach('file', Buffer.from('keyword;note\nyoga mat;1\ngym bag;2\n'), 'k.csv');
+    expect(r.status).toBe(200);
+    expect(saved.map((d) => d.keyword)).toEqual(['yoga mat', 'gym bag']);
+  });
+
+  it('upload: an .xlsx file works', async () => {
+    const r = await request(makeApp()).post('/upload').attach('file', await xlsxBuffer(['nike shoes', 'yoga mat']), 'k.xlsx');
+    expect(r.status).toBe(200);
+    expect(r.body.data).toMatchObject({ received: 2, added: 2 });
+  });
+
+  it('upload: any other file type gets a clear error and nothing is saved', async () => {
+    const before = leftovers();
+    for (const name of ['notes.pdf', 'notes.txt', 'keywords.json', 'keywords', 'data.csv.exe', 'sheet.xlsm']) {
+      const r = await request(makeApp()).post('/upload').attach('file', Buffer.from('keyword\nnike\n'), name);
+      expect(r.status, name).toBe(400);
+      expect(r.body.message, name).toContain('Only .csv and .xlsx files are allowed');
+    }
+    const pdf = await request(makeApp()).post('/upload').attach('file', Buffer.from('x'), 'notes.pdf');
+    expect(pdf.body.message).toContain('".pdf"');
+    const xls = await request(makeApp()).post('/upload').attach('file', Buffer.from('x'), 'old.xls');
+    expect(xls.status).toBe(400);
+    expect(xls.body.message).toContain('Old Excel files (.xls) are not supported');
+    expect(saved).toHaveLength(0);
+    expect(leftovers()).toBe(before);
+  });
+
+  it('upload: a missing "keyword" column, an unreadable file, or no file are all clear 400s', async () => {
+    const noHeader = await request(makeApp()).post('/upload').attach('file', Buffer.from('name\nnike\n'), 'k.csv');
+    expect(noHeader.status).toBe(400);
+    expect(noHeader.body.message).toContain('column named "keyword"');
+
+    const fakeXlsx = await request(makeApp()).post('/upload').attach('file', Buffer.from('this is not a spreadsheet'), 'k.xlsx');
+    expect(fakeXlsx.status).toBe(400);
+    expect(fakeXlsx.body.message).toContain('not a valid Excel (.xlsx) file');
+
+    // A zip signature but a broken workbook passes the byte check and fails while reading.
+    const corrupt = await request(makeApp()).post('/upload').attach('file', Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('garbage')]), 'k.xlsx');
+    expect(corrupt.status).toBe(400);
+    expect(corrupt.body.message).toContain('could not read this file');
+
+    const none = await request(makeApp()).post('/upload');
+    expect(none.status).toBe(400);
+    expect(none.body.message).toContain('.csv or .xlsx');
+  });
+
+  it('upload: the file must really be what its extension says (renamed files are refused)', async () => {
+    const before = leftovers();
+    const post = (buf, name) => request(makeApp()).post('/upload').attach('file', buf, name);
+    const pdf = Buffer.from('%PDF-1.4\n1 0 obj\n\x00\x00binary');
+    const exe = Buffer.concat([Buffer.from('MZ'), Buffer.from([0, 0, 0, 0]), Buffer.from('This program cannot be run')]);
+    const oldXls = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.alloc(40)]);
+    const utf16 = Buffer.from('\uFEFFkeyword\nnike\n', 'utf16le');
+    const realXlsx = await xlsxBuffer(['nike shoes']);
+
+    const cases = [
+      ['PDF named .csv', pdf, 'a.csv', 'not a text CSV'],
+      ['PDF named .xlsx', pdf, 'a.xlsx', 'not a valid Excel (.xlsx) file'],
+      ['program named .csv', exe, 'a.csv', 'not a text CSV'],
+      ['program named .xlsx', exe, 'a.xlsx', 'not a valid Excel (.xlsx) file'],
+      ['real .xlsx named .csv', realXlsx, 'a.csv', 'Excel file saved with a .csv name'],
+      ['old .xls named .csv', oldXls, 'a.csv', 'old Excel (.xls) file saved with a .csv name'],
+      ['old .xls named .xlsx', oldXls, 'a.xlsx', 'old Excel (.xls) file saved with an .xlsx name'],
+      ['UTF-16 text named .csv', utf16, 'a.csv', 'not a text CSV'],
+      ['plain text named .xlsx', Buffer.from('keyword\nnike\n'), 'a.xlsx', 'not a valid Excel (.xlsx) file'],
+      ['empty .csv', Buffer.alloc(0), 'a.csv', 'The file is empty'],
+      ['empty .xlsx', Buffer.alloc(0), 'a.xlsx', 'The file is empty'],
+    ];
+    for (const [label, buf, name, expected] of cases) {
+      const r = await post(buf, name);
+      expect(r.status, label).toBe(400);
+      expect(r.body.message, label).toContain(expected);
+    }
+    expect(saved).toHaveLength(0);
+    expect(leftovers()).toBe(before);
+
+    // and the genuine files still go through
+    expect((await post(Buffer.from('keyword\nnike\n'), 'ok.csv')).status).toBe(200);
+    expect((await post(realXlsx, 'ok.xlsx')).status).toBe(200);
+  });
+
+  it('upload and sample are 404 for a user outside allowedUserIds', async () => {
+    config.customKeywords.allowedUserIds = ['72479'];
+    const app = makeApp(305);
+    expect((await request(app).get('/sample')).status).toBe(404);
+    expect((await request(app).post('/upload').attach('file', Buffer.from('keyword\nnike\n'), 'k.csv')).status).toBe(404);
+    expect(saved).toHaveLength(0);
   });
 });

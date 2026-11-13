@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, ChevronRight, Filter, SlidersHorizontal, FileSpreadsheet, X } from "lucide-react";
+import { Check, ChevronRight, Filter, SlidersHorizontal, FileSpreadsheet, X, UploadCloud, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import PlatformTab, { PLATFORM_ASSET_MAP, PLATFORM_FULL_NAMES } from "../shared/PlatformTab";
 import RowSlider from "../shared/RowSlider";
@@ -12,7 +12,7 @@ import {
   hasActiveAiFilters,
   replaceAiFilters,
 } from "../../utils/aiQuickFilterPresets";
-import { downloadCustomKeywordSample, uploadCustomKeywordsFile, fetchMyCustomKeywords } from "../../services/api";
+import { downloadCustomKeywordSample, uploadCustomKeywordsFile, fetchMyCustomKeywords, getCustomKeywordAccess } from "../../services/api";
 
 // Maps SDUI sort labels/values to the stable Plan Control/legacy access ID.
 const SORT_TO_PLAN_ACCESS_ID = {
@@ -121,19 +121,38 @@ export const resolveActiveSortLabel = (sortTabs = [], sortBy) => {
   return match?.label ?? match ?? "";
 };
 
-// Custom Keyword dialog (Google only): download the sample sheet, upload the filled
-// one, and see your keywords + status. Searching is done from the main search bar.
+// Custom Keyword dialog (Google only): download a sample, upload the filled sheet (click or drag and
+// drop, one row per file with progress and result), and see your keywords + status.
 const CK_STATUS = { pending: "Pending", in_progress: "Scraping", done: "Done", no_ads_found: "No ads", failed: "Failed" };
+// Only .csv and .xlsx may be uploaded; anything else gets this message (same wording as the server's).
+const customKeywordFileError = (fileName) => {
+  const ext = (String(fileName || "").match(/\.[^.\\/]+$/) || [""])[0].toLowerCase();
+  if (ext === ".csv" || ext === ".xlsx") return "";
+  if (ext === ".xls") return "Old Excel files (.xls) are not supported. Open it in Excel, save it as .xlsx or .csv, and upload again.";
+  return `Unsupported file type${ext ? ` "${ext}"` : ""}. Only .csv and .xlsx files are allowed. Download the sample sheet and upload it in one of those formats.`;
+};
+const formatFileSize = (bytes) => {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+};
+const UPLOAD_FAILED = "Upload failed. Please try again.";
+
 const CustomKeywordDialog = ({ onSearch, onClose }) => {
   const [items, setItems] = useState([]);
-  const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState(null); // { text } for list / sample problems
+  const [uploads, setUploads] = useState([]); // this session's files, newest first
+  const [dragOver, setDragOver] = useState(false);
+  const queue = useRef(Promise.resolve());
+  const lastId = useRef(0);
+
   const load = useCallback(async () => {
     try {
       const res = await fetchMyCustomKeywords({ page: 1, pageSize: 50 });
       if (res.code === 200) setItems(res.data.items);
-      else setMsg(res.code === 503 ? "Custom keywords are not available yet." : res.message);
-    } catch { setMsg("Could not load your keywords."); }
+      else setNote({ text: res.code === 503 ? "Custom keywords are not available yet." : res.message });
+    } catch { setNote({ text: "Could not load your keywords." }); }
   }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -142,45 +161,134 @@ const CustomKeywordDialog = ({ onSearch, onClose }) => {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const upload = async (file) => {
-    if (!file) return;
-    if (!/\.xlsx$/i.test(file.name)) { setMsg("Please choose the .xlsx sample sheet, filled in."); return; }
-    setBusy(true);
+  const patch = (id, changes) => setUploads((list) => list.map((u) => (u.id === id ? { ...u, ...changes } : u)));
+
+  const runUpload = async (id, file) => {
+    patch(id, { status: "uploading", progress: 0, text: "", details: [] });
     try {
-      const res = await uploadCustomKeywordsFile(file);
-      if (res.code === 200) { setMsg(`${res.data.added} added, ${res.data.duplicates} duplicate`); load(); }
-      else setMsg(res.code === 503 ? "Custom keywords are not available yet." : (res.message || "Upload failed."));
-    } catch { setMsg("Upload failed. Please try again."); }
-    finally { setBusy(false); }
+      const res = await uploadCustomKeywordsFile(file, (progress) => patch(id, { progress }));
+      if (res.code === 200) {
+        const d = res.data || {};
+        patch(id, {
+          status: "complete", progress: 100,
+          text: `${d.added ?? 0} added · ${d.duplicates ?? 0} duplicate`,
+          details: (d.invalid || []).slice(0, 3).map((r) => `Row ${r.row}: ${r.reason}`),
+        });
+        load();
+        return;
+      }
+      const text = res.code === 503 ? "Custom keywords are not available yet."
+        : res.code === 404 ? "Custom keywords are not available for your account."
+          : (res.message || UPLOAD_FAILED);
+      patch(id, { status: "failed", text, retryable: res.code >= 500 && res.code !== 503 });
+    } catch { patch(id, { status: "failed", text: UPLOAD_FAILED, retryable: true }); }
   };
+  // One file at a time, in the order they were added.
+  const enqueue = (id, file) => { queue.current = queue.current.then(() => runUpload(id, file)); };
+
+  const addFiles = (fileList) => {
+    Array.from(fileList || []).forEach((file) => {
+      const id = ++lastId.current;
+      const typeError = customKeywordFileError(file.name);
+      setUploads((list) => [{
+        id, file, name: file.name, size: file.size, details: [],
+        status: typeError ? "failed" : "uploading", progress: 0, text: typeError, retryable: false,
+      }, ...list]);
+      if (!typeError) enqueue(id, file);
+    });
+  };
+  const retry = (u) => { patch(u.id, { status: "uploading", progress: 0, text: "", retryable: false }); enqueue(u.id, u.file); };
+  const remove = (id) => setUploads((list) => list.filter((u) => u.id !== id));
 
   return createPortal(
     <div className="fixed inset-0 z-[300] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Custom keywords">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className="relative flex max-h-[80dvh] w-full max-w-sm flex-col rounded-xl border border-theme-border bg-theme-card p-4 shadow-2xl">
-        <div className="mb-3 flex items-center justify-between">
+      <div className="relative flex max-h-[85dvh] w-full max-w-md flex-col rounded-xl border border-theme-border bg-theme-card shadow-2xl">
+        <div className="flex items-center justify-between px-4 pb-2 pt-4">
           <h2 className="text-[13px] font-bold text-theme-text">Custom Keywords</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="text-theme-text-muted hover:text-theme-text"><X size={14} /></button>
         </div>
-        <div className="flex gap-2 text-[11px] font-semibold">
-          <button type="button" onClick={() => downloadCustomKeywordSample().catch(() => setMsg("Could not download the sample."))} className="flex-1 rounded-lg border border-theme-border px-2 py-1.5 text-theme-text-secondary hover:text-theme-text">Download sample</button>
-          <label className={`flex-1 cursor-pointer rounded-lg border border-theme-border px-2 py-1.5 text-center text-theme-text-secondary hover:text-theme-text ${busy ? "opacity-50" : ""}`}>
-            {busy ? "Uploading…" : "Upload .xlsx"}
-            <input type="file" accept=".xlsx" className="hidden" disabled={busy} onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} />
-          </label>
-        </div>
-        {msg && <p className="mt-2 text-[11px] text-theme-text-muted">{msg}</p>}
-        <p className="mt-3 text-[11px] text-theme-text-muted">Click a keyword to search it, or type it in the search bar. You also see your own ads for it.</p>
-        {items.length > 0 && (
-          <ul className="mt-2 divide-y divide-theme-border/60 overflow-y-auto rounded-lg border border-theme-border text-[12px]">
-            {items.map((k) => (
-              <li key={k.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
-                <button type="button" onClick={() => onSearch?.(k.keyword, "keyword")} className="min-w-0 truncate text-left text-theme-text hover:text-[#6b99ff]">{k.keyword}</button>
-                <span className="shrink-0 text-[10px] text-theme-text-muted">{CK_STATUS[k.status] || k.status}</span>
-              </li>
+
+        <div className="overflow-y-auto px-4 pb-4">
+          <p className="text-[11px] font-semibold text-theme-text-muted">1. Download a sample</p>
+          <div className="mt-1.5 flex gap-2 text-[11px] font-semibold">
+            {["xlsx", "csv"].map((format) => (
+              <button key={format} type="button" onClick={() => downloadCustomKeywordSample(format).catch(() => setNote({ text: "Could not download the sample." }))} className="flex-1 rounded-lg border border-theme-border px-2 py-1.5 text-theme-text-secondary hover:text-theme-text">Sample .{format}</button>
             ))}
-          </ul>
-        )}
+          </div>
+
+          <p className="mt-3 text-[11px] font-semibold text-theme-text-muted">2. Upload your sheet</p>
+          <label
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); addFiles(e.dataTransfer?.files); }}
+            className={`mt-1.5 flex cursor-pointer flex-col items-center gap-1.5 rounded-xl border border-dashed px-3 py-4 text-center transition-colors ${dragOver ? "border-[#335296] bg-[#335296]/10" : "border-theme-border hover:border-theme-text-muted"}`}
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-theme-border bg-theme-bg/40 text-theme-text-secondary"><UploadCloud size={18} /></span>
+            <span className="text-[12px] text-theme-text-muted"><span className="font-semibold text-[#6b99ff]">Click to upload</span> or drag and drop</span>
+            <span className="text-[10px] text-theme-text-muted">CSV or XLSX files only</span>
+            <input type="file" accept=".csv,.xlsx" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+          </label>
+
+          {uploads.length > 0 && (
+            <ul className="mt-2 space-y-2" aria-label="Uploads">
+              {uploads.map((u) => (
+                <li key={u.id} className={`rounded-lg border p-2.5 ${u.status === "failed" ? "border-red-400 bg-red-500/5" : "border-theme-border"}`}>
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-500"><FileSpreadsheet size={16} /></span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[12px] font-semibold text-theme-text" title={u.name}>{u.name}</p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-theme-text-muted">
+                        <span>{formatFileSize(u.size)}</span>
+                        <span aria-hidden="true">|</span>
+                        {u.status === "uploading" && <span className="flex items-center gap-1"><Loader2 size={12} className="animate-spin" />{u.progress >= 100 ? "Processing…" : "Uploading…"}</span>}
+                        {u.status === "complete" && <span className="flex items-center gap-1 font-medium text-emerald-500"><CheckCircle2 size={12} />Complete</span>}
+                        {u.status === "failed" && <span className="flex items-center gap-1 font-medium text-red-500"><XCircle size={12} />Failed</span>}
+                      </p>
+                    </div>
+                    <button type="button" onClick={() => remove(u.id)} aria-label={`Remove ${u.name} from the list`} title="Remove from this list (your saved keywords are not affected)" className="text-theme-text-muted hover:text-theme-text"><X size={13} /></button>
+                  </div>
+
+                  {u.status === "uploading" && (
+                    <div className="mt-2 flex items-center gap-2">
+                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-theme-border" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={u.progress}>
+                        <div className="h-full rounded-full bg-[#335296] transition-all" style={{ width: `${u.progress}%` }} />
+                      </div>
+                      <span className="w-8 text-right text-[11px] text-theme-text-muted">{u.progress}%</span>
+                    </div>
+                  )}
+                  {u.status === "complete" && (
+                    <div className="mt-1.5 text-[11px] text-theme-text-secondary">
+                      <p>{u.text}</p>
+                      {u.details.map((line) => <p key={line} className="text-amber-600">{line}</p>)}
+                    </div>
+                  )}
+                  {u.status === "failed" && (
+                    <div className="mt-1.5 text-[11px]">
+                      <p className="text-red-500">{u.text}</p>
+                      {u.retryable && <button type="button" onClick={() => retry(u)} className="mt-1 font-semibold text-red-500 underline">Try again</button>}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {note && <p className="mt-2 text-[11px] text-red-500">{note.text}</p>}
+
+          <p className="mt-4 text-[11px] font-semibold text-theme-text-muted">My keywords{items.length ? ` (${items.length})` : ""}</p>
+          <p className="mt-0.5 text-[11px] text-theme-text-muted">Click a keyword to search it, or type it in the search bar. You also see your own ads for it.</p>
+          {items.length > 0 && (
+            <ul className="mt-2 divide-y divide-theme-border/60 rounded-lg border border-theme-border text-[12px]">
+              {items.map((k) => (
+                <li key={k.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                  <button type="button" onClick={() => onSearch?.(k.keyword, "keyword")} className="min-w-0 truncate text-left text-theme-text hover:text-[#6b99ff]">{k.keyword}</button>
+                  <span className="shrink-0 text-[10px] text-theme-text-muted">{CK_STATUS[k.status] || k.status}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>,
     document.body,
@@ -377,13 +485,24 @@ const AdFilterBar = ({
   // ChatGPT Ads tab — its date picker offers Last Seen / First Seen.
   const isChatgptOnly = activeLower.length === 1 && activeLower[0] === "chatgptads";
   // Custom Keyword (user-uploaded Excel of keywords): the button exists only when SDUI serves
-  // the `custom_keyword` navbar entry, and shows only on the networks it lists (Google).
+  // the `custom_keyword` navbar entry, shows only on the networks it lists (Google), and only for
+  // users the backend allows (config customKeywords.enabled + allowedUserIds, via /custom-keywords/access).
   const customKeywordDoc = (config?.navbar || []).find((doc) => doc?._id === "custom_keyword");
   const customKeywordNetworks = Array.isArray(customKeywordDoc?.platform_applicability) && customKeywordDoc.platform_applicability.length
     ? customKeywordDoc.platform_applicability.map((p) => String(p).toLowerCase())
     : ["google"]; // the feature is Google-only when SDUI does not say otherwise
-  const showCustomKeywordButton = !!customKeywordDoc && customKeywordDoc.visible !== false &&
+  const customKeywordApplies = !!customKeywordDoc && customKeywordDoc.visible !== false &&
     activeLower.length > 0 && activeLower.every((n) => customKeywordNetworks.includes(n));
+  const [customKeywordAccess, setCustomKeywordAccess] = useState(false);
+  useEffect(() => {
+    if (!customKeywordApplies || guest?.isGuest) { setCustomKeywordAccess(false); return undefined; }
+    let cancelled = false;
+    getCustomKeywordAccess()
+      .then((res) => { if (!cancelled) setCustomKeywordAccess(res?.data?.enabled === true); })
+      .catch(() => { if (!cancelled) setCustomKeywordAccess(false); });
+    return () => { cancelled = true; };
+  }, [customKeywordApplies, guest?.isGuest]);
+  const showCustomKeywordButton = customKeywordApplies && customKeywordAccess;
   const visibleSortTabs = useMemo(() => {
     if (!isQuoraOnly) return sortTabs;
     return sortTabs.filter((tab) => {
