@@ -802,6 +802,8 @@ class  MonitorService{
                         [lastSeenField]: {
                             gte: start,
                             lte: end,
+                            // YouTube sends epoch seconds; ES 9 reads plain numbers as millis without this.
+                            ...(platform === "youtube" ? { format: "epoch_second" } : {}),
                         },
                         },
                     },

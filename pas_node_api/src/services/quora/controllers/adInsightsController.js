@@ -1,6 +1,10 @@
 'use strict';
 
 const { normalizeParams } = require('../helpers/paramParser');
+const { docvalueSource } = require('../../common/helpers/docvalueSource');
+
+// Doc-value reads for the 10k-doc LCS queries (no stored-document loads).
+const QUORA_LCS_DOCVALUES = ['quora_ad.id', 'quora_ad.last_seen', 'quora_ad.likes', 'quora_ad.comments', 'quora_ad.shares'];
 
 // ─── 0. getLikeCommentShareDetails ───────────────────────
 
@@ -263,7 +267,7 @@ function aggregateLCSData(hits) {
 
   const monthly = {};
   for (const hit of hits) {
-    const src = hit._source || {};
+    const src = docvalueSource(hit);
     const adId = src['quora_ad.id'];
     const rawDate = src['quora_ad.last_seen'];
     if (!adId || !rawDate) continue;
@@ -432,15 +436,12 @@ async function getAdvertiserLCSData(req, db, logger) {
     fetchAvailableYears(db.elastic, index, advertiserFilter),
     db.elastic.search({
       index,
+      filter_path: 'hits.hits.fields',
       body: {
         size: 10000,
-        _source: [
-          'quora_ad.id',
-          'quora_ad.last_seen',
-          'quora_ad.likes',
-          'quora_ad.comments',
-          'quora_ad.shares',
-        ],
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: QUORA_LCS_DOCVALUES,
         query: {
           bool: {
             filter: [
@@ -583,9 +584,13 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
   if (targetType === 'country') {
     const esResult = await db.elastic.search({
       index,
+      // Doc values instead of _source (same as getAdvertiserCountryData).
+      filter_path: 'hits.hits.fields',
       body: {
         size: 10000,
-        _source: ['quora_ad.id', 'quora_country_only.country'],
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: ['quora_ad.id', 'quora_country_only.country.keyword'],
         query: {
           bool: {
             filter: [
@@ -607,15 +612,12 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
   if (targetType === 'lcs') {
     const esResult = await db.elastic.search({
       index,
+      filter_path: 'hits.hits.fields',
       body: {
         size: 10000,
-        _source: [
-          'quora_ad.id',
-          'quora_ad.last_seen',
-          'quora_ad.likes',
-          'quora_ad.comments',
-          'quora_ad.shares',
-        ],
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: QUORA_LCS_DOCVALUES,
         query: {
           bool: {
             filter: [

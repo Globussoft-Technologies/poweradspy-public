@@ -737,7 +737,7 @@ async function userActivityData(req, elastic, logger) {
 
     const must = [
       { match: { 'user.id': user_id } },
-      { range: { dateTime: { gte: startTs, lte: endTs } } },
+      { range: { dateTime: { gte: startTs, lte: endTs, format: 'epoch_second' } } },
     ];
 
     if (platform && Array.isArray(platform) && platform.length > 0) {
@@ -747,8 +747,12 @@ async function userActivityData(req, elastic, logger) {
     const result = await elastic.search({
       index: 'user_activities',
       body: {
-        query: { bool: { must } },
+        // filter context: same matches, no scoring (results are sorted by dateTime anyway)
+        // and the clauses become cacheable.
+        query: { bool: { filter: must } },
         sort: [{ dateTime: { order: 'desc' } }],
+        // The total is never read here — skip counting every match.
+        track_total_hits: false,
       },
       from: 0,
       size: 10000,

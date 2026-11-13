@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeParams } = require('../helpers/paramParser');
+const { docvalueSource } = require('../../common/helpers/docvalueSource');
 
 // ─── 1. getLikeCommentShareDetails ────────────────────────
 
@@ -241,7 +242,7 @@ async function aggregateLCSData(db, hits) {
 
   const monthlyIds = {};
   for (const hit of hits) {
-    const src = hit._source || {};
+    const src = docvalueSource(hit);
     // Elasticsearch can materialise dotted `_source` fields either as
     // flattened keys or as their original nested object. Accept both shapes;
     // otherwise valid advertiser hits are silently discarded here.
@@ -408,9 +409,12 @@ async function getAdvertiserLCSData(req, db, logger) {
     fetchAvailableYears(db.elastic, index, { match_phrase: { 'reddit_ad_post_owners.post_owner_name': postOwnerName } }),
     db.elastic.search({
       index,
+      filter_path: 'hits.hits.fields',
       body: {
         size: 10000,
-        _source: ['reddit_ad.id', 'reddit_ad.last_seen'],
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: ['reddit_ad.id', 'reddit_ad.last_seen'],
         query: {
           bool: {
             filter: [
@@ -553,12 +557,16 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
   if (targetType === 'country') {
     const esResult = await db.elastic.search({
       index,
+      // Doc values instead of _source (same as getAdvertiserCountryData).
+      filter_path: 'hits.hits.fields',
       body: {
         size: 10000,
-        _source: [
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: [
           'reddit_ad.id',
-          'reddit_country_only.country',
-          'reddit_country.country',
+          'reddit_country_only.country.keyword',
+          'reddit_country.country.keyword',
         ],
         query: {
           bool: {
@@ -581,9 +589,12 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
   if (targetType === 'lcs') {
     const esResult = await db.elastic.search({
       index,
+      filter_path: 'hits.hits.fields',
       body: {
         size: 10000,
-        _source: ['reddit_ad.id', 'reddit_ad.last_seen'],
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: ['reddit_ad.id', 'reddit_ad.last_seen'],
         query: {
           bool: {
             filter: [

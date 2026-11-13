@@ -1595,17 +1595,17 @@ async function youtubeBenchmark(req, res) {
       size: 0, track_total_hits: true, query: { match_all: {} },
       aggs: {
         by_type: { terms: TY }, by_position: { terms: PO },
-        w1h: { filter: { range: { last_seen: { gte: now - 3600 } } }, aggs: { t: { terms: TY }, p: { terms: PO } } },
-        w24h: { filter: { range: { last_seen: { gte: now - 86400 } } }, aggs: { t: { terms: TY }, p: { terms: PO } } },
+        w1h: { filter: { range: { last_seen: { gte: now - 3600, format: 'epoch_second' } } }, aggs: { t: { terms: TY }, p: { terms: PO } } },
+        w24h: { filter: { range: { last_seen: { gte: now - 86400, format: 'epoch_second' } } }, aggs: { t: { terms: TY }, p: { terms: PO } } },
       },
     });
     const total = ytTotal(aggRes);
     const aggs = ytAggs(aggRes);
     const [ads1h, ads24h, new1h, new24h, findable, withChain] = await Promise.all([
-      ytCount({ range: { last_seen: { gte: now - 3600 } } }),
-      ytCount({ range: { last_seen: { gte: now - 86400 } } }),
-      ytCount({ range: { first_seen: { gte: now - 3600 } } }),
-      ytCount({ range: { first_seen: { gte: now - 86400 } } }),
+      ytCount({ range: { last_seen: { gte: now - 3600, format: 'epoch_second' } } }),
+      ytCount({ range: { last_seen: { gte: now - 86400, format: 'epoch_second' } } }),
+      ytCount({ range: { first_seen: { gte: now - 3600, format: 'epoch_second' } } }),
+      ytCount({ range: { first_seen: { gte: now - 86400, format: 'epoch_second' } } }),
       ytCount(YT_FINDABLE),
       ytCount(YT_HAS_REDIRECT),
     ]);
@@ -1636,12 +1636,12 @@ async function youtubeBenchmark(req, res) {
         first_seen: toNum(s.first_seen), source: Array.isArray(s.source) ? s.source.join(',') : (s.source || '') };
     });
     const [l1h, l3h, l24h, n1h, n3h, n24h] = await Promise.all([
-      ytCount({ range: { last_seen: { gte: now - 3600 } } }),
-      ytCount({ range: { last_seen: { gte: now - 10800 } } }),
-      ytCount({ range: { last_seen: { gte: now - 86400 } } }),
-      ytCount({ range: { first_seen: { gte: now - 3600 } } }),
-      ytCount({ range: { first_seen: { gte: now - 10800 } } }),
-      ytCount({ range: { first_seen: { gte: now - 86400 } } }),
+      ytCount({ range: { last_seen: { gte: now - 3600, format: 'epoch_second' } } }),
+      ytCount({ range: { last_seen: { gte: now - 10800, format: 'epoch_second' } } }),
+      ytCount({ range: { last_seen: { gte: now - 86400, format: 'epoch_second' } } }),
+      ytCount({ range: { first_seen: { gte: now - 3600, format: 'epoch_second' } } }),
+      ytCount({ range: { first_seen: { gte: now - 10800, format: 'epoch_second' } } }),
+      ytCount({ range: { first_seen: { gte: now - 86400, format: 'epoch_second' } } }),
     ]);
     const lastTs = pages.length ? pages[0].ts : null;
     let live = {

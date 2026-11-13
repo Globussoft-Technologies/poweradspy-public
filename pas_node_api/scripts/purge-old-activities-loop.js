@@ -78,7 +78,7 @@ async function main() {
   const limitParam = conn.esMajor && conn.esMajor < 7 ? 'size' : 'max_docs';
 
   const cutoffTs = () => Math.floor(Date.now() / 1000) - args.days * DAY_S;
-  const rangeQuery = () => ({ range: { dateTime: { lt: cutoffTs() } } });
+  const rangeQuery = () => ({ range: { dateTime: { lt: cutoffTs(), format: 'epoch_second' } } });
 
   const initial = await countOld(client, index, rangeQuery());
   console.log(`[${ts()}] Index: ${index} (ES ${conn.esMajor || '?'}.x, limit param: ${limitParam})`);

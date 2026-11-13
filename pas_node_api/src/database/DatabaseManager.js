@@ -342,6 +342,23 @@ class DatabaseManager {
   async _getOrCreateEsClient(slug, elasticConfig, dbConfigKey) {
     const es = require('@elastic/elasticsearch');
     const { Client } = es;
+    // Client v9 always sends `compatible-with=9` headers. They are not needed on ES 9.5 and ES 8
+    // (TikTok's cluster) rejects them (HTTP 400). Send plain application/json on every connection
+    // instead — exactly what client 7.x sent before. ES 8 and ES 9 both accept it.
+    const plainJsonTransport = es.Transport
+      ? class PlainJsonTransport extends es.Transport {
+        constructor(opts) {
+          super({
+            ...opts,
+            vendoredHeaders: {
+              jsonContentType: 'application/json',
+              ndjsonContentType: 'application/x-ndjson',
+              accept: 'application/json, text/plain',
+            },
+          });
+        }
+      }
+      : null;
     // Node-http connection class: `HttpConnection` in client v8/v9, `Connection` in v7.
     // Never pass undefined — the client would fail with "this.Connection is not a constructor".
     const HttpConnection = es.HttpConnection || es.Connection;
@@ -374,6 +391,7 @@ class DatabaseManager {
       ...(HttpConnection ? { Connection: HttpConnection } : {}),
       agent: () => agent,
       ...(ca ? { tls: { ca } } : {}),
+      ...(plainJsonTransport ? { Transport: plainJsonTransport } : {}),
     };
     if (nodes.length > 1) {
       log.info(`[${slug}] Elasticsearch using ${nodes.length} nodes (round-robin): ${nodes.join(', ')}`);

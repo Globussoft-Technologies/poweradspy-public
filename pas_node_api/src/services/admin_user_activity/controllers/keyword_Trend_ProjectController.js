@@ -599,7 +599,7 @@ async function getProjectActivity(req, elastic, logger) {
     }
 
     const filters = [
-      { range: { dateTime: { gte: fromTs, lte: toTs } } },
+      { range: { dateTime: { gte: fromTs, lte: toTs, format: 'epoch_second' } } },
       { term: { 'network.keyword': 'Project' } },
       { bool: { should: [
         { exists: { field: 'project_name'          } },

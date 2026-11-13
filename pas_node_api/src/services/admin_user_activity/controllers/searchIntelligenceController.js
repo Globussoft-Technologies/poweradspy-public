@@ -70,9 +70,9 @@ async function getIntelligenceStats(req, elastic, logger) {
     // High-volume flags always use real current time (not anchored on latest doc)
     const nowTs = Math.floor(Date.now() / 1000);
 
-    const baseFilter    = (f, t) => [{ range: { dateTime: { gte: f, lte: t } } }];
+    const baseFilter    = (f, t) => [{ range: { dateTime: { gte: f, lte: t, format: 'epoch_second' } } }];
     const searchFilter  = (f, t) => [
-      { range: { dateTime: { gte: f, lte: t } } },
+      { range: { dateTime: { gte: f, lte: t, format: 'epoch_second' } } },
       { bool: { should: [
         { exists: { field: 'search.keyword'    } },
         { exists: { field: 'search.advertiser' } },
@@ -231,7 +231,7 @@ async function getTopUsers(req, elastic, logger) {
     // Step 2 — fetch emails from LoggedIn docs in parallel
     const allUsersBody = {
       size: 0,
-      query: { bool: { filter: [{ range: { dateTime: { gte: fromTs, lte: toTs } } }] } },
+      query: { bool: { filter: [{ range: { dateTime: { gte: fromTs, lte: toTs, format: 'epoch_second' } } }] } },
       aggs: {
         per_user: {
           terms: { field: 'user.id', size: BUCKET_SIZE, order: { _count: 'desc' } },
@@ -431,7 +431,7 @@ async function getOtherActivities(req, elastic, logger) {
     ];
 
     const filters = [
-      { range: { dateTime: { gte: fromTs, lte: toTs } } },
+      { range: { dateTime: { gte: fromTs, lte: toTs, format: 'epoch_second' } } },
       { bool: { should: activityFields.map(f => ({ exists: { field: f } })), minimum_should_match: 1 } },
     ];
 
@@ -544,7 +544,8 @@ async function purgeOldActivities(req, elastic, logger) {
 
     const rangeQuery = {
       range: {
-        dateTime: { lt: cutoffTs },
+        // ES 9 reads plain numbers as epoch millis — say they are seconds.
+        dateTime: { lt: cutoffTs, format: 'epoch_second' },
       },
     };
 

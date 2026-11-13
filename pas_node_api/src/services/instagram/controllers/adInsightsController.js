@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeParams } = require('../helpers/paramParser');
+const { docvalueSource } = require('../../common/helpers/docvalueSource');
 
 // ─── 1. getLikeCommentShareDetails ────────────────────────
 
@@ -318,9 +319,13 @@ async function fetchAvailableYears(db, postOwnerName) {
 async function fetchMonthlyLCSForAdvertiser(db, postOwnerName, dateRange) {
   const esResult = await db.elastic.search({
     index: process.env.IG_ES_INDEX,
+    // Doc values instead of _source: same values, no stored-document reads.
+    filter_path: 'hits.hits.fields',
     body: {
       size: 10000,
-      _source: ['instagram_ad.id', 'instagram_ad.last_seen'],
+      track_total_hits: false,
+      _source: false,
+      docvalue_fields: ['instagram_ad.id', 'instagram_ad.last_seen'],
       query: {
         bool: {
           filter: [
@@ -339,7 +344,7 @@ async function fetchMonthlyLCSForAdvertiser(db, postOwnerName, dateRange) {
   const monthlyIds = {};
   const yearSet = new Set();
   for (const hit of hits) {
-    const src = hit._source;
+    const src = docvalueSource(hit);
     const adId = src['instagram_ad.id'];
     const postDate = src['instagram_ad.last_seen'];
     if (!adId || !postDate) continue;

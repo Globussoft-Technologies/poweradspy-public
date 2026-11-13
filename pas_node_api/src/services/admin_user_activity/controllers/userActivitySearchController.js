@@ -229,7 +229,7 @@ async function getFilterOptions(req, elastic, logger) {
       query: {
         bool: {
           filter: [
-            { range: { dateTime: { gte: fromTs } } },
+            { range: { dateTime: { gte: fromTs, format: 'epoch_second' } } },
             { bool: { should: [
               { exists: { field: 'search.keyword'    } },
               { exists: { field: 'search.advertiser' } },
@@ -261,7 +261,7 @@ async function getFilterOptions(req, elastic, logger) {
     // not just whichever ones happened to land in the first page.
     const emailBuckets = await fetchAllTermsBuckets(elastic, {
       query: { bool: { filter: [
-        { range: { dateTime: { gte: fromTs } } },
+        { range: { dateTime: { gte: fromTs, format: 'epoch_second' } } },
         { exists: { field: 'user.email' } },
       ] } },
       field: 'user.id',
@@ -343,7 +343,7 @@ async function getSummaryStats(req, elastic, logger) {
     }
 
     const filters = [
-      { range: { dateTime: { gte: fromTs, lte: toTs } } },
+      { range: { dateTime: { gte: fromTs, lte: toTs, format: 'epoch_second' } } },
       { bool: { should: [
         { exists: { field: 'search.keyword'          } },
         { exists: { field: 'search.advertiser'       } },

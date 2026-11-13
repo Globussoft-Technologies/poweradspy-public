@@ -1,6 +1,12 @@
 'use strict';
 
 const { normalizeParams } = require('../helpers/paramParser');
+const { docvalueSource } = require('../../common/helpers/docvalueSource');
+
+// Doc-value reads for the 10k-doc insights queries (no stored-document loads).
+// `_id` is kept because LinkedIn uses it as the ad id.
+const LI_DOCVALUE_FILTER_PATH = 'hits.hits._id,hits.hits.fields';
+const LI_COUNTRY_DOCVALUES = { rename: { 'countries.keyword': 'countries' } };
 const {
   isLatinCountryName,
   resolveCountryIso,
@@ -298,7 +304,7 @@ async function aggregateCountryData(db, hits) {
 
   const countryMap = {};
   for (const hit of hits) {
-    const src = hit._source;
+    const src = docvalueSource(hit, LI_COUNTRY_DOCVALUES);
     // LinkedIn ES uses _id as the ad identifier, not a nested field
     const adId = hit._id || src.post_owner_id;
     if (!adId) continue;
@@ -418,9 +424,12 @@ async function getAdvertiserLCSData(req, db, logger) {
 
   const esResult = await db.elastic.search({
     index: 'linkedin_ads_data',
+    filter_path: LI_DOCVALUE_FILTER_PATH,
     body: {
       size: 10000,
-      _source: ['last_seen'],
+      track_total_hits: false,
+      _source: false,
+      docvalue_fields: ['last_seen'],
       query: {
         bool: {
           filter: [
@@ -437,7 +446,7 @@ async function getAdvertiserLCSData(req, db, logger) {
 
   const monthlyIds = {};
   for (const hit of hits) {
-    const src = hit._source;
+    const src = docvalueSource(hit, { numeric: ['last_seen'] });
     const adId = hit._id;
     const rawPostDate = src.last_seen;
     if (!adId || !rawPostDate) continue;
@@ -553,9 +562,12 @@ async function getAdvertiserCountryData(req, db, logger) {
     fetchAvailableYears(db.elastic, index, { match_phrase: { post_owner: postOwnerName } }),
     db.elastic.search({
       index,
+      filter_path: LI_DOCVALUE_FILTER_PATH,
       body: {
         size: 10000,
-        _source: ['countries'],
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: ['countries.keyword'],
         query: {
           bool: {
             filter: [
@@ -621,9 +633,12 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
   if (targetType === 'country') {
     const esResult = await db.elastic.search({
       index,
+      filter_path: LI_DOCVALUE_FILTER_PATH,
       body: {
         size: 10000,
-        _source: ['countries'],
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: ['countries.keyword'],
         query: {
           bool: {
             filter: [

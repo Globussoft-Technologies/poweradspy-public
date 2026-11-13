@@ -60,8 +60,8 @@ async function getOverview(req, db, logger) {
       aggs: {
         by_type: { terms: TY },
         by_position: { terms: PO },
-        w1h:  { filter: { range: { last_seen: { gte: now - 3600 } } },  aggs: { t: { terms: TY }, p: { terms: PO } } },
-        w24h: { filter: { range: { last_seen: { gte: now - 86400 } } }, aggs: { t: { terms: TY }, p: { terms: PO } } },
+        w1h:  { filter: { range: { last_seen: { gte: now - 3600, format: 'epoch_second' } } },  aggs: { t: { terms: TY }, p: { terms: PO } } },
+        w24h: { filter: { range: { last_seen: { gte: now - 86400, format: 'epoch_second' } } }, aggs: { t: { terms: TY }, p: { terms: PO } } },
       },
     } });
     const total = totalOf(aggRes);
@@ -71,10 +71,10 @@ async function getOverview(req, db, logger) {
     const by_type_win = mergeWindowed(aggs.w1h && aggs.w1h.t, aggs.w24h && aggs.w24h.t, 'type');
     const by_position_win = mergeWindowed(aggs.w1h && aggs.w1h.p, aggs.w24h && aggs.w24h.p, 'position');
     const [ads_1h, ads_24h, new_1h, new_24h, findable, withChain] = await Promise.all([
-      esCount(db, { range: { last_seen: { gte: now - 3600 } } }),
-      esCount(db, { range: { last_seen: { gte: now - 86400 } } }),
-      esCount(db, { range: { first_seen: { gte: now - 3600 } } }),
-      esCount(db, { range: { first_seen: { gte: now - 86400 } } }),
+      esCount(db, { range: { last_seen: { gte: now - 3600, format: 'epoch_second' } } }),
+      esCount(db, { range: { last_seen: { gte: now - 86400, format: 'epoch_second' } } }),
+      esCount(db, { range: { first_seen: { gte: now - 3600, format: 'epoch_second' } } }),
+      esCount(db, { range: { first_seen: { gte: now - 86400, format: 'epoch_second' } } }),
       esCount(db, FINDABLE),
       esCount(db, HAS_REDIRECT),
     ]);
@@ -115,12 +115,12 @@ async function getLive(req, db, logger) {
       };
     });
     const [ads_1h, ads_3h, ads_24h, new_1h, new_3h, new_24h] = await Promise.all([
-      esCount(db, { range: { last_seen: { gte: now - 3600 } } }),
-      esCount(db, { range: { last_seen: { gte: now - 10800 } } }),
-      esCount(db, { range: { last_seen: { gte: now - 86400 } } }),
-      esCount(db, { range: { first_seen: { gte: now - 3600 } } }),
-      esCount(db, { range: { first_seen: { gte: now - 10800 } } }),
-      esCount(db, { range: { first_seen: { gte: now - 86400 } } }),
+      esCount(db, { range: { last_seen: { gte: now - 3600, format: 'epoch_second' } } }),
+      esCount(db, { range: { last_seen: { gte: now - 10800, format: 'epoch_second' } } }),
+      esCount(db, { range: { last_seen: { gte: now - 86400, format: 'epoch_second' } } }),
+      esCount(db, { range: { first_seen: { gte: now - 3600, format: 'epoch_second' } } }),
+      esCount(db, { range: { first_seen: { gte: now - 10800, format: 'epoch_second' } } }),
+      esCount(db, { range: { first_seen: { gte: now - 86400, format: 'epoch_second' } } }),
     ]);
     const lastTs = pages.length ? pages[0].ts : null;
     const running = !!(lastTs && (now - lastTs) < 300);

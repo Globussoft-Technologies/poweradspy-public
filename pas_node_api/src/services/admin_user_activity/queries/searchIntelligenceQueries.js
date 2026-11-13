@@ -411,7 +411,7 @@ function buildAllSearchesQuery(params) {
   const { pageNum = 0, pageSize = 10, fromTs, toTs, activity_type, platform, ad_type, country, keyword, advertiser, domain } = params;
 
   const filters = [
-    { range: { dateTime: { gte: fromTs, lte: toTs } } },
+    { range: { dateTime: { gte: fromTs, lte: toTs, format: 'epoch_second' } } },
     { bool: { should: [
       { exists: { field: 'search.keyword' } },
       { exists: { field: 'search.advertiser' } },
@@ -721,7 +721,9 @@ async function fetchAdsCountForKeywordsByPlatform(elastic, platformKeywordMap, l
                       range: {
                         [timestampField]: {
                           gte: startStr,
-                          lte: endStr
+                          lte: endStr,
+                          // LinkedIn/YouTube send epoch seconds; ES 9 reads plain numbers as millis.
+                          ...(platformLower === 'linkedin' || platformLower === 'youtube' ? { format: 'epoch_second' } : {}),
                         }
                       }
                     }
@@ -872,7 +874,12 @@ async function fetchAdsCountByNetworkDate(elastic, searchValue, searchType, scra
       }
 
       aggs[`dt_${index}`] = {
-        filter: { range: { [timestampField]: { gte: startStr, lte: endStr } } },
+        // LinkedIn/YouTube send epoch seconds; ES 9 reads plain numbers as millis.
+        filter: { range: { [timestampField]: {
+          gte: startStr,
+          lte: endStr,
+          ...(platformLower === 'linkedin' || platformLower === 'youtube' ? { format: 'epoch_second' } : {}),
+        } } },
       };
     });
 

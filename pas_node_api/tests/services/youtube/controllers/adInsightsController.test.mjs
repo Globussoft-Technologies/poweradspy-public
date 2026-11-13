@@ -272,7 +272,8 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSDa
         if (params.body.aggs?.years) {
           return { aggregations: { years: { buckets: availableYearBuckets } } };
         }
-        if (params.body._source?.includes("post_owner")) {
+        // LCS queries now send `_source: false` + docvalue_fields, so only an array _source is the meta lookup.
+        if (Array.isArray(params.body._source) && params.body._source.includes("post_owner")) {
           return { hits: { hits: metaRow ? [{ _source: {
             post_owner: metaRow.post_owner_name,
             post_owner_id: metaRow.post_owner_id,
@@ -357,7 +358,8 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSDa
     expect(out.data.mar_2024.dislikes).toBe(0);
     expect(db.elastic.search).toHaveBeenCalledWith(expect.objectContaining({
       body: expect.objectContaining({
-        _source: ["ad_id", "last_seen", "reactions.likes", "dislikes", "comments", "views"],
+        _source: false,
+        docvalue_fields: ["ad_id", "last_seen", "reactions.likes", "comments", "views"],
       }),
     }));
   });
@@ -385,7 +387,7 @@ describe("services/youtube/controllers/adInsightsController > getAdvertiserLCSDa
     const db = {
       elastic: { search: vi.fn(async (params) => {
         if (params.body.aggs?.years) return { body: { aggregations: { years: { buckets: [] } } } };
-        if (params.body._source?.includes("post_owner")) {
+        if (Array.isArray(params.body._source) && params.body._source.includes("post_owner")) {
           return { body: { hits: { hits: [{ _source: { post_owner: "B", post_owner_id: 5, last_seen: "2024-01-01" } }] } } };
         }
         return { body: { hits: { hits: [

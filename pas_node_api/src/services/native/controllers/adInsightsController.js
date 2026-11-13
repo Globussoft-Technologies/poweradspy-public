@@ -471,9 +471,13 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
   if (targetType === 'country') {
     const esResult = await db.elastic.search({
       index,
+      // Doc values instead of _source (same as getAdvertiserCountryData).
+      filter_path: 'hits.hits.fields',
       body: {
         size: 10000,
-        _source: ['native_ad.id', 'native_country_only.country'],
+        track_total_hits: false,
+        _source: false,
+        docvalue_fields: ['native_ad.id', 'native_country_only.country.keyword'],
         query: {
           bool: {
             filter: [

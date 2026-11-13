@@ -1,6 +1,11 @@
 'use strict';
 
 const { normalizeParams } = require('../helpers/paramParser');
+const { docvalueSource } = require('../../common/helpers/docvalueSource');
+
+// Doc-value reads for the 10k-doc LCS queries (no stored-document loads).
+// `dislikes` is not mapped (no doc values, never present in the data), so it stays 0 as before.
+const YT_LCS_DOCVALUES = ['ad_id', 'last_seen', 'reactions.likes', 'comments', 'views'];
 
 // ─── 1. getLikeCommentShareDetails ────────────────────────
 
@@ -213,6 +218,8 @@ function getYearRange(year) {
   return {
     gte: localDateToUnix(y, 1, 1, 0, 0, 0),
     lte: localDateToUnix(y, 12, 31, 23, 59, 59),
+    // last_seen holds epoch seconds; ES 9 reads plain numbers as millis without this.
+    format: 'epoch_second',
   };
 }
 
@@ -222,6 +229,8 @@ function getCustomDateRange(from, to) {
   return {
     gte: localDateToUnix(fy, fm, fd, 0, 0, 0),
     lte: localDateToUnix(ty, tm, td, 23, 59, 59),
+    // last_seen holds epoch seconds; ES 9 reads plain numbers as millis without this.
+    format: 'epoch_second',
   };
 }
 
@@ -265,7 +274,8 @@ function aggregateLCSData(hits) {
 
   const monthlyData = {};
   for (const hit of hits) {
-    const src = hit._source || {};
+    // Doc values return epoch-second dates as strings; parseESDate needs the number.
+    const src = docvalueSource(hit, { numeric: ['last_seen'] });
     const adId = src['ad_id'];
     const rawPostDate = src['last_seen'];
     if (!adId || !rawPostDate) continue;
@@ -423,9 +433,12 @@ async function getAdvertiserLCSData(req, db, logger) {
 
   const lcsQuery = {
     index,
+    filter_path: 'hits.hits.fields',
     body: {
       size: 10000,
-      _source: ['ad_id', 'last_seen', 'reactions.likes', 'dislikes', 'comments', 'views'],
+      track_total_hits: false,
+      _source: false,
+      docvalue_fields: YT_LCS_DOCVALUES,
       query: {
         bool: {
           filter: [
@@ -608,9 +621,12 @@ async function getAdvertiserInsightsByDateRange(req, db, logger) {
     if (targetType === 'lcs') {
       const esQuery = {
         index,
+        filter_path: 'hits.hits.fields',
         body: {
           size: 10000,
-          _source: ['ad_id', 'last_seen', 'reactions.likes', 'dislikes', 'comments', 'views'],
+          track_total_hits: false,
+          _source: false,
+          docvalue_fields: YT_LCS_DOCVALUES,
           query: {
             bool: {
               filter: [

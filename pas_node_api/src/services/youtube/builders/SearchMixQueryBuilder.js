@@ -338,7 +338,7 @@ class SearchMixQueryBuilder {
     const needle = this._params.needle;
     if (!needle) return null;
     if (this._ipBasedCountry && this._from < 10000 && (!this._params.country || !this._params.country.length)) return null;
-    return asFilter({ range: { last_seen: { lt: needle } } });
+    return asFilter({ range: { last_seen: { lt: needle, format: 'epoch_second' } } });
   }
 
   _getAdCategoryEnv() {
