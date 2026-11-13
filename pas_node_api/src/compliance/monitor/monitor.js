@@ -6,7 +6,7 @@
  *   - copyright_takedown_runs / copyright_takedown_actions   (B3: the takedown runs and, per run, every delete step), and
  *   - copyright_image_hash_jobs / copyright_image_hash_results (B2: the hash jobs and what they did with each image)
  *   - copyright_audit_runs / copyright_audit_findings (B6: each audit run and what it found)
- *   - the copyright_status column of each network's ad table (the verification queue: ads waiting to be checked, failed ads waiting for cleanup)
+ *   - the copyright_status column of each network's ad table and copyright_verification_diagnostics (pending ads and their last verification stage)
  * in each network's own database. A network whose tables do not exist yet (B3 not deployed) is reported as { available: false } and the others
  * are still shown: a missing table is never shown as "0 deleted".
  *
@@ -130,6 +130,38 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       if (missingTable(err) || err?.code === 'ER_BAD_FIELD_ERROR' || err?.errno === 1054) return { available: false, reason: 'no_column' };
       log.warn?.('monitor: verification counts failed', { network, error: err.message });
       return { available: false, reason: 'error' };
+    }
+  }
+
+  /** Current status-0 ads with the last persisted verification stage and retry detail. */
+  async function verificationQueue({ network, afterId = '0', limit } = {}) {
+    const slug = slugOf(network);
+    if (!slug || !known(slug) || !adTables[slug]) return bad('invalid_network', 'give a supported network');
+    const sql = getSql(slug);
+    if (!sql) return { ok: true, available: false, reason: 'no_database', items: [], next: null };
+    if (!/^\d+$/.test(String(afterId))) return bad('invalid_cursor', 'afterId must be a row id');
+    const n = pageSize(limit, 50, 200);
+    const table = adTables[slug];
+    if (!/^[a-z][a-z0-9_]{0,63}$/.test(table)) return bad('invalid_network', 'the ad table name is not supported');
+    try {
+      const rows = await sql.query(`SELECT a.id AS internal_ad_id, a.ad_id AS platform_ad_id,
+          d.stage, d.detail, d.attempts, d.first_checked_at, d.last_checked_at
+        FROM \`${table}\` a
+        LEFT JOIN copyright_verification_diagnostics d
+          ON d.network = ? AND d.internal_ad_id = CAST(a.id AS CHAR)
+        WHERE a.copyright_status = 0 AND a.id > ?
+        ORDER BY a.id LIMIT ${n}`, [slug, String(afterId)]);
+      const items = rows.map((r) => ({
+        internalAdId: String(r.internal_ad_id), platformAdId: r.platform_ad_id == null ? null : String(r.platform_ad_id),
+        stage: r.stage || 'not_checked', detail: r.detail || 'No verification attempt is recorded; check that the verification cron is enabled and running.',
+        attempts: num(r.attempts), firstCheckedAt: iso(r.first_checked_at), lastCheckedAt: iso(r.last_checked_at),
+      }));
+      return { ok: true, available: true, items, next: rows.length === n ? items[items.length - 1].internalAdId : null };
+    } catch (err) {
+      if (missingTable(err)) return { ok: true, available: false, reason: 'diagnostics_not_migrated', items: [], next: null };
+      if (err?.code === 'ER_BAD_FIELD_ERROR' || err?.errno === 1054) return { ok: true, available: false, reason: 'no_column', items: [], next: null };
+      log.warn?.('monitor: verification details failed', { network: slug, error: err.message });
+      return { ok: true, available: false, reason: 'error', items: [], next: null };
     }
   }
 
@@ -452,7 +484,7 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
     }
   }
 
-  return { overview, runs, runLogs, failures, hashJobs, hashJobResults, blocklist, attempts, audits, auditFindings };
+  return { overview, verificationQueue, runs, runLogs, failures, hashJobs, hashJobResults, blocklist, attempts, audits, auditFindings };
 }
 
 module.exports = { createMonitorService, groupOf, STATUS_GROUPS };

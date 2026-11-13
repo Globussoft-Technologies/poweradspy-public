@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Creates + validates the 12 copyright-compliance tables in every distinct
+ * Creates + validates the 13 copyright-compliance tables in every distinct
  * physical SQL database (B1 blocklist, B2 image hashes + claims, B3 takedown,
  * B6 audit).
  * It ONLY creates and validates tables — takedown deletion and auditing are
@@ -10,7 +10,7 @@
  *   B1  copyright_blocklist, copyright_blocked_attempts
  *   B2  copyright_image_hashes, copyright_review_queue, copyright_image_hash_jobs, copyright_image_hash_results,
  *       copyright_claims, copyright_claim_files  (claims are used only in the home database, compliance.claims.homeNetwork)
- *   B3  copyright_takedown_runs, copyright_takedown_actions        (requires B1 table)
+ *   B3  copyright_takedown_runs, copyright_takedown_actions, copyright_verification_diagnostics (requires B1 table)
  *   B6  copyright_audit_runs, copyright_audit_findings             (requires B1 table)
  *   (copyright_takedown_blocklist_entries, copyright_complaints, copyright_complaint_items and
  *    copyright_complaint_blocklist_entries were removed: nothing reads or writes them. Claims use copyright_claims.)
@@ -391,6 +391,20 @@ const TABLES = [
       ix('idx_takedown_actions_target', 'network', 'target_id'),
       ix('idx_takedown_actions_status', 'status'),
       ix('idx_takedown_actions_retry', 'status', 'next_retry_at'),
+    ],
+  },
+  {
+    owner: 'B3',
+    name: 'copyright_verification_diagnostics',
+    // Current status-0 ads only: the verification job records its last stage for the admin monitor.
+    columns: [
+      network(), adId('internal_ad_id'), adId('platform_ad_id', true),
+      code('stage', 48), str('detail', 512), c('attempts', 'smallint unsigned'),
+      dt('first_checked_at'), dt('last_checked_at'),
+    ],
+    indexes: [
+      pk('network', 'internal_ad_id'),
+      ix('idx_verify_diagnostics_stage', 'network', 'stage', 'last_checked_at'),
     ],
   },
 

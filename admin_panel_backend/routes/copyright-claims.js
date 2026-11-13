@@ -107,6 +107,7 @@ const checkMonitor = (req, res, next) => {
   return next();
 };
 router.get('/monitor/overview', checkMonitor, proxy('GET', '/overview', passOn()));
+router.get('/monitor/verification', checkMonitor, proxy('GET', '/verification', passOn('network', 'afterId', 'limit')));
 router.get('/monitor/runs', checkMonitor, proxy('GET', '/runs', passOn('network', 'complaintId', 'status', 'mode', 'cursor', 'limit')));
 router.get('/monitor/runs/:runId/logs', checkMonitor, proxy('GET', (req) => `/runs/${req.params.runId}/logs`, passOn('network', 'status', 'system', 'afterId', 'limit')));
 router.get('/monitor/failures', checkMonitor, proxy('GET', '/failures', passOn('network', 'beforeId', 'limit')));

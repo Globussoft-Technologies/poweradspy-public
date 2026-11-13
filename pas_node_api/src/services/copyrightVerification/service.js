@@ -35,6 +35,7 @@ const running = new Set();
 const cursors = new Map();   // network -> last verified id (walks the pending index, wraps at the end)
 const attempts = new Map();  // `${network}:${id}` -> failed hash / NAS attempts (in memory; reset on restart)
 const held = new Set();      // near-match ads kept pending for manual review (not re-hashed until restart)
+const diagnosticWarnings = new Set(); // avoid repeating a missing-table warning on every retry
 let hashClient = null;
 
 const settings = () => config.compliance?.copyrightVerification || {};
@@ -146,13 +147,51 @@ async function hashServiceReady() {
 
 async function hashImages(urls, s) {
   const out = new Map();
+  const failed = new Set();
   await mapWithConcurrency(urls, s.hashConcurrency, async (url) => {
     try {
       const r = await client().hashUrl(url);
       if (r?.ok) out.set(url, { sha256: r.sha256, phash: r.sscdHash });
-    } catch { /* not hashed -> ad stays pending */ }
+      else failed.add(url);
+    } catch { failed.add(url); }
   });
-  return out;
+  return { out, failed };
+}
+
+// Best-effort diagnostics keep the copyright check working if an older deployment has not added the monitor table yet.
+async function saveVerificationDiagnostics(sql, network, rows) {
+  if (!rows.length) return;
+  const params = [];
+  const tuples = rows.map((row) => {
+    params.push(network, String(row.id), row.adId == null ? null : String(row.adId), row.stage, row.detail || null, row.attempts || 0);
+    return '(?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())';
+  });
+  try {
+    await sql.query(`INSERT INTO copyright_verification_diagnostics
+      (network, internal_ad_id, platform_ad_id, stage, detail, attempts, first_checked_at, last_checked_at)
+      VALUES ${tuples.join(', ')}
+      ON DUPLICATE KEY UPDATE platform_ad_id = VALUES(platform_ad_id), stage = VALUES(stage), detail = VALUES(detail),
+        attempts = VALUES(attempts), last_checked_at = VALUES(last_checked_at)`, params);
+    diagnosticWarnings.delete(network);
+  } catch (error) {
+    if (!diagnosticWarnings.has(network)) {
+      diagnosticWarnings.add(network);
+      log.warn('copyright verification diagnostics could not be saved', { network, error: error.message });
+    }
+  }
+}
+
+async function clearVerificationDiagnostics(sql, network, ids) {
+  if (!ids.length) return;
+  try {
+    await sql.query(`DELETE FROM copyright_verification_diagnostics WHERE network = ? AND internal_ad_id IN (${ids.map(() => '?').join(',')})`, [network, ...ids.map(String)]);
+    diagnosticWarnings.delete(network);
+  } catch (error) {
+    if (!diagnosticWarnings.has(network)) {
+      diagnosticWarnings.add(network);
+      log.warn('copyright verification diagnostics could not be cleared', { network, error: error.message });
+    }
+  }
 }
 
 /** internal ad id -> blocklist id, for active 'internal' ad_id entries among `ids`. */
@@ -246,6 +285,7 @@ async function recheckExisting(db, network, s) {
   const failed = await setSqlStatus(db.sql, network, list, FAILED, LIVE);
   // Hide them in search now; the cleanup cron deletes them shortly. An ES error is only logged (cleanup still deletes).
   if (failed) {
+    await clearVerificationDiagnostics(db.sql, network, list);
     try { await setEsStatus(db.elastic, network, list, FAILED); }
     catch (error) { log.warn('copyright recheck: ES hide failed', { network, error: error.message }); }
     log.info('copyright recheck: existing ads failed by new blocklist entries', { network, failed, upToEntry: cur.entryId });
@@ -261,9 +301,22 @@ async function recheckExisting(db, network, s) {
 async function verifyNetwork(network) {
   const s = settings();
   const db = databaseManager.getConnections(network);
-  if (!db?.sql || !db?.elastic) return { skipped: 'SQL or ES not connected' };
+  if (!db?.sql) return { skipped: 'SQL not connected' };
+  const recordPendingStage = async (stage, detail) => {
+    const page = await loadAds(db.sql, network, PENDING, cursors.get(network) || 0, s.batchSize);
+    cursors.set(network, page.length ? Number(page[page.length - 1].id) : 0);
+    await saveVerificationDiagnostics(db.sql, network, page.map((ad) => ({ ...ad, stage, detail, attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
+    return page.length;
+  };
+  if (!db.elastic) {
+    const scanned = await recordPendingStage('search_index_unavailable', 'The search index is not connected, so verification cannot complete.');
+    return { skipped: 'ES not connected', scanned };
+  }
   const banned = blocklist.getImageHashes(network);
-  if (!banned.available) return { skipped: 'blocklist not loaded' };
+  if (!banned.available) {
+    const scanned = await recordPendingStage('blocklist_unavailable', 'The blocklist has not loaded, so this ad cannot be checked yet.');
+    return { skipped: 'blocklist not loaded', scanned };
+  }
 
   let rechecked = null;
   if (s.recheckExisting) {
@@ -274,14 +327,22 @@ async function verifyNetwork(network) {
   const ads = await loadAds(db.sql, network, PENDING, cursors.get(network) || 0, s.batchSize);
   if (!ads.length) { cursors.set(network, 0); return { scanned: 0, ...(rechecked ? { rechecked } : {}) }; }
   cursors.set(network, Number(ads[ads.length - 1].id));
+  await saveVerificationDiagnostics(db.sql, network, ads.filter((ad) => !held.has(`${network}:${ad.id}`)).map((ad) => ({
+    ...ad, stage: 'checking_metadata', detail: 'Checking advertiser, platform ad id, URL and domain.',
+    attempts: attempts.get(`${network}:${ad.id}`) || 0,
+  })));
 
   // B1 matches only platform ad ids; ads blocked by our internal row id
   // (identifier_namespace = 'internal') are found here, for this page only.
   const internal = await internalBlocks(db.sql, network, ads.map((ad) => ad.id));
   const failed = [];  // { ad, blocklistId, matchType, distance }
   const toHash = [];
+  const heldForReview = [];
   for (const ad of ads) {
-    if (held.has(`${network}:${ad.id}`)) continue;
+    if (held.has(`${network}:${ad.id}`)) {
+      heldForReview.push(ad);
+      continue;
+    }
     if (internal.has(ad.id)) { failed.push({ ad, blocklistId: internal.get(ad.id), matchType: 'ad_id' }); continue; }
     // Metadata (platform ad id / advertiser / url / domain) against the B1 in-memory list.
     const hit = blocklist.match({ ad_id: ad.adId, post_owner: ad.ad.post_owner, destination_url: ad.ad.destination_url }, network);
@@ -291,14 +352,20 @@ async function verifyNetwork(network) {
 
   // Images: hash only what can be compared, and only when there is something to compare against.
   const approved = [];
+  const imagePending = [];
+  const needsReview = [];
   const imageUrls = (ad) => [...ad.paths].filter((p) => IMAGE_EXT.test(p)).map(nas.resolveMediaUrl).filter((u) => /^https?:\/\//i.test(u));
   if (!banned.hashes.length) approved.push(...toHash);
   else if (!await hashServiceReady()) {
     // Without the hash service nothing can be proved clear; metadata failures are still recorded.
     log.warn('copyright verification: image hash service not ready, images retried later', { network });
+    await saveVerificationDiagnostics(db.sql, network, toHash.map((ad) => ({ ...ad, stage: 'hash_service_unavailable',
+      detail: 'The image hash service is unavailable or its hash version does not match.', attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
   } else {
+    await saveVerificationDiagnostics(db.sql, network, toHash.map((ad) => ({ ...ad, stage: 'checking_images', detail: 'Fetching and comparing ad images against blocked image hashes.',
+      attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
     const urls = [...new Set(toHash.flatMap(imageUrls))];
-    const hashed = await hashImages(urls, s);
+    const { out: hashed, failed: failedUrls } = await hashImages(urls, s);
     const list = [...hashed.entries()];
     const decisions = await matchBatch(list.map(([, h]) => h), banned.hashes,
       { hashVersion: config.compliance.imageMatch.hashVersion, perceptual: config.compliance.imageMatch.perceptual }, s.workers);
@@ -310,21 +377,58 @@ async function verifyNetwork(network) {
       if (at >= 0) { const r = results[at]; failed.push({ ad, blocklistId: r.blocklistId, matchType: r.kind, distance: r.distance, imageUrl: urlsOfAd[at] }); continue; }
       const key = `${network}:${ad.id}`;
       // Close to a blocked image but not close enough to reject: keep it hidden for a person to decide.
-      if (results.some((r) => r?.action === 'review')) { held.add(key); log.warn('copyright review needed', { network, id: ad.id }); continue; }
+      if (results.some((r) => r?.action === 'review')) {
+        held.add(key);
+        needsReview.push(ad);
+        log.warn('copyright review needed', { network, id: ad.id });
+        continue;
+      }
       if (results.every(Boolean)) { attempts.delete(key); approved.push(ad); continue; }
       // Image not reachable yet (e.g. NAS upload still queued): retry on a later pass.
       const n = (attempts.get(key) || 0) + 1;
       attempts.set(key, n);
+      const incomplete = urlsOfAd.filter((url, i) => failedUrls.has(url) || !results[i]).length;
+      imagePending.push({ ...ad, attempts: n, detail: `${incomplete} of ${urlsOfAd.length} image(s) could not be fully checked; the ad stays hidden for retry.` });
       if (n >= s.maxHashAttempts && s.afterMaxAttempts === 'approve') { attempts.delete(key); approved.push(ad); }
     }
   }
 
-  // Approve: ES first, then SQL. If ES fails the row stays pending and is retried.
+  await saveVerificationDiagnostics(db.sql, network, heldForReview.concat(needsReview).map((ad) => ({ ...ad,
+    stage: 'near_match_review', detail: 'An image is similar to a blocked image; this ad is held for manual review.', attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
+  const approvedSet = new Set(approved.map((ad) => ad.id));
+  await saveVerificationDiagnostics(db.sql, network, imagePending.filter((ad) => !approvedSet.has(ad.id)).map((ad) => ({
+    ...ad, stage: 'images_unavailable', attempts: ad.attempts,
+  })));
+  await saveVerificationDiagnostics(db.sql, network, failed.map((f) => ({ ...f.ad, stage: 'blocklist_match',
+    detail: `Matched a blocked ${f.matchType || 'item'} entry.`, attempts: attempts.get(`${network}:${f.ad.id}`) || 0 })));
+
+  // Approve: ES first, then SQL. Persist the failing stage so an incomplete update is visible in Monitoring.
   const approvedIds = approved.map((ad) => ad.id);
-  await setEsStatus(db.elastic, network, approvedIds, APPROVED);
-  const nApproved = await setSqlStatus(db.sql, network, approvedIds, APPROVED);
+  await saveVerificationDiagnostics(db.sql, network, approved.map((ad) => ({ ...ad, stage: 'updating_search_index',
+    detail: 'The ad passed checks; updating its Elasticsearch visibility.', attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
+  try { await setEsStatus(db.elastic, network, approvedIds, APPROVED); }
+  catch (error) {
+    await saveVerificationDiagnostics(db.sql, network, approved.map((ad) => ({ ...ad, stage: 'search_index_update_failed',
+      detail: 'The ad passed checks, but its search index status could not be updated. See service logs.', attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
+    throw error;
+  }
+  let nApproved;
+  try { nApproved = await setSqlStatus(db.sql, network, approvedIds, APPROVED); }
+  catch (error) {
+    await saveVerificationDiagnostics(db.sql, network, approved.map((ad) => ({ ...ad, stage: 'database_status_update_failed',
+      detail: 'The ad passed checks, but its SQL status could not be updated. See service logs.', attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
+    throw error;
+  }
   // Fail: SQL only. ES already hides pending docs; the cleanup cron deletes them.
-  const nFailed = await setSqlStatus(db.sql, network, failed.map((f) => f.ad.id), FAILED);
+  let nFailed;
+  try { nFailed = await setSqlStatus(db.sql, network, failed.map((f) => f.ad.id), FAILED); }
+  catch (error) {
+    await saveVerificationDiagnostics(db.sql, network, failed.map((f) => ({ ...f.ad, stage: 'database_status_update_failed',
+      detail: 'The ad matched a blocklist entry, but its SQL status could not be updated. See service logs.', attempts: attempts.get(`${network}:${f.ad.id}`) || 0 })));
+    throw error;
+  }
+  await clearVerificationDiagnostics(db.sql, network, approvedIds.concat(failed.map((f) => f.ad.id)));
+  for (const id of approvedIds.concat(failed.map((f) => f.ad.id))) attempts.delete(`${network}:${id}`);
   for (const f of failed) {
     // Audit of the match, through B1's batched attempts writer (copyright_blocked_attempts).
     blocklist.recordAttempt({ network, platformAdId: f.ad.adId, advertiser: f.ad.ad.post_owner, blocklistId: f.blocklistId,

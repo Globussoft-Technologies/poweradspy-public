@@ -188,6 +188,12 @@ One row per network. Columns: **Runs, Deleted, Waiting, Failed, Dry runs, Last r
 
 > The tabs are **below** this table. Scroll down to reach them.
 
+#### Ad verification queue
+
+The **Ad verification** tab lists ads on the selected network that are still at `copyright_status = 0`. Each row shows our database row id, the platform ad id, the last recorded stage, image attempts, detail, first check time and last check time. Image attempts reset when the verification service restarts. An ad with no recorded stage says **Not checked yet**; this means the verification job has not recorded a pass for it. The stage timestamp helps distinguish a live retry from a stage that has stopped progressing.
+
+Stages include checking ad details or images, waiting for the image hash service or an image, near-match review, and failures while updating Elasticsearch or SQL. Ads leave this list once approved or failed. If the page says stage details are not installed, rerun the copyright schema update for that network.
+
 ### 7.3 Takedown runs
 
 A *run* is one takedown of a group of ads: either the ads of a complaint, or one pass of the cleanup job (the ads that failed the copyright check).
@@ -422,7 +428,7 @@ Reviewers do not need this section.
   - The check of existing ads is controlled by `recheckExisting` (on by default), `recheckEntries`, `recheckAds` and `recheckLookbackHours`.
   - Other settings: `networks` (empty means all supported; TikTok is never included), `batchSize`, `cleanupBatchSize`, `maxHashAttempts`, `afterMaxAttempts`, `maxNasAttempts`, `blockAdvertiser`, `audit`.
   - `node src/services/copyrightVerification/repairEs.js` (dry run unless `--apply`; `--networks=` to limit) is a one-time fix for search documents left at status 0 while the database says 1.
-- Monitoring reads the blocklist tables, the image hash tables, the takedown and audit tables, and the `copyright_status` column of each network. It never writes to them.
+- Monitoring reads the blocklist tables, the image hash tables, the takedown and audit tables, `copyright_status`, and verification diagnostics. It never writes to them.
 - Nothing is deleted by this page. Evidence files are never given out by a link; they are streamed through the login.
 
 ## 12. Limits to know

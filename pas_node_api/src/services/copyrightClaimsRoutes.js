@@ -20,6 +20,7 @@
  *     GET  /admin/claims/:id/files/:fileId   the file, as a download, through this server (no URL of the NAS is ever given out)
  *
  *     GET  /admin/monitor/overview               takedown runs / deleted / waiting / failed per network, and the hash jobs by status
+ *     GET  /admin/monitor/verification?network=&afterId=&limit= current pending ads and their last verification stage
  *     GET  /admin/monitor/runs?network=|complaintId=&status=&mode=&cursor=&limit=   takedown runs, newest first
  *     GET  /admin/monitor/runs/:runId/logs?network=&status=&system=&afterId=&limit=  one run and the log of every step
  *     GET  /admin/monitor/failures?network=&beforeId=&limit=   the newest failed steps of a network
@@ -250,6 +251,7 @@ function createClaimsRouter({ settings = config.compliance?.claims || {}, reques
   });
   const q = (req) => req.query;
   router.get('/admin/monitor/overview', adminLimiter, adminAuth, monitorRoute('overview', () => []));
+  router.get('/admin/monitor/verification', adminLimiter, adminAuth, monitorRoute('verificationQueue', (req) => [{ network: q(req).network, afterId: q(req).afterId, limit: q(req).limit }]));
   router.get('/admin/monitor/runs', adminLimiter, adminAuth, monitorRoute('runs', (req) => [{ network: q(req).network, complaintId: q(req).complaintId, status: q(req).status, mode: q(req).mode, cursor: q(req).cursor, limit: q(req).limit }]));
   router.get('/admin/monitor/runs/:runId/logs', adminLimiter, adminAuth, monitorRoute('runLogs', (req) => [{ network: q(req).network, runId: req.params.runId, status: q(req).status, system: q(req).system, afterId: q(req).afterId, limit: q(req).limit }]));
   router.get('/admin/monitor/failures', adminLimiter, adminAuth, monitorRoute('failures', (req) => [{ network: q(req).network, beforeId: q(req).beforeId, limit: q(req).limit }]));

@@ -7,8 +7,8 @@ import { FiRefreshCw, FiX, FiSearch } from "react-icons/fi";
  * Takedown Monitor: how many ads/images were deleted, how many are waiting, how many failed, and the log of every step. READ ONLY.
  *
  * Talks only to admin_panel_backend (/admin-panel/copyright-claims/monitor/...), which checks the admin login and the reviewers' allowlist.
- * Shows B3's takedown runs (and, when one is opened, the log of each delete step per system: SQL, Mongo, Elastic, storage ...) and B2's image
- * hash jobs (and what each job did with each image). A network whose tables do not exist yet is shown as "not available", never as zero.
+ * Shows current verification stages, B3's takedown runs (and each delete step), and B2's image hash jobs. A network whose tables do not exist
+ * yet is shown as "not available", never as zero.
  * A dry run is listed apart: it deleted nothing.
  */
 
@@ -27,7 +27,15 @@ const HASH_META = {
   pending: "bg-amber-100 text-amber-700", limit_reached: "bg-orange-100 text-orange-700", unresolved: "bg-orange-100 text-orange-700",
 };
 const OUTCOME_META = { hashed: "bg-green-100 text-green-700", duplicate: "bg-gray-100 text-gray-600", skipped: "bg-amber-100 text-amber-700", failed: "bg-rose-100 text-rose-700" };
-const TABS = [{ key: "runs", label: "Takedown runs" }, { key: "failures", label: "Failed steps" }, { key: "hash", label: "Hash jobs" }, { key: "blocklist", label: "Blocked list" }, { key: "attempts", label: "Rejected ads" }, { key: "audit", label: "Audit" }, { key: "claims", label: "Claim requests" }];
+const TABS = [{ key: "verification", label: "Ad verification" }, { key: "runs", label: "Takedown runs" }, { key: "failures", label: "Failed steps" }, { key: "hash", label: "Hash jobs" }, { key: "blocklist", label: "Blocked list" }, { key: "attempts", label: "Rejected ads" }, { key: "audit", label: "Audit" }, { key: "claims", label: "Claim requests" }];
+const VERIFICATION_STAGES = {
+  not_checked: "Not checked yet", checking_metadata: "Checking ad details", checking_images: "Checking images",
+  search_index_unavailable: "Waiting for search index", blocklist_unavailable: "Waiting for blocklist",
+  hash_service_unavailable: "Waiting for image hash service", images_unavailable: "Waiting for images",
+  near_match_review: "Near match needs review", blocklist_match: "Matched blocklist",
+  updating_search_index: "Updating search index", search_index_update_failed: "Search index update failed",
+  database_status_update_failed: "Saving verification status failed",
+};
 const AUDIT_STATUS_META = { open: "bg-amber-100 text-amber-700", in_progress: "bg-blue-100 text-blue-700", resolved: "bg-green-100 text-green-700", false_positive: "bg-gray-200 text-gray-700", completed: "bg-green-100 text-green-700", failed: "bg-rose-100 text-rose-700" };
 const AUDIT_FINDING_STATUSES = ["open", "in_progress", "resolved", "false_positive"];
 const BLOCK_TYPES = [{ key: "", label: "All types" }, { key: "advertiser", label: "Advertiser" }, { key: "ad_id", label: "Ad id" }, { key: "url", label: "URL" }, { key: "domain", label: "Domain" }, { key: "image_url", label: "Image URL" }, { key: "image_hash", label: "Image (hash)" }, { key: "page", label: "Page" }];
@@ -43,6 +51,15 @@ const HASH_FILTERS = ["", "pending", "running", "failed", "limit_reached", "unre
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—");
+const ageOf = (d) => {
+  if (!d) return "—";
+  const minutes = Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 60000));
+  if (!Number.isFinite(minutes)) return "—";
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 1440) return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`;
+  return `${Math.floor(minutes / 1440)}d ago`;
+};
 
 function Badge({ cls, children }) {
   return <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${cls || "bg-gray-100 text-gray-600"}`}>{children}</span>;
@@ -86,6 +103,7 @@ function Stat({ label, value, tone = "text-[#1f296a]", hint }) {
 export default function TakedownMonitor() {
   const [overview, setOverview] = useState(null);
   const [overviewError, setOverviewError] = useState("");
+  const [verification, setVerification] = useState({ items: [], next: null, available: true, reason: "", error: "", loading: false });
   const [forbidden, setForbidden] = useState(false);
   const [network, setNetwork] = useState("");
   const [tab, setTab] = useState("runs");
@@ -128,6 +146,19 @@ export default function TakedownMonitor() {
       setNetwork((current) => current || json.data.networks.find((n) => n.takedown.available || n.hashJobs.available)?.network || json.data.networks[0]?.network || "");
     } catch { setOverviewError("The numbers could not be loaded."); }
   }, []);
+
+  const loadVerification = useCallback(async (reset = true, cursor = null) => {
+    if (!network) return;
+    setVerification((v) => ({ ...v, loading: true, error: "" }));
+    try {
+      const { ok, json } = await api("/verification", { network, afterId: reset ? undefined : cursor, limit: 50 });
+      if (!ok) { setVerification((v) => ({ ...v, loading: false, error: json?.message || "The verification details could not be loaded." })); return; }
+      setVerification((v) => ({
+        items: reset ? json.data.items : [...v.items, ...json.data.items], next: json.data.next,
+        available: json.data.available, reason: json.data.reason || "", error: "", loading: false,
+      }));
+    } catch { setVerification((v) => ({ ...v, loading: false, error: "The verification details could not be loaded." })); }
+  }, [network]);
 
   const loadRuns = useCallback(async (reset = true, cursor = null) => {
     if (!network && !complaintQuery) return;
@@ -217,6 +248,12 @@ export default function TakedownMonitor() {
   }, [stepStatus, stepSystem, outcome, findingStatus]);
 
   useEffect(() => { loadOverview(); const t = setInterval(loadOverview, 60000); return () => clearInterval(t); }, [loadOverview]);
+  useEffect(() => {
+    if (tab !== "verification") return undefined;
+    loadVerification(true);
+    const t = setInterval(() => loadVerification(true), 60000);
+    return () => clearInterval(t);
+  }, [tab, loadVerification]);
   useEffect(() => { if (tab === "runs") loadRuns(true); }, [tab, loadRuns]);
   useEffect(() => { if (tab === "failures") loadFailures(true); }, [tab, loadFailures]);
   useEffect(() => { if (tab === "hash") loadHash(true); }, [tab, loadHash]);
@@ -226,7 +263,7 @@ export default function TakedownMonitor() {
   useEffect(() => { if (tab === "claims") loadClaims(true); }, [tab, loadClaims]);
   useEffect(() => { if (open) loadLog(open, true); }, [open, loadLog]);
 
-  const refresh = () => { loadOverview(); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "blocklist") loadBlocklist(true); if (tab === "attempts") loadAttempts(true); if (tab === "audit") loadAudits(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
+  const refresh = () => { loadOverview(); if (tab === "verification") loadVerification(true); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "blocklist") loadBlocklist(true); if (tab === "attempts") loadAttempts(true); if (tab === "audit") loadAudits(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
   const submitBlockSearch = (e) => { e.preventDefault(); setBlockSearch(blockText.trim()); };
   const openRun = (r) => { setStepStatus(""); setStepSystem(""); setOpen({ kind: "run", network: r.network, id: r.runId }); };
   const openJob = (j) => { setOutcome(""); setOpen({ kind: "job", network: j.network, id: j.id }); };
@@ -331,6 +368,47 @@ export default function TakedownMonitor() {
         ))}
         <span className="ml-auto text-sm text-gray-500 pb-2">Network: <b>{network || "—"}</b></span>
       </div>
+
+      {tab === "verification" && (
+        <section className="space-y-3">
+          <p className="text-sm text-gray-500">Ads still at copyright status 0 for {network || "this network"}. The stage and detail show the verifier’s last recorded progress.</p>
+          {verification.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{verification.error}</div>}
+          {!verification.available && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-3 text-sm">
+              {verification.reason === "diagnostics_not_migrated"
+                ? "Per-ad stage details are not installed on this network yet. Apply the copyright schema update, then refresh."
+                : verification.reason === "no_column"
+                  ? "The copyright status column is not installed on this network."
+                  : verification.reason === "no_database"
+                    ? "This network’s database is not available."
+                    : "Verification details are not available for this network."}
+            </div>
+          )}
+          {verification.available && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Internal row id</th><th className="p-3">Platform ad id</th><th className="p-3">Current stage</th><th className="p-3">Image attempts</th><th className="p-3">Detail</th><th className="p-3">First checked</th><th className="p-3">Last checked</th></tr></thead>
+                <tbody>
+                  {verification.items.map((item) => (
+                    <tr key={`${network}-${item.internalAdId}`} className="border-t border-gray-100">
+                      <td className="p-3 font-mono text-xs">{item.internalAdId}</td>
+                      <td className="p-3 font-mono text-xs">{item.platformAdId || "—"}</td>
+                      <td className="p-3"><Badge cls={item.stage === "near_match_review" || item.stage === "blocklist_unavailable" || item.stage === "search_index_unavailable" || item.stage === "hash_service_unavailable" || item.stage === "images_unavailable" || item.stage.endsWith("failed") ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-700"}>{VERIFICATION_STAGES[item.stage] || item.stage}</Badge></td>
+                      <td className="p-3">{item.attempts}</td>
+                      <td className="p-3 min-w-64">{item.detail}</td>
+                      <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(item.firstCheckedAt)}</td>
+                      <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(item.lastCheckedAt)}<div className="text-xs text-gray-400">{ageOf(item.lastCheckedAt)}</div></td>
+                    </tr>
+                  ))}
+                  {!verification.items.length && !verification.loading && <tr><td className="p-4 text-gray-500" colSpan={7}>No ads are waiting for check on this network.</td></tr>}
+                  {verification.loading && !verification.items.length && <tr><td className="p-4 text-gray-500" colSpan={7}>Loading verification details…</td></tr>}
+                </tbody>
+              </table>
+              {verification.next && <div className="p-3 border-t border-gray-100"><button onClick={() => loadVerification(false, verification.next)} disabled={verification.loading} className="text-sm text-[#1f296a] underline disabled:opacity-50">Load more</button></div>}
+            </div>
+          )}
+        </section>
+      )}
 
       {tab === "runs" && (
         <section className="space-y-3">

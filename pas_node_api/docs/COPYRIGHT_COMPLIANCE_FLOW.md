@@ -276,6 +276,7 @@ Cron `copyrightVerification`. For each network, one pass does two things.
 4. **Results:**
    - **Approved:** ES is set to 1 first, then SQL. If ES fails, SQL stays 0 and the ad is retried.
    - **Failed:** SQL is set to 2. ES already hides it. One row is written to `copyright_blocked_attempts` (source `verification`), with the image URL when an image matched.
+   - **Still pending:** the last verification stage and reason are saved in `copyright_verification_diagnostics` for the admin monitor.
 
 #### 6b. Recheck: a new block also catches existing ads
 
@@ -344,6 +345,7 @@ Expected = found means the run removed everything it meant to. The audit is our 
 | Where | Shows |
 | --- | --- |
 | Top boxes | Deleted, Waiting, Failed (summed from runs), Waiting for check (status 0), Waiting for cleanup (status 2), Takedown runs, Hash jobs |
+| Ad verification | Each current status-0 ad, its last stage, retry count, detail and check timestamps |
 | Network table | The same per network. "To check / to remove" shows status 0 / status 2 counts, or "not migrated". |
 | Takedown runs | Every run, its counts, and its step log |
 | Failed steps | Steps that failed, with the error and next retry |
@@ -403,7 +405,7 @@ Code: [src/compliance/monitor/monitor.js](../src/compliance/monitor/monitor.js),
 
 ## 6. The tables
 
-`scripts/apply-copyright-schema.js` creates **12 tables** in each network's database. It is safe to run again. The `copyright_status` column on the ad tables comes from `migrate.js`.
+`scripts/apply-copyright-schema.js` creates **13 tables** in each network's database. It is safe to run again. The `copyright_status` column on the ad tables comes from `migrate.js`.
 
 | Table | Part | Holds | Written by |
 | --- | --- | --- | --- |
@@ -417,6 +419,7 @@ Code: [src/compliance/monitor/monitor.js](../src/compliance/monitor/monitor.js),
 | `copyright_review_queue` | B2 | Near matches waiting for a person | Sweep |
 | `copyright_takedown_runs` | B3 | One row per takedown run, with counts and snapshot | Cleanup cron |
 | `copyright_takedown_actions` | B3 | One row per step of a run | Cleanup cron |
+| `copyright_verification_diagnostics` | B3 | Last stage and retry detail for ads still pending verification | Verify cron |
 | `copyright_audit_runs` | B6 | One row per audit (expected vs found) | Cleanup cron |
 | `copyright_audit_findings` | B6 | One row per ad checked | Cleanup cron |
 
