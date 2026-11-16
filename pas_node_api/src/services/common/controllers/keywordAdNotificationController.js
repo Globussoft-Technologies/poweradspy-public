@@ -838,8 +838,81 @@ async function markKeywordAdNotificationRead(req, res) {
   }
 }
 
+// ─── Custom keywords: "your keyword has been scraped" (bell + push) ──────────────────────────
+// Called by the custom keyword scraper POST (/custom-keywords/scraper/results) when a keyword is
+// reported as `done`, once per keyword with the users who uploaded it.
+//   Bell: one document per owner in the SAME collection the bell already reads, so it shows up in
+//         the list with no frontend change. Clicking it opens a Google keyword search, which shows
+//         the normal ads plus the user's own scraped ones.
+//   Push: one Firebase push per owner who has a token and the Profile "Keyword search results"
+//         switch on (the same switch and token the existing first-ad push uses).
+// Never throws: a failure here must never touch the scraper's request.
+async function notifyCustomKeywordScraped({ userIds, keyword, keywordNorm }) {
+  const out = { bell: 0, push: 0 };
+  try {
+    const cfg = config.customKeywords;
+    if (!cfg || !cfg.enabled || cfg.notifyEnabled === false) return out;
+    const owners = [...new Set([].concat(userIds || []))].filter((id) => id !== null && id !== undefined);
+    if (!owners.length || !keyword || !keywordNorm) return out;
+
+    const ks = config.keywordSearch;
+    const today = todayStr();
+    const now = new Date();
+
+    // Bell (only when the existing bell is on — otherwise it would never be shown anyway).
+    if (ks.enabled && ks.notify?.enabled) {
+      const notifyCol = getMongoCollection(ks.notify.collection);
+      if (notifyCol) {
+        await ensureNotifyIndexes(notifyCol);
+        for (const userId of owners) {
+          try {
+            // No email in the filter: if this user already has a bell row for this keyword today, reuse it.
+            await notifyCol.updateOne(
+              { userId, valueNorm: keywordNorm, type: 0, network: 'google', date: today },
+              {
+                $set: { value: keyword, source: 'custom_keyword', updatedAt: now },
+                $setOnInsert: { createdAt: now, notified: false },
+              },
+              { upsert: true }
+            );
+            out.bell += 1;
+          } catch (e) {
+            log.warn('custom keyword bell notification failed', { userId, keyword, error: e.message });
+          }
+        }
+      }
+    }
+
+    // Push.
+    for (const userId of owners) {
+      try {
+        const enabled = await profileRepo.isNotificationEnabled(userId, 'keyword_search_results').catch(() => true);
+        if (!enabled) continue;
+        const fcmToken = await lookupFcmToken(userId);
+        if (!fcmToken) continue;
+        await firebaseService.sendNotification(
+          fcmToken,
+          'Your keyword has been scraped',
+          `We found ads for your keyword "${keyword}". Tap to view.`,
+          '',
+          `/?keyword=${encodeURIComponent(keyword)}&platform=google`
+        );
+        out.push += 1;
+      } catch (e) {
+        log.warn('custom keyword push failed', { userId, keyword, error: e.message });
+      }
+    }
+    return out;
+  } catch (e) {
+    log.warn('custom keyword notification failed', { keyword, error: e.message });
+    return out;
+  }
+}
+
 module.exports = {
   runKeywordAdNotificationScan,
+  // called from the custom keyword scraper POST when a keyword is reported as done
+  notifyCustomKeywordScraped,
   runUserKeywordAdScan,
   getUserKeywordAdNotifications,
   markKeywordAdNotificationRead,

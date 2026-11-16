@@ -122,8 +122,7 @@ export const resolveActiveSortLabel = (sortTabs = [], sortBy) => {
 };
 
 // Custom Keyword dialog (Google only): download a sample, upload the filled sheet (click or drag and
-// drop, one row per file with progress and result), and see your keywords + status.
-const CK_STATUS = { pending: "Pending", in_progress: "Scraping", done: "Done", no_ads_found: "No ads", failed: "Failed" };
+// drop, one row per file with progress and result), and see your saved keywords.
 // Only .csv and .xlsx may be uploaded; anything else gets this message (same wording as the server's).
 const customKeywordFileError = (fileName) => {
   const ext = (String(fileName || "").match(/\.[^.\\/]+$/) || [""])[0].toLowerCase();
@@ -138,9 +137,65 @@ const formatFileSize = (bytes) => {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 };
 const UPLOAD_FAILED = "Upload failed. Please try again.";
+const PREVIEW_ROWS = 5; // rows shown before "Show all"
+const KEYWORDS_PER_PAGE = 100; // saved keywords fetched per request
+
+// What a keyword row says on the right. A saved keyword just says "Added to DB"; an upload also reports
+// duplicates and problems for each keyword in the sheet.
+const KEYWORD_RESULT = {
+  added: { label: "Added to DB", tone: "text-emerald-500" },
+  duplicate: { label: "Duplicate", tone: "text-amber-500" },
+  invalid: { label: "Invalid", tone: "text-red-500" },
+  not_added: { label: "Not added", tone: "text-amber-500" },
+};
+
+// A short list: the first few rows, and "Show all N" opens the rest in a scrolling list.
+// rows: [{ key, keyword, result?, reason? }]. With `onLoadMore`, more rows can be fetched while count > rows.
+const KeywordRows = ({ rows, total, label, onPick, onLoadMore, loadingMore }) => {
+  const [open, setOpen] = useState(false);
+  const count = total ?? rows.length;
+  const shown = open ? rows : rows.slice(0, PREVIEW_ROWS);
+  return (
+    <div>
+      <ul aria-label={label} className={`divide-y divide-theme-border/60 rounded-lg border border-theme-border text-[12px] ${open ? "max-h-56 overflow-y-auto" : ""}`}>
+        {shown.map((r) => {
+          const kind = KEYWORD_RESULT[r.result || "added"] || KEYWORD_RESULT.added;
+          return (
+            <li key={r.key} className="px-3 py-1.5" title={r.reason || undefined}>
+              <div className="flex items-center justify-between gap-3">
+                {onPick
+                  ? <button type="button" onClick={() => onPick(r.keyword)} className="min-w-0 truncate text-left text-theme-text hover:text-[#6b99ff]">{r.keyword}</button>
+                  : <span className="min-w-0 truncate text-theme-text">{r.keyword}</span>}
+                <span className={`flex shrink-0 items-center gap-1 text-[10px] font-medium ${kind.tone}`}>
+                  {(r.result || "added") === "added" && <Check size={11} />}{kind.label}
+                </span>
+              </div>
+              {r.reason && r.result && r.result !== "added" && <p className="mt-0.5 text-[10px] text-theme-text-muted">{r.reason}</p>}
+            </li>
+          );
+        })}
+        {open && onLoadMore && rows.length < count && (
+          <li>
+            <button type="button" onClick={onLoadMore} disabled={loadingMore} className="w-full px-3 py-1.5 text-center text-[11px] font-semibold text-[#6b99ff] disabled:opacity-50">
+              {loadingMore ? "Loading…" : `Load more (${count - rows.length} left)`}
+            </button>
+          </li>
+        )}
+      </ul>
+      {count > PREVIEW_ROWS && (
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="mt-1.5 flex items-center gap-1 text-[11px] font-semibold text-[#6b99ff]">
+          <ChevronRight size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />{open ? "Show less" : `Show all ${count}`}
+        </button>
+      )}
+    </div>
+  );
+};
 
 const CustomKeywordDialog = ({ onSearch, onClose }) => {
   const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0); // all saved keywords, even those not loaded yet
+  const [listPage, setListPage] = useState(1);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [note, setNote] = useState(null); // { text } for list / sample problems
   const [uploads, setUploads] = useState([]); // this session's files, newest first
   const [dragOver, setDragOver] = useState(false);
@@ -149,12 +204,19 @@ const CustomKeywordDialog = ({ onSearch, onClose }) => {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetchMyCustomKeywords({ page: 1, pageSize: 50 });
-      if (res.code === 200) setItems(res.data.items);
+      const res = await fetchMyCustomKeywords({ page: 1, pageSize: KEYWORDS_PER_PAGE });
+      if (res.code === 200) { setItems(res.data.items); setTotal(res.data.total ?? res.data.items.length); setListPage(1); }
       else setNote({ text: res.code === 503 ? "Custom keywords are not available yet." : res.message });
     } catch { setNote({ text: "Could not load your keywords." }); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  const loadMore = async () => {
+    setLoadingMore(true);
+    try {
+      const res = await fetchMyCustomKeywords({ page: listPage + 1, pageSize: KEYWORDS_PER_PAGE });
+      if (res.code === 200) { setItems((cur) => [...cur, ...res.data.items]); setListPage((p) => p + 1); }
+    } catch { setNote({ text: "Could not load more keywords." }); } finally { setLoadingMore(false); }
+  };
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -164,7 +226,7 @@ const CustomKeywordDialog = ({ onSearch, onClose }) => {
   const patch = (id, changes) => setUploads((list) => list.map((u) => (u.id === id ? { ...u, ...changes } : u)));
 
   const runUpload = async (id, file) => {
-    patch(id, { status: "uploading", progress: 0, text: "", details: [] });
+    patch(id, { status: "uploading", progress: 0, text: "", details: [], items: [] });
     try {
       const res = await uploadCustomKeywordsFile(file, (progress) => patch(id, { progress }));
       if (res.code === 200) {
@@ -172,7 +234,8 @@ const CustomKeywordDialog = ({ onSearch, onClose }) => {
         patch(id, {
           status: "complete", progress: 100,
           text: `${d.added ?? 0} added · ${d.duplicates ?? 0} duplicate`,
-          details: (d.invalid || []).slice(0, 3).map((r) => `Row ${r.row}: ${r.reason}`),
+          details: (d.invalid || []).slice(0, 3).map((r) => `Row ${r.row}: ${r.reason}`), // only used if the server sent no per-keyword list
+          items: d.items || [],
         });
         load();
         return;
@@ -191,7 +254,7 @@ const CustomKeywordDialog = ({ onSearch, onClose }) => {
       const id = ++lastId.current;
       const typeError = customKeywordFileError(file.name);
       setUploads((list) => [{
-        id, file, name: file.name, size: file.size, details: [],
+        id, file, name: file.name, size: file.size, details: [], items: [],
         status: typeError ? "failed" : "uploading", progress: 0, text: typeError, retryable: false,
       }, ...list]);
       if (!typeError) enqueue(id, file);
@@ -260,7 +323,13 @@ const CustomKeywordDialog = ({ onSearch, onClose }) => {
                   {u.status === "complete" && (
                     <div className="mt-1.5 text-[11px] text-theme-text-secondary">
                       <p>{u.text}</p>
-                      {u.details.map((line) => <p key={line} className="text-amber-600">{line}</p>)}
+                      {u.items.length > 0
+                        ? (
+                          <div className="mt-2">
+                            <KeywordRows rows={u.items.map((i) => ({ key: i.row, keyword: i.keyword, result: i.result, reason: i.reason }))} label={`Keywords in ${u.name}`} />
+                          </div>
+                        )
+                        : u.details.map((line) => <p key={line} className="text-amber-600">{line}</p>)}
                     </div>
                   )}
                   {u.status === "failed" && (
@@ -276,17 +345,19 @@ const CustomKeywordDialog = ({ onSearch, onClose }) => {
 
           {note && <p className="mt-2 text-[11px] text-red-500">{note.text}</p>}
 
-          <p className="mt-4 text-[11px] font-semibold text-theme-text-muted">My keywords{items.length ? ` (${items.length})` : ""}</p>
+          <p className="mt-4 text-[11px] font-semibold text-theme-text-muted">My keywords{total ? ` (${total})` : ""}</p>
           <p className="mt-0.5 text-[11px] text-theme-text-muted">Click a keyword to search it, or type it in the search bar. You also see your own ads for it.</p>
           {items.length > 0 && (
-            <ul className="mt-2 divide-y divide-theme-border/60 rounded-lg border border-theme-border text-[12px]">
-              {items.map((k) => (
-                <li key={k.id} className="flex items-center justify-between gap-2 px-3 py-1.5">
-                  <button type="button" onClick={() => onSearch?.(k.keyword, "keyword")} className="min-w-0 truncate text-left text-theme-text hover:text-[#6b99ff]">{k.keyword}</button>
-                  <span className="shrink-0 text-[10px] text-theme-text-muted">{CK_STATUS[k.status] || k.status}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="mt-2">
+              <KeywordRows
+                rows={items.map((k) => ({ key: k.id, keyword: k.keyword }))}
+                total={total}
+                label="My keywords"
+                onPick={(keyword) => onSearch?.(keyword, "keyword")}
+                onLoadMore={loadMore}
+                loadingMore={loadingMore}
+              />
+            </div>
           )}
         </div>
       </div>

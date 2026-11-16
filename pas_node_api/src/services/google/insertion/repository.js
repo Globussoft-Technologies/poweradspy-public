@@ -217,12 +217,14 @@ async function updateVariantByAdId(exec, data, googleTextAdId) {
  * column from scripts/apply-custom-keywords-schema.js; callers treat a failure as non-fatal.
  * @returns {string[]} the tags now stored.
  */
-async function mergeVariantCustomKeyword(exec, googleTextAdId, token) {
+async function mergeVariantCustomKeyword(exec, googleTextAdId, tokens) {
+  const wanted = [].concat(tokens).filter(Boolean);
   const cur = found(await exec.query('SELECT custom_keyword FROM google_text_ad_variants WHERE google_text_ad_id = ? LIMIT 1', [googleTextAdId]));
   if (cur.code !== 200) return [];
   const list = String(cur.data[0].custom_keyword || '').split('|').filter(Boolean);
-  if (!list.includes(token)) {
-    list.push(token);
+  const before = list.length;
+  for (const token of wanted) if (!list.includes(token)) list.push(token);
+  if (list.length !== before) {
     await exec.query('UPDATE google_text_ad_variants SET custom_keyword = ? WHERE google_text_ad_id = ?', [list.join('|'), googleTextAdId]);
   }
   return list;

@@ -4,7 +4,7 @@
 // See https://github.com/Globussoft-Technologies/poweradspy/issues/249
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, act, waitFor, screen } from "@testing-library/react";
+import { render, fireEvent, act, waitFor, screen, within } from "@testing-library/react";
 
 const accessMock = vi.hoisted(() => vi.fn());
 const ckApi = vi.hoisted(() => ({ download: vi.fn(), upload: vi.fn(), list: vi.fn() }));
@@ -1250,5 +1250,135 @@ describe("AdFilterBar > Custom Keyword dialog: sample, upload component, file ty
     expect(await screen.findByText("Complete")).toBeTruthy();
     fireEvent.click(screen.getByLabelText("Remove keywords.csv from the list"));
     expect(screen.queryByText("keywords.csv")).toBeNull();
+  });
+});
+
+describe("AdFilterBar > Custom Keyword dialog: keyword lists (top 5, show all, scroll, duplicate marks)", () => {
+  const ckDoc = { _id: "custom_keyword", visible: true, platform_applicability: ["google"], filters: [] };
+  const sdui = { ...baseSdui, activePlatforms: ["google"], config: { ...baseSdui.config, navbar: [...(baseSdui.config.navbar || []), ckDoc] } };
+  const saved = (n, from = 1) => Array.from({ length: n }, (_, i) => ({ id: `k${from + i}`, keyword: `keyword ${from + i}`, status: ["pending", "in_progress", "done", "failed"][(from + i) % 4] }));
+  const mockList = (n) => ckApi.list.mockResolvedValue({ code: 200, data: { items: saved(n), total: n } });
+  const openDialog = async (props = {}) => {
+    render(<AdFilterBar {...baseProps} sdui={sdui} {...props} />);
+    fireEvent.click(await screen.findByLabelText("Custom Keyword"));
+    await screen.findByText("Custom Keywords");
+  };
+  const myList = () => screen.getByRole("list", { name: "My keywords" });
+  const fileInput = () => document.body.querySelector('input[type="file"]');
+  const pick = (name) => fireEvent.change(fileInput(), { target: { files: [new File(["keyword\nnike\n"], name)] } });
+
+  beforeEach(() => {
+    accessMock.mockReset();
+    accessMock.mockResolvedValue({ data: { enabled: true } });
+    ckApi.download.mockReset();
+    ckApi.upload.mockReset();
+    ckApi.upload.mockResolvedValue({ code: 200, data: { added: 2, duplicates: 1 } });
+    ckApi.list.mockReset();
+  });
+
+  it("shows only the top 5 saved keywords, each simply as 'Added to DB' (no pending / scraping / done words)", async () => {
+    mockList(8);
+    await openDialog();
+    expect(await screen.findByText("My keywords (8)")).toBeTruthy();
+    const rows = within(myList()).getAllByRole("listitem");
+    expect(rows).toHaveLength(5);
+    expect(within(myList()).getAllByText("Added to DB")).toHaveLength(5);
+    expect(screen.queryByText(/pending|scraping|done|failed|in progress/i)).toBeNull();
+    expect(screen.getByText("Show all 8")).toBeTruthy();
+  });
+
+  it("Show all opens every keyword in a scrolling list, and Show less goes back to 5", async () => {
+    mockList(8);
+    await openDialog();
+    fireEvent.click(await screen.findByText("Show all 8"));
+    expect(within(myList()).getAllByRole("listitem")).toHaveLength(8);
+    expect(myList().className).toMatch(/max-h-56/);
+    expect(myList().className).toMatch(/overflow-y-auto/);
+    fireEvent.click(screen.getByText("Show less"));
+    expect(within(myList()).getAllByRole("listitem")).toHaveLength(5);
+    expect(myList().className).not.toMatch(/overflow-y-auto/);
+  });
+
+  it("a short list (5 or fewer) has no Show all button", async () => {
+    mockList(3);
+    await openDialog();
+    await screen.findByText("My keywords (3)");
+    expect(within(myList()).getAllByRole("listitem")).toHaveLength(3);
+    expect(screen.queryByText(/Show all/)).toBeNull();
+  });
+
+  it("with hundreds of keywords it loads them 100 at a time: Load more adds the next page", async () => {
+    ckApi.list.mockImplementation(async ({ page }) => ({ code: 200, data: { items: saved(page < 3 ? 100 : 30, (page - 1) * 100 + 1), total: 230 } }));
+    await openDialog();
+    expect(await screen.findByText("My keywords (230)")).toBeTruthy();
+    expect(ckApi.list).toHaveBeenCalledWith({ page: 1, pageSize: 100 });
+    expect(within(myList()).getAllByRole("listitem")).toHaveLength(5); // still just the top 5
+    fireEvent.click(screen.getByText("Show all 230"));
+    expect(within(myList()).getAllByRole("listitem")).toHaveLength(101); // 100 loaded + the Load more row
+    fireEvent.click(screen.getByText("Load more (130 left)"));
+    await waitFor(() => expect(within(myList()).getAllByRole("listitem")).toHaveLength(201));
+    expect(ckApi.list).toHaveBeenLastCalledWith({ page: 2, pageSize: 100 });
+    fireEvent.click(screen.getByText("Load more (30 left)"));
+    await waitFor(() => expect(within(myList()).getAllByRole("listitem")).toHaveLength(230)); // all loaded, no more button
+    expect(screen.queryByText(/Load more/)).toBeNull();
+  });
+
+  it("clicking a saved keyword searches it as a normal keyword search and closes the dialog", async () => {
+    mockList(3);
+    const onSearch = vi.fn();
+    await openDialog({ onSearch });
+    fireEvent.click(await screen.findByText("keyword 2"));
+    expect(onSearch).toHaveBeenCalledWith("keyword 2", "keyword");
+    await waitFor(() => expect(screen.queryByText("Custom Keywords")).toBeNull());
+  });
+
+  it("after an upload, every keyword in the sheet is marked: added, duplicate (with why), invalid, not added", async () => {
+    mockList(0);
+    ckApi.upload.mockResolvedValue({
+      code: 200,
+      data: {
+        added: 2, duplicates: 2,
+        items: [
+          { row: 2, keyword: "new one", result: "added" },
+          { row: 3, keyword: "old one", result: "duplicate", reason: "already in your list" },
+          { row: 4, keyword: "new one again", result: "duplicate", reason: "repeated in your file" },
+          { row: 5, keyword: "x".repeat(10) + "…", result: "invalid", reason: "longer than 100 characters" },
+          { row: 6, keyword: "another", result: "added" },
+          { row: 7, keyword: "too many", result: "not_added", reason: "over your limit of 2 keywords" },
+        ],
+      },
+    });
+    await openDialog();
+    pick("keywords.csv");
+    expect(await screen.findByText("2 added · 2 duplicate")).toBeTruthy();
+    const uploaded = screen.getByRole("list", { name: "Keywords in keywords.csv" });
+    expect(within(uploaded).getAllByRole("listitem")).toHaveLength(5); // top 5 of 6
+    expect(within(uploaded).getAllByText("Added to DB")).toHaveLength(2);
+    expect(within(uploaded).getAllByText("Duplicate")).toHaveLength(2);
+    expect(within(uploaded).getByText("Invalid")).toBeTruthy();
+    expect(within(uploaded).getByText("already in your list")).toBeTruthy();
+    expect(within(uploaded).getByText("repeated in your file")).toBeTruthy();
+    expect(within(uploaded).getByText("longer than 100 characters")).toBeTruthy();
+    fireEvent.click(screen.getByText("Show all 6"));
+    expect(within(screen.getByRole("list", { name: "Keywords in keywords.csv" })).getByText("Not added")).toBeTruthy();
+    expect(screen.getByText("over your limit of 2 keywords")).toBeTruthy();
+  });
+
+  it("uploaded keywords are not searchable rows (only your saved list is), and 5 or fewer show without Show all", async () => {
+    mockList(0);
+    ckApi.upload.mockResolvedValue({ code: 200, data: { added: 1, duplicates: 1, items: [{ row: 2, keyword: "a", result: "added" }, { row: 3, keyword: "b", result: "duplicate", reason: "already in your list" }] } });
+    await openDialog();
+    pick("k.csv");
+    const uploaded = await screen.findByRole("list", { name: "Keywords in k.csv" });
+    expect(within(uploaded).queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryByText(/Show all/)).toBeNull();
+  });
+
+  it("falls back to the plain invalid-row notes when the server sent no per-keyword list", async () => {
+    mockList(0);
+    ckApi.upload.mockResolvedValue({ code: 200, data: { added: 1, duplicates: 0, invalid: [{ row: 4, keyword: "x…", reason: "longer than 100 characters" }] } });
+    await openDialog();
+    pick("k.csv");
+    expect(await screen.findByText("Row 4: longer than 100 characters")).toBeTruthy();
   });
 });

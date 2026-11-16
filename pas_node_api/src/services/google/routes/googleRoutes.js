@@ -532,7 +532,9 @@ function createGoogleRoutes(service) {
   router.get('/custom-keywords/sample', authMiddleware, customKeywords.requireAccess, asyncHandler(customKeywords.downloadSample));
   router.post('/custom-keywords/upload', authMiddleware, customKeywords.requireAccess, customKeywords.uploadMiddleware, asyncHandler(customKeywords.uploadKeywords));
   router.get('/custom-keywords', authMiddleware, customKeywords.requireAccess, asyncHandler(customKeywords.listMyKeywords));
-  router.post('/custom-keywords/next', asyncHandler(customKeywords.nextKeyword));
+  // Scraper API (x-scraper-name, no JWT): one GET to fetch keywords, one POST to send back the results.
+  router.get('/custom-keywords/scraper/keywords', asyncHandler(customKeywords.getScraperKeywords));
+  router.post('/custom-keywords/scraper/results', asyncHandler(customKeywords.postScraperResults));
 
   // ─── Search-Audit Keywords (gtext → MongoDB google_audit_keywords) ──────────
   // GET  /api/v1/google/get-search-audit-keywords    — crawler pull (cursored batch)

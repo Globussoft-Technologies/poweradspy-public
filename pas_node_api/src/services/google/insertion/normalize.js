@@ -99,19 +99,29 @@ function normCustomKeyword(s) {
 }
 
 /**
- * Custom keyword tag for an ad: "<userId>:<keyword>" (e.g. "281:nike shoes"), or null.
- * The scraper sends `custom_keyword` + `custom_keyword_user_id` with the ad it scraped for a
- * user's uploaded keyword. Tagging with the user id keeps one user's keywords invisible to
- * the others. Optional and never fatal: a missing/invalid pair, or the feature being off,
- * gives null and the ad is saved exactly as before.
+ * The custom keywords an ad was scraped for: `custom_keyword` is a list (a single string is also fine),
+ * so one ad can carry as many keywords as the scraper likes (up to maxClaimSize). The scraper sends no
+ * user id: the owners are looked up by the backend. Returns the normalized, de-duplicated keywords —
+ * an empty list for an ordinary ad, when the feature is off, or when nothing usable was sent.
  */
-function customKeywordToken(ad, cfg) {
-  if (!cfg || !cfg.enabled) return null;
-  const keyword = normCustomKeyword(ad.custom_keyword);
-  const userId = Number(ad.custom_keyword_user_id);
-  if (!keyword || keyword.length > cfg.maxKeywordLength) return null;
-  if (!Number.isInteger(userId) || userId <= 0) return null;
-  return `${userId}:${keyword}`;
+function customKeywordNorms(ad, cfg) {
+  if (!cfg || !cfg.enabled) return [];
+  const raw = ad.custom_keyword;
+  const list = Array.isArray(raw) ? raw : (raw === undefined || raw === null ? [] : [raw]);
+  const limit = cfg.maxClaimSize || 100;
+  const out = [];
+  for (const item of list) {
+    if (typeof item !== 'string' && typeof item !== 'number') continue;
+    const keyword = normCustomKeyword(item);
+    if (keyword && keyword.length <= cfg.maxKeywordLength && !out.includes(keyword)) out.push(keyword);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** One "<userId>:<keyword>" tag per owner — the same tag the search matches on. */
+function customKeywordTags(keywordNorm, userIds) {
+  return (userIds || []).map((id) => `${id}:${keywordNorm}`);
 }
 
 /**
@@ -125,4 +135,4 @@ function customKeywordAllowed(cfg, userId) {
   return userId !== undefined && userId !== null && allow.includes(String(userId));
 }
 
-module.exports = { urldecode, cleanStr, fixAmp, stripNonBmp, versionLessThan, checkGates, normalizeGtextAd, normCustomKeyword, customKeywordToken, customKeywordAllowed };
+module.exports = { urldecode, cleanStr, fixAmp, stripNonBmp, versionLessThan, checkGates, normalizeGtextAd, normCustomKeyword, customKeywordNorms, customKeywordTags, customKeywordAllowed };

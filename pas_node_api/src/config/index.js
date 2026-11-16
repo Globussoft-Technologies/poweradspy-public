@@ -657,6 +657,10 @@ const config = {
     maxAttempts: getVal(fileConfig.customKeywords?.maxAttempts, 'CUSTOM_KEYWORDS_MAX_ATTEMPTS', toInt) || 3,
     retryDelayMinutes: getVal(fileConfig.customKeywords?.retryDelayMinutes, 'CUSTOM_KEYWORDS_RETRY_DELAY_MIN', toInt) || 10,
     staleClaimMinutes: getVal(fileConfig.customKeywords?.staleClaimMinutes, 'CUSTOM_KEYWORDS_STALE_MINUTES', toInt) || 30,
+    // Most keywords a scraper can take in one call, and the most keywords one ad can carry in `custom_keyword`.
+    maxClaimSize: getVal(fileConfig.customKeywords?.maxClaimSize, 'CUSTOM_KEYWORDS_MAX_CLAIM_SIZE', toInt) || 100,
+    // Tell the owners (bell + push) when the scraper reports their keyword as done. On unless set to false.
+    notifyEnabled: getVal(fileConfig.customKeywords?.notifyEnabled, 'CUSTOM_KEYWORDS_NOTIFY_ENABLED', toBool) !== false,
   },
 
   // ─── NEW keyword-search store (MongoDB) — additive, see docs/KEYWORD_SEARCH_REVAMP_MANIFEST.md ───
