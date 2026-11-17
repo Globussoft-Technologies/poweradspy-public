@@ -276,7 +276,7 @@ export default function CopyrightClaims() {
         <div className="xl:col-span-2 bg-white rounded-xl border border-gray-100 p-4">
           <div className="flex gap-2 mb-3 flex-wrap">
             {STATUS_FILTERS.map((f) => (
-              <button key={f.key || "all"} onClick={() => setStatus(f.key)} className={`h-9 px-3 text-[13px] rounded-lg border ${status === f.key ? "bg-[#1540a4] text-white border-[#1540a4]" : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"}`}>{f.label}</button>
+              <button key={f.key || "all"} onClick={() => setStatus(f.key)} className={`h-9 px-3 text-[13px] rounded-lg border ${status === f.key ? "bg-[#1540a4]! text-white border-[#1540a4]" : "bg-white! text-gray-700 border-gray-200 hover:bg-gray-50!"}`}>{f.label}</button>
             ))}
           </div>
           {listError && <div className="text-sm text-rose-600 mb-2">{listError}</div>}
