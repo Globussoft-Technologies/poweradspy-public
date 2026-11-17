@@ -1,12 +1,12 @@
 'use strict';
 
 const path = require('path');
-const fs = require('fs');
 const http = require('http');
 const https = require('https');
 const config = require('../config');
 const logger = require('../logger');
 const { createSearchCoalescer } = require('./esSearchCoalescer');
+const esCompat = require('./esVersionCompat');
 
 const log = logger.createChild('database-manager');
 
@@ -308,7 +308,7 @@ class DatabaseManager {
    * Create an HTTP/HTTPS agent with bounded connection-pool settings
    * to prevent socket/file-descriptor leaks.
    */
-  _createBoundedAgent(nodeUrl, cfgSection = {}, ca = null) {
+  _createBoundedAgent(nodeUrl, cfgSection = {}) {
     const isHttps = (nodeUrl || '').startsWith('https');
     const AgentClass = isHttps ? https.Agent : http.Agent;
     return new AgentClass({
@@ -321,18 +321,7 @@ class DatabaseManager {
       maxSockets: cfgSection.maxSockets || 100,
       maxFreeSockets: cfgSection.maxFreeSockets || 20,
       timeout: 60000,          // socket inactivity timeout 60s
-      // ES 8+/9 use a self-signed CA; the agent must trust it for HTTPS.
-      ...(isHttps && ca ? { ca } : {}),
     });
-  }
-
-  /**
-   * Read the cluster CA certificate (http_ca.crt) if one is configured.
-   */
-  _readEsCaCert(elasticConfig, cfgSection) {
-    const caPath = elasticConfig.caCert || cfgSection.caCert;
-    if (!caPath) return null;
-    return fs.readFileSync(path.resolve(caPath));
   }
 
   /**
@@ -350,6 +339,8 @@ class DatabaseManager {
         constructor(opts) {
           super({
             ...opts,
+            // ES 6.x responses carry no `x-elastic-product` header; skip that check so 6.x connects.
+            productCheck: null,
             vendoredHeaders: {
               jsonContentType: 'application/json',
               ndjsonContentType: 'application/x-ndjson',
@@ -379,8 +370,7 @@ class DatabaseManager {
     // request's coordinating node across them, so coordination/reduce load is
     // shared instead of pinning a single host (e.g. the master/app-facing node).
     const nodes = this._normalizeEsNodes(elasticConfig.node);
-    const ca = this._readEsCaCert(elasticConfig, cfgSection);
-    const agent = this._createBoundedAgent(nodes[0], cfgSection, ca);
+    const agent = this._createBoundedAgent(nodes[0], cfgSection);
     const clientOptions = {
       ...(nodes.length > 1 ? { nodes } : { node: nodes[0] }),
       maxRetries: cfgSection.maxRetries || 3,
@@ -390,7 +380,6 @@ class DatabaseManager {
       // HttpConnection keeps the bounded HTTP agent (limits open sockets / FDs).
       ...(HttpConnection ? { Connection: HttpConnection } : {}),
       agent: () => agent,
-      ...(ca ? { tls: { ca } } : {}),
       ...(plainJsonTransport ? { Transport: plainJsonTransport } : {}),
     };
     if (nodes.length > 1) {
@@ -433,6 +422,15 @@ class DatabaseManager {
     try {
       const { client, esMajor, search } = await this._getOrCreateEsClient(slug, elasticConfig, 'elastic');
 
+      // ES 9.x: requests go out unchanged. ES 6.x: esVersionCompat adds the mapping type and
+      // rewrites calendar_interval / docvalue formats (see esVersionCompat.js).
+      const legacy = esCompat.isLegacy(esMajor);
+      const typeCache = new Map();
+      if (legacy) log.info(`[${slug}] Elasticsearch ${esMajor}.x — using ES 6.x request compatibility`);
+      const indexDoc = (params, options) => (legacy
+        ? esCompat.legacyIndex(client, params, options, typeCache)
+        : client.index(params, options));
+
       return {
         type: 'elasticsearch',
         client,
@@ -440,18 +438,20 @@ class DatabaseManager {
         indexName: elasticConfig.index,
         // Preserve Elasticsearch transport options (for example requestTimeout)
         // instead of dropping them at this service wrapper boundary.
-        get:    (params, options) => client.get(params, options),
-        search: (params, options) => search(params, options),
+        get:    (params, options) => (legacy ? esCompat.legacyGet(client, params, options) : client.get(params, options)),
+        search: (params, options) => search(legacy ? esCompat.toLegacySearch(params) : params, options),
         analyze:(params, options) => client.indices.analyze(params, options),
-        count:  (params, options) => client.count(params, options),
+        count:  (params, options) => client.count(legacy ? esCompat.toLegacySearch(params) : params, options),
         index: (params, options) => {
-          if (!config.compliance?.copyrightVerification?.enabled) return client.index(params, options);
+          if (!config.compliance?.copyrightVerification?.enabled) return indexDoc(params, options);
           return require('../services/copyrightVerification/status').indexDocument(slug, elasticConfig.index, params, () => this.getSQL(slug))
-            .then((guarded) => client.index(guarded, options));
+            .then((guarded) => indexDoc(guarded, options));
         },
-        update: (params, options) => client.update(params, options),
-        delete: (params, options) => client.delete(params, options),
-        bulk:   (params, options) => client.bulk(params, options),
+        update: (params, options) => (legacy ? esCompat.legacyUpdate(client, params, options, typeCache) : client.update(params, options)),
+        delete: (params, options) => (legacy ? esCompat.legacyDelete(client, params, options, typeCache) : client.delete(params, options)),
+        bulk:   (params, options) => (legacy
+          ? esCompat.toLegacyBulk(client, params, typeCache).then((p) => client.bulk(p, options))
+          : client.bulk(params, options)),
         close:  () => this._releaseEsClient(elasticConfig),
       };
     } catch (err) {

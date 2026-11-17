@@ -112,6 +112,7 @@ vi.mock("config", () => ({ default: { get: configGetSpy, has: () => false } }));
 // After vi.doUnmock of utils/Elasticsearch.js the real module loads; the v9 client
 // validates node URLs ("cfg:..." from the config mock is rejected), so stub it.
 vi.mock("@elastic/elasticsearch", () => ({
+  Transport: class Transport {},
   Client: function Client() {
     this.search = vi.fn();
     this.count = vi.fn();

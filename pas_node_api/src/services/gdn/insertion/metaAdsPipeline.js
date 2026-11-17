@@ -24,7 +24,7 @@ const config = require('../../../config');
 const repo = require('./repository');
 const { validateMetaAds } = require('./validate');
 const { normalizeGdnAd, checkVersion } = require('./normalize');
-const { buildSearchMixDoc, searchIdQuery, firstHitId, firstHitSource } = require('./esDocBuilder');
+const { buildSearchMixDoc, searchIdQuery, firstHitId, firstHitSource, coerceEsDate } = require('./esDocBuilder');
 const { META_INSERT_COLUMNS } = require('./esColumns');
 const api = require('../../../insertion/helpers/apiClients');
 const media = require('../../../insertion/helpers/mediaUpload');
@@ -330,7 +330,8 @@ async function updateEsDoc(ctx, gdnAdId, n, { translation, cur, network }) {
   const docFields = {
     'gdn_target_site.target_site': targetSites,
     'gdn_placement_url.placement_url': placement,
-    'gdn_ad_domains.domain_registered_date': domainRegDate,
+    // mysql2 returns DATE as a JS Date → ES field is `yyyy-MM-dd`; an uncoerced value rejects the whole partial update (incl. last_seen).
+    'gdn_ad_domains.domain_registered_date': coerceEsDate(domainRegDate, 'date'),
     'gdn_ad_translation.ad_text': translation?.text ?? (src ? src['gdn_ad_translation.ad_text'] : null),
     'gdn_ad_translation.ad_title': translation?.title ?? (src ? src['gdn_ad_translation.ad_title'] : null),
     'gdn_ad_translation.news_feed_description': translation?.newsfeed_description ?? (src ? src['gdn_ad_translation.news_feed_description'] : null),

@@ -127,4 +127,4 @@ function firstHitSource(esResponse) {
   return hits && hits[0] ? hits[0]._source : null;
 }
 
-module.exports = { buildSearchMixDoc, searchIdQuery, firstHitId, firstHitSource, sizeToWH, sentinel };
+module.exports = { buildSearchMixDoc, searchIdQuery, firstHitId, firstHitSource, sizeToWH, sentinel, coerceEsDate };

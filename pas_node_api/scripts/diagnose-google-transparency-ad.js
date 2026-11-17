@@ -66,7 +66,8 @@ async function main() {
   try {
     const client = elastic?.client || elastic;
     if (!client || typeof client.get !== 'function') throw new Error('Google Elasticsearch connection is unavailable');
-    const result = await client.get({ index, id: String(id) });
+    // DatabaseManager's get() adds the mapping type on ES 6.x; the raw client cannot.
+    const result = await (typeof elastic?.get === 'function' ? elastic : client).get({ index, id: String(id) });
     elasticDocument = result?._source || result?.body?._source || null;
   } catch (error) {
     elasticError = error.message;

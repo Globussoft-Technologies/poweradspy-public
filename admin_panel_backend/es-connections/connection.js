@@ -1,9 +1,22 @@
 require('dotenv').config();
-const fs = require('fs');
-const { Client } = require('@elastic/elasticsearch');
+const { Client, Transport } = require('@elastic/elasticsearch');
 
-// ES 9 serves HTTPS with a self-signed CA; trust it when ELASTICSEARCH_CA_CERT is set.
-const CA_CERT_PATH = process.env.ELASTICSEARCH_CA_CERT || '';
+// Client v9 sends `compatible-with=9` headers, which ES 6.x rejects. Send plain
+// application/json instead (as the legacy client did) — ES 6.x and ES 9.x both accept it.
+class PlainJsonTransport extends Transport {
+    constructor(opts) {
+        super({
+            ...opts,
+            // ES 6.x responses carry no `x-elastic-product` header; skip that check so 6.x connects.
+            productCheck: null,
+            vendoredHeaders: {
+                jsonContentType: 'application/json',
+                ndjsonContentType: 'application/x-ndjson',
+                accept: 'application/json, text/plain',
+            },
+        });
+    }
+}
 
 // Define multiple independent Elasticsearch instances
 const environment = process.env.ENVIRONMENT || 'DEV';
@@ -27,6 +40,7 @@ if (environment === 'PROD') {
 // Extracted so the no-auth branch is unit-testable; behavior is unchanged.
 function buildClient(config) {
     const clientConfig = {
+        Transport: PlainJsonTransport,
         node: config.host,
         // Client v9 has no default request timeout; keep the legacy client's 30s.
         requestTimeout: 30000,
@@ -35,10 +49,6 @@ function buildClient(config) {
     // Add authentication only if it's provided
     if (config.auth) {
         clientConfig.auth = { username: config.auth.username, password: config.auth.password };
-    }
-
-    if (CA_CERT_PATH) {
-        clientConfig.tls = { ca: fs.readFileSync(CA_CERT_PATH) };
     }
 
     return new Client(clientConfig);

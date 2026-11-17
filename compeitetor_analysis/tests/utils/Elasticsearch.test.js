@@ -18,7 +18,7 @@ const { ClientCtor, configGetSpy, loggerInfoSpy, loggerErrorSpy, lastClients } =
   };
 });
 
-vi.mock("@elastic/elasticsearch", () => ({ Client: ClientCtor }));
+vi.mock("@elastic/elasticsearch", () => ({ Client: ClientCtor, Transport: class Transport {} }));
 // config.has("ELASTICSEARCH_CA_CERT") → false, so no CA file is read.
 vi.mock("config", () => ({ default: { get: configGetSpy, has: () => false } }));
 vi.mock("../../resources/logs/logger.log.js", () => ({
@@ -107,6 +107,8 @@ describe("utils/Elasticsearch > createElasticClient auth branch", () => {
   it("constructs a client with node, auth and a 30s requestTimeout", async () => {
     await modulePromise;
     expect(lastClients[0].opts).toEqual({
+      // Plain application/json transport (works with ES 6.x and 9.x).
+      Transport: expect.any(Function),
       node: "value:SEARCH_HOSTS",
       auth: { username: "value:TEST_ELASTICSEARCH_USER", password: "value:TEST_ELASTICSEARCH_PASS" },
       requestTimeout: 30000,

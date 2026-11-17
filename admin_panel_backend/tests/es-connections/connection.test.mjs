@@ -14,7 +14,7 @@ function FakeClient(cfg) {
 const elasticsearchPath = require.resolve("@elastic/elasticsearch");
 require.cache[elasticsearchPath] = {
   id: elasticsearchPath, filename: elasticsearchPath, loaded: true,
-  exports: { Client: FakeClient },
+  exports: { Client: FakeClient, Transport: class Transport {} },
 };
 
 process.env.ENVIRONMENT = "PROD";

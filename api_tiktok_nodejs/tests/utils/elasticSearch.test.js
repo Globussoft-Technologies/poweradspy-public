@@ -36,7 +36,7 @@ const {
   };
 });
 
-vi.mock("@elastic/elasticsearch", () => ({ Client: ClientCtor }));
+vi.mock("@elastic/elasticsearch", () => ({ Client: ClientCtor, Transport: class Transport {} }));
 
 vi.mock("../../resources/logs/logger.log.js", () => ({
   default: { error: loggerErrorSpy },
@@ -53,6 +53,8 @@ vi.mock("config", () => ({
       if (!(key in map)) throw new Error(`unstubbed: ${key}`);
       return map[key];
     },
+    // No elasticsearch_ca_cert configured → no CA file is read.
+    has: () => false,
   },
 }));
 
@@ -74,8 +76,11 @@ beforeEach(async () => {
 describe("utils/elasticSearch > module load", () => {
   it("constructs Client with node URL + basic auth from config", () => {
     expect(ClientCtor).toHaveBeenCalledWith({
+      // Plain application/json transport (works with ES 8 and ES 9).
+      Transport: expect.any(Function),
       node: "http://es.test:9200",
       auth: { username: "u", password: "p" },
+      requestTimeout: 30000,
     });
   });
 

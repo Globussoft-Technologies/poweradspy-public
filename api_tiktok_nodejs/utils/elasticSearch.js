@@ -1,13 +1,33 @@
-import { Client } from "@elastic/elasticsearch";
+import { Client, Transport } from "@elastic/elasticsearch";
 import config from "config";
+
+// The TikTok cluster runs ES 8 today and moves to ES 9.5 later; this client must work with both.
+// Client v9 sends `compatible-with=9` headers, which ES 8 rejects — send plain application/json
+// instead (accepted by ES 8 and ES 9). The product-header check is skipped for the same reason.
+class PlainJsonTransport extends Transport {
+  constructor(opts) {
+    super({
+      ...opts,
+      productCheck: null,
+      vendoredHeaders: {
+        jsonContentType: "application/json",
+        ndjsonContentType: "application/x-ndjson",
+        accept: "application/json, text/plain",
+      },
+    });
+  }
+}
 
 // For dev/prod
 export const client = new Client({
+  Transport: PlainJsonTransport,
   node:config.get("elasticsearch_url"),
   auth: {
     username: config.get("elasticsearch_username"),
     password: config.get("elasticsearch_password"),
   },
+  // Client v9 has no default request timeout; keep the old 30s behaviour.
+  requestTimeout: 30000,
 });
 
 // For local

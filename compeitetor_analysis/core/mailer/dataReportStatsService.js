@@ -166,7 +166,6 @@ function dedicatedClient(conn) {
       host,
       username: conn.username,
       password: conn.password,
-      caCert: conn.caCert,
     }));
   }
   return dedicatedClients[cacheKey];

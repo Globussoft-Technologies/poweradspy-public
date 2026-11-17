@@ -70,7 +70,8 @@ async function main() {
     body.push({ index: { _index: TARGET_INDEX, _id: String(id) } });
     body.push({ ...legacyDocuments.get(id), id, platform: 18 });
   }
-  const result = responseBody(await db.elastic.client.bulk({ refresh: 'wait_for', body }));
+  // DatabaseManager's bulk() adds `_type` on ES 6.x; the raw client cannot.
+  const result = responseBody(await db.elastic.bulk({ refresh: 'wait_for', body }));
   if (result.errors) {
     const failures = (result.items || [])
       .filter((item) => item.index?.error)
