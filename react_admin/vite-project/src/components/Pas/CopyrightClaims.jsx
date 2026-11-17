@@ -251,7 +251,7 @@ export default function CopyrightClaims() {
 
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-xl font-semibold text-gray-900 mr-auto">Copyright Claims</h2>
-        <button onClick={() => { loadList(true); loadSummary(); if (openId) openClaim(openId); }} className="p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50" title="Refresh">
+        <button onClick={() => { loadList(true); loadSummary(); if (openId) openClaim(openId); }} className="p-2 bg-white! border border-gray-200 rounded-lg hover:bg-gray-50!" title="Refresh">
           <FiRefreshCw size={16} />
         </button>
       </div>
@@ -282,7 +282,7 @@ export default function CopyrightClaims() {
           {listError && <div className="text-sm text-rose-600 mb-2">{listError}</div>}
           <div className="divide-y divide-gray-100">
             {items.map((c) => (
-              <button key={c.complaintId} onClick={() => openClaim(c.complaintId)} className={`w-full text-left py-3 px-2 rounded-lg hover:bg-gray-50 ${openId === c.complaintId ? "bg-[#eef2ff]" : ""}`}>
+              <button key={c.complaintId} onClick={() => openClaim(c.complaintId)} className={`w-full text-left py-3 px-2 rounded-lg hover:bg-gray-50! ${openId === c.complaintId ? "bg-[#eef2ff]!" : ""}`}>
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-gray-900 truncate">{c.name}</span>
                   <span className="ml-auto"><Pill meta={STATUS_META} value={c.status} /></span>
@@ -294,7 +294,7 @@ export default function CopyrightClaims() {
             {!loading && !items.length && !listError && <div className="py-8 text-center text-sm text-gray-500">No claims here.</div>}
           </div>
           {loading && <div className="py-3 text-center text-sm text-gray-500">Loading…</div>}
-          {next && !loading && <button onClick={() => loadList(false, next)} className="mt-3 w-full h-9 text-[13px] rounded-lg border border-gray-200 hover:bg-gray-50">Load more</button>}
+          {next && !loading && <button onClick={() => loadList(false, next)} className="mt-3 w-full h-9 text-[13px] rounded-lg border border-gray-200 hover:bg-gray-50!">Load more</button>}
         </div>
 
         {/* one claim */}
@@ -329,8 +329,8 @@ export default function CopyrightClaims() {
                   <div className="text-xs font-semibold text-gray-500 mb-1">Link given by the claimant (not opened by us)</div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <code className="text-[12px] bg-gray-50 border border-gray-200 rounded px-2 py-1 break-all">{claim.evidenceUrl}</code>
-                    <button onClick={() => copyLink(claim.evidenceUrl)} className="h-8 px-2 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50 flex items-center gap-1"><FiCopy size={12} /> Copy</button>
-                    <button onClick={() => openLink(claim.evidenceUrl)} className="h-8 px-2 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50 flex items-center gap-1"><FiExternalLink size={12} /> Open…</button>
+                    <button onClick={() => copyLink(claim.evidenceUrl)} className="h-8 px-2 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50! flex items-center gap-1"><FiCopy size={12} /> Copy</button>
+                    <button onClick={() => openLink(claim.evidenceUrl)} className="h-8 px-2 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50! flex items-center gap-1"><FiExternalLink size={12} /> Open…</button>
                   </div>
                 </section>
               )}
@@ -344,7 +344,7 @@ export default function CopyrightClaims() {
                     <span className="truncate text-gray-900">{f.name}</span>
                     <span className="text-xs text-gray-500">{f.kind} · {Math.round((f.size || 0) / 1024)} KB</span>
                     <span className="ml-auto text-xs text-gray-500">{f.scanStatus === "clean" ? "scanned" : f.scanStatus === "pending" ? "scan pending" : f.scanStatus}</span>
-                    <button disabled={f.scanStatus === "pending"} onClick={() => download(f)} className="h-8 px-2 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-40 flex items-center gap-1"><FiDownload size={12} /> Download</button>
+                    <button disabled={f.scanStatus === "pending"} onClick={() => download(f)} className="h-8 px-2 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50! disabled:opacity-40 flex items-center gap-1"><FiDownload size={12} /> Download</button>
                   </div>
                 ))}
               </section>
@@ -353,7 +353,7 @@ export default function CopyrightClaims() {
                 <section>
                   <div className="flex items-center gap-2 mb-2">
                     <div className="text-xs font-semibold text-gray-500">Does the name exist in our data?</div>
-                    <button onClick={runPrecheck} disabled={checking} className="ml-auto h-8 px-2 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 flex items-center gap-1"><FiSearch size={12} /> {checking ? "Searching…" : "Search networks"}</button>
+                    <button onClick={runPrecheck} disabled={checking} className="ml-auto h-8 px-2 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50! disabled:opacity-50 flex items-center gap-1"><FiSearch size={12} /> {checking ? "Searching…" : "Search networks"}</button>
                   </div>
                   {precheck && (
                     <div className="text-sm divide-y divide-gray-100 border border-gray-100 rounded-lg">
@@ -371,8 +371,8 @@ export default function CopyrightClaims() {
 
               {claim.status === "pending" ? (
                 <section className="flex gap-3 pt-2">
-                  <button onClick={() => { setReviewed(false); setNote(""); setDialog("accept"); }} className="h-10 px-4 rounded-lg bg-[#1540a4] text-white text-sm font-medium hover:bg-[#12358a]">Accept…</button>
-                  <button onClick={() => { setReason(""); setDialog("reject"); }} className="h-10 px-4 rounded-lg border border-gray-300 text-sm font-medium text-gray-800 hover:bg-gray-50">Reject…</button>
+                  <button onClick={() => { setReviewed(false); setNote(""); setDialog("accept"); }} className="h-10 px-4 rounded-lg bg-[#1540a4]! text-white text-sm font-medium hover:bg-[#12358a]!">Accept…</button>
+                  <button onClick={() => { setReason(""); setDialog("reject"); }} className="h-10 px-4 rounded-lg border border-gray-300 text-sm font-medium text-gray-800 hover:bg-gray-50!">Reject…</button>
                 </section>
               ) : (
                 <section>
@@ -388,7 +388,7 @@ export default function CopyrightClaims() {
                     <div className="text-xs font-semibold text-gray-500">What happened after the decision</div>
                     <Pill meta={PROCESSING_META} value={claim.processingStatus} />
                     {(claim.processingStatus === "partial" || claim.processingStatus === "failed") && (
-                      <button onClick={retry} disabled={busy} className="ml-auto h-8 px-3 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50">Retry</button>
+                      <button onClick={retry} disabled={busy} className="ml-auto h-8 px-3 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50! disabled:opacity-50">Retry</button>
                     )}
                   </div>
                   {claim.processing?.message && <div className="text-sm text-rose-600 mb-2">{claim.processing.message}</div>}
@@ -439,11 +439,11 @@ export default function CopyrightClaims() {
             )}
 
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setDialog(null)} disabled={busy} className="h-10 px-4 rounded-lg border border-gray-300 text-sm hover:bg-gray-50">Cancel</button>
+              <button onClick={() => setDialog(null)} disabled={busy} className="h-10 px-4 rounded-lg border border-gray-300 text-sm hover:bg-gray-50!">Cancel</button>
               <button
                 onClick={submitDecision}
                 disabled={busy || (dialog === "accept" ? !reviewed : !reason.trim())}
-                className="h-10 px-4 rounded-lg bg-[#1540a4] text-white text-sm font-medium hover:bg-[#12358a] disabled:opacity-40"
+                className="h-10 px-4 rounded-lg bg-[#1540a4]! text-white text-sm font-medium hover:bg-[#12358a]! disabled:opacity-40"
               >
                 {busy ? "Saving…" : dialog === "accept" ? "Accept claim" : "Reject claim"}
               </button>

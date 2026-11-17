@@ -298,7 +298,7 @@ export default function TakedownMonitor() {
           <h1 className="text-xl font-bold text-[#1f296a]">Takedown Monitor</h1>
           <p className="text-sm text-gray-500">What was deleted, what is waiting, what failed, and the log of every step. Read only.</p>
         </div>
-        <button onClick={refresh} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm hover:bg-gray-50" aria-label="Refresh">
+        <button onClick={refresh} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white! text-sm hover:bg-gray-50!" aria-label="Refresh">
           <FiRefreshCw /> Refresh
         </button>
       </div>
@@ -414,11 +414,11 @@ export default function TakedownMonitor() {
         <section className="space-y-3">
           <div className="flex gap-2 flex-wrap items-center">
             {RUN_FILTERS.map((f) => (
-              <button key={f.key || "all"} onClick={() => setRunFilter(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${runFilter === f.key ? "bg-[#1f296a] text-white border-[#1f296a]" : "bg-white text-gray-600 border-gray-300"}`}>{f.label}</button>
+              <button key={f.key || "all"} onClick={() => setRunFilter(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${runFilter === f.key ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{f.label}</button>
             ))}
             <form onSubmit={submitComplaint} className="ml-auto flex items-center gap-2">
               <input value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder="Find by complaint id" aria-label="Complaint id" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-72" />
-              <button type="submit" className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-sm" aria-label="Search"><FiSearch /></button>
+              <button type="submit" className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-sm" aria-label="Search"><FiSearch /></button>
               {complaintQuery && <button type="button" onClick={() => { setComplaint(""); setComplaintQuery(""); }} className="text-xs text-gray-500 underline">clear</button>}
             </form>
           </div>
@@ -441,7 +441,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {runs.next && <button onClick={() => loadRuns(false, runs.next)} disabled={runs.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+          {runs.next && <button onClick={() => loadRuns(false, runs.next)} disabled={runs.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
         </section>
       )}
 
@@ -467,7 +467,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {failures.next && <button onClick={() => loadFailures(false, failures.next)} disabled={failures.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+          {failures.next && <button onClick={() => loadFailures(false, failures.next)} disabled={failures.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
         </section>
       )}
 
@@ -475,7 +475,7 @@ export default function TakedownMonitor() {
         <section className="space-y-3">
           <div className="flex gap-2 flex-wrap">
             {HASH_FILTERS.map((s) => (
-              <button key={s || "all"} onClick={() => setHashStatus(s)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${hashStatus === s ? "bg-[#1f296a] text-white border-[#1f296a]" : "bg-white text-gray-600 border-gray-300"}`}>{s || "All"}</button>
+              <button key={s || "all"} onClick={() => setHashStatus(s)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${hashStatus === s ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{s || "All"}</button>
             ))}
           </div>
           {hash.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{hash.error}</div>}
@@ -497,7 +497,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {hash.next && <button onClick={() => loadHash(false, hash.next)} disabled={hash.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+          {hash.next && <button onClick={() => loadHash(false, hash.next)} disabled={hash.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
         </section>
       )}
 
@@ -513,14 +513,14 @@ export default function TakedownMonitor() {
           )}
           <div className="flex gap-2 flex-wrap items-center">
             {BLOCK_STATUS_FILTERS.map((f) => (
-              <button key={f.key || "all"} onClick={() => setBlockStatus(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${blockStatus === f.key ? "bg-[#1f296a] text-white border-[#1f296a]" : "bg-white text-gray-600 border-gray-300"}`}>{f.label}</button>
+              <button key={f.key || "all"} onClick={() => setBlockStatus(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${blockStatus === f.key ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{f.label}</button>
             ))}
             <select aria-label="Block type" value={blockType} onChange={(e) => setBlockType(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
               {BLOCK_TYPES.map((t) => <option key={t.key || "all"} value={t.key}>{t.label}</option>)}
             </select>
             <form onSubmit={submitBlockSearch} className="ml-auto flex items-center gap-2">
               <input value={blockText} onChange={(e) => setBlockText(e.target.value)} placeholder="Search a blocked name or link" aria-label="Search blocked" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-64" />
-              <button type="submit" className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-sm" aria-label="Search blocked list"><FiSearch /></button>
+              <button type="submit" className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-sm" aria-label="Search blocked list"><FiSearch /></button>
               {blockSearch && <button type="button" onClick={() => { setBlockText(""); setBlockSearch(""); }} className="text-xs text-gray-500 underline">clear</button>}
             </form>
           </div>
@@ -544,7 +544,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {blocklist.next && <button onClick={() => loadBlocklist(false, blocklist.next)} disabled={blocklist.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+          {blocklist.next && <button onClick={() => loadBlocklist(false, blocklist.next)} disabled={blocklist.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
         </section>
       )}
 
@@ -570,7 +570,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {attempts.next && <button onClick={() => loadAttempts(false, attempts.next)} disabled={attempts.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+          {attempts.next && <button onClick={() => loadAttempts(false, attempts.next)} disabled={attempts.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
         </section>
       )}
 
@@ -599,7 +599,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {audits.next && <button onClick={() => loadAudits(false, audits.next)} disabled={audits.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+          {audits.next && <button onClick={() => loadAudits(false, audits.next)} disabled={audits.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
         </section>
       )}
 
@@ -607,7 +607,7 @@ export default function TakedownMonitor() {
         <section className="space-y-3">
           <div className="flex gap-2 flex-wrap items-center">
             {CLAIM_FILTERS.map((f) => (
-              <button key={f.key || "all"} onClick={() => setClaimStatus(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${claimStatus === f.key ? "bg-[#1f296a] text-white border-[#1f296a]" : "bg-white text-gray-600 border-gray-300"}`}>{f.label}</button>
+              <button key={f.key || "all"} onClick={() => setClaimStatus(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${claimStatus === f.key ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{f.label}</button>
             ))}
             <Link to="/pas/copyright-claims" className="ml-auto text-sm text-[#1f296a] underline">Review and decide on the Copyright Claims page</Link>
           </div>
@@ -630,7 +630,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {claims.next && <button onClick={() => loadClaims(false, claims.next)} disabled={claims.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+          {claims.next && <button onClick={() => loadClaims(false, claims.next)} disabled={claims.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
         </section>
       )}
 
@@ -642,7 +642,7 @@ export default function TakedownMonitor() {
                 <h2 className="text-lg font-bold text-[#1f296a]">{open.kind === "run" ? "Takedown run log" : open.kind === "audit" ? "Audit findings" : `Hash job #${open.id}`}</h2>
                 <div className="text-xs text-gray-500 font-mono break-all">{open.network} · {open.id}</div>
               </div>
-              <button onClick={() => setOpen(null)} aria-label="Close" className="p-2 rounded-lg hover:bg-gray-100"><FiX /></button>
+              <button onClick={() => setOpen(null)} aria-label="Close" className="p-2 rounded-lg hover:bg-gray-100!"><FiX /></button>
             </div>
             {log.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{log.error}</div>}
 
@@ -653,12 +653,12 @@ export default function TakedownMonitor() {
                   {log.data.run.mode === "dry_run" && <Badge>dry run: deleted nothing</Badge>}
                   <span>planned {log.data.run.itemsPlanned}</span><span className="text-green-700">done {log.data.run.itemsSucceeded}</span><span className="text-rose-700">failed {log.data.run.itemsFailed}</span>
                   <span className="text-gray-500">operator {log.data.run.operator || "—"}</span>
-                  <button type="button" onClick={() => openAuditOfRun(log.data.run)} className="ml-auto px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs">Open audit</button>
+                  <button type="button" onClick={() => openAuditOfRun(log.data.run)} className="ml-auto px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-xs">Open audit</button>
                 </div>
                 {log.data.run.details && <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs whitespace-pre-wrap break-words">{log.data.run.details}</pre>}
                 <div className="flex gap-2 flex-wrap">
                   {Object.entries(log.data.steps.bySystem).map(([system, v]) => (
-                    <button key={system} onClick={() => setStepSystem(stepSystem === system ? "" : system)} className={`px-3 py-1.5 rounded-lg border text-xs ${stepSystem === system ? "bg-[#1f296a] text-white border-[#1f296a]" : "bg-white border-gray-300"}`}>
+                    <button key={system} onClick={() => setStepSystem(stepSystem === system ? "" : system)} className={`px-3 py-1.5 rounded-lg border text-xs ${stepSystem === system ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! border-gray-300"}`}>
                       {system}: {Object.entries(v.byStatus).map(([s, n]) => `${s} ${n}`).join(", ")}
                     </button>
                   ))}
@@ -697,7 +697,7 @@ export default function TakedownMonitor() {
                   <span>expected {log.data.audit.expectedCount}</span>
                   <span className={log.data.audit.foundCount === log.data.audit.expectedCount ? "text-green-700" : "text-rose-700"}>found {log.data.audit.foundCount}</span>
                   <span className="text-gray-500">{fmtDate(log.data.audit.finishedAt || log.data.audit.startedAt)}</span>
-                  {log.data.audit.takedownRunId && <button type="button" onClick={() => openRun({ network: log.data.audit.network, runId: log.data.audit.takedownRunId })} className="ml-auto px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-xs">Open takedown run</button>}
+                  {log.data.audit.takedownRunId && <button type="button" onClick={() => openRun({ network: log.data.audit.network, runId: log.data.audit.takedownRunId })} className="ml-auto px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-xs">Open takedown run</button>}
                 </div>
                 {log.data.audit.details && <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs whitespace-pre-wrap break-words">{log.data.audit.details}</pre>}
                 <div className="flex gap-2 items-center flex-wrap text-xs">
@@ -762,7 +762,7 @@ export default function TakedownMonitor() {
             )}
 
             {log.loading && <div className="text-sm text-gray-500">Loading…</div>}
-            {log.next && !log.loading && <button onClick={() => loadLog(open, false, log.next)} className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm">Load more</button>}
+            {log.next && !log.loading && <button onClick={() => loadLog(open, false, log.next)} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
           </div>
         </div>
       )}

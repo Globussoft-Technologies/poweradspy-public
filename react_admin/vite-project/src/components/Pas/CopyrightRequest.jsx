@@ -62,7 +62,7 @@ function Panel({ icon, tone, title, children, onRetry }) {
           <h2 className="text-base font-bold">{title}</h2>
           {children}
           {onRetry && (
-            <button onClick={onRetry} className="mt-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-current bg-white/70 text-sm font-semibold">
+            <button onClick={onRetry} className="mt-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-current bg-white/70! text-sm font-semibold">
               <FiRefreshCw /> Retry
             </button>
           )}
@@ -131,7 +131,7 @@ export default function CopyrightRequest() {
         </div>
         <div className="flex items-center gap-3 text-xs text-gray-500">
           {checkedAt && state === "ok" && <span>Checked {checkedAt.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}</span>}
-          <button onClick={check} aria-label="Check the connection" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm hover:bg-gray-50">
+          <button onClick={check} aria-label="Check the connection" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-gray-700 text-sm hover:bg-gray-50!">
             <FiRefreshCw className={state === "checking" ? "animate-spin" : ""} /> Check
           </button>
         </div>

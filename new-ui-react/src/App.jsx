@@ -553,13 +553,16 @@ const App = () => {
     const sig = [ui.activePage, ui.showSavedAdsPage, ui.showMySpacePage, ui.showProfilePage, ui.profileTab].join('|');
     const prevSig = navStateSigRef.current;
     navStateSigRef.current = sig;
+    // Track the pathname on EVERY run (before the early return). Previously the
+    // ref was only updated inside the guard below, so after our own
+    // navigate('/projects') it stayed stale ('/'), and the next Ads Library click
+    // was mistaken for a back/forward tick — URL stuck on /projects, no ads loaded.
+    const pathChanged = location.pathname !== lastPathnameRef.current;
+    lastPathnameRef.current = location.pathname;
     if (prevSig === null || prevSig === sig) return;
     if (location.pathname.startsWith('/guest/') || location.pathname.startsWith('/share/')) return;
     if (_isAdAnalyticsUrl) return;
-    if (location.pathname !== lastPathnameRef.current) {
-      lastPathnameRef.current = location.pathname;
-      return;
-    }
+    if (pathChanged) return;
     const _isSpecialRoute = location.pathname === '/guest-landing' || location.pathname.startsWith('/guest/') || location.pathname.startsWith('/share/');
     if (_isSpecialRoute) return;
     if (ui.activePage === 'projects' && location.pathname !== '/projects') {

@@ -403,6 +403,7 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
             _source: [
               'ad_id', 'ad_type', 'new_nas_image_url', 'reactions', 'dislikes',
               'comments', 'views', 'verified', 'countries', 'duration', 'call_to_action', 'ad_language',
+              'redirect_urls', 'destination_url', 'outgoing_urls',
               ...getAiMetaSourceFields('youtube'),
             ],
           },
@@ -435,6 +436,23 @@ ORDER BY FIELD(youtube_ad.id, ${placeholders})`;
       if (src.countries !== undefined) row.countries = src.countries;
       if (src.duration !== undefined) row.days_running = src.duration;
       if (src.call_to_action !== undefined) row.call_to_action = src.call_to_action;
+      // Marketing Platform badge — mirror youtube adSearchController's
+      // market_platform_urls shape so the card can detect e.g. doubleclick
+      // (Google Marketing Platform) in redirect_urls, matching the filter above.
+      // outgoing_urls is the raw lander array [{ start_url, redirect_urls, destination_url }]
+      // — flatten it into the GDN-shaped source_url / redirect_url / final_url strings.
+      const outgoing = Array.isArray(src.outgoing_urls) ? src.outgoing_urls : [];
+      const pipeJoinUrls = (vals) => {
+        const flat = vals.flatMap(v => (Array.isArray(v) ? v : [v])).filter(Boolean);
+        return flat.length ? flat.join('||') : null;
+      };
+      row.market_platform_urls = {
+        redirect_urls: src.redirect_urls || null,
+        destination_url: src.destination_url || null,
+        source_url:   pipeJoinUrls(outgoing.map(o => o && o.start_url)),
+        redirect_url: pipeJoinUrls(outgoing.map(o => o && o.redirect_urls)),
+        final_url:    pipeJoinUrls(outgoing.map(o => o && o.destination_url)),
+      };
       // Language is ES-only — must agree with the language FILTER, which only
       // ever matches `ad_language`. Discard the stale `languages.name` SQL join
       // (read via YT_SELECT) so a card/detail modal never shows a language the
