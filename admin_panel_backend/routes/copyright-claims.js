@@ -21,6 +21,7 @@ const { authenticateJWT } = require('../services/authService');
 const router = express.Router();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SERVICE = '/api/v1/copyright/admin/claims';
+const IMAGE_HASH_HEALTH_URL = 'https://img-hashing-local-blr.poweradspy.ai/health';
 const FILE_HEADERS = ['content-type', 'content-disposition', 'x-content-type-options', 'cache-control', 'content-security-policy'];
 
 const settings = () => ({
@@ -107,6 +108,15 @@ const checkMonitor = (req, res, next) => {
   return next();
 };
 router.get('/monitor/overview', checkMonitor, proxy('GET', '/overview', passOn()));
+router.get('/monitor/image-hashing-health', async (_req, res) => {
+  try {
+    const health = await axios.get(IMAGE_HASH_HEALTH_URL, { timeout: 5000, validateStatus: () => true });
+    return res.json({ code: 200, data: { healthy: health.status >= 200 && health.status < 300 } });
+  } catch (err) {
+    // Keep the monitor usable when this separate service is unreachable.
+    return res.json({ code: 200, data: { healthy: false } });
+  }
+});
 router.get('/monitor/verification', checkMonitor, proxy('GET', '/verification', passOn('network', 'afterId', 'limit')));
 router.get('/monitor/runs', checkMonitor, proxy('GET', '/runs', passOn('network', 'complaintId', 'status', 'mode', 'cursor', 'limit')));
 router.get('/monitor/runs/:runId/logs', checkMonitor, proxy('GET', (req) => `/runs/${req.params.runId}/logs`, passOn('network', 'status', 'system', 'afterId', 'limit')));

@@ -103,6 +103,7 @@ function Stat({ label, value, tone = "text-[#1f296a]", hint }) {
 export default function TakedownMonitor() {
   const [overview, setOverview] = useState(null);
   const [overviewError, setOverviewError] = useState("");
+  const [imageHashingHealthy, setImageHashingHealthy] = useState(null);
   const [verification, setVerification] = useState({ items: [], next: null, available: true, reason: "", error: "", loading: false });
   const [forbidden, setForbidden] = useState(false);
   const [network, setNetwork] = useState("");
@@ -145,6 +146,13 @@ export default function TakedownMonitor() {
       setOverview(json.data);
       setNetwork((current) => current || json.data.networks.find((n) => n.takedown.available || n.hashJobs.available)?.network || json.data.networks[0]?.network || "");
     } catch { setOverviewError("The numbers could not be loaded."); }
+  }, []);
+
+  const loadImageHashingHealth = useCallback(async () => {
+    try {
+      const { ok, json } = await api("/image-hashing-health");
+      setImageHashingHealthy(ok && json?.data?.healthy === true);
+    } catch { setImageHashingHealthy(false); }
   }, []);
 
   const loadVerification = useCallback(async (reset = true, cursor = null) => {
@@ -248,6 +256,7 @@ export default function TakedownMonitor() {
   }, [stepStatus, stepSystem, outcome, findingStatus]);
 
   useEffect(() => { loadOverview(); const t = setInterval(loadOverview, 60000); return () => clearInterval(t); }, [loadOverview]);
+  useEffect(() => { loadImageHashingHealth(); const t = setInterval(loadImageHashingHealth, 60000); return () => clearInterval(t); }, [loadImageHashingHealth]);
   useEffect(() => {
     if (tab !== "verification") return undefined;
     loadVerification(true);
@@ -263,7 +272,7 @@ export default function TakedownMonitor() {
   useEffect(() => { if (tab === "claims") loadClaims(true); }, [tab, loadClaims]);
   useEffect(() => { if (open) loadLog(open, true); }, [open, loadLog]);
 
-  const refresh = () => { loadOverview(); if (tab === "verification") loadVerification(true); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "blocklist") loadBlocklist(true); if (tab === "attempts") loadAttempts(true); if (tab === "audit") loadAudits(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
+  const refresh = () => { loadOverview(); loadImageHashingHealth(); if (tab === "verification") loadVerification(true); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "blocklist") loadBlocklist(true); if (tab === "attempts") loadAttempts(true); if (tab === "audit") loadAudits(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
   const submitBlockSearch = (e) => { e.preventDefault(); setBlockSearch(blockText.trim()); };
   const openRun = (r) => { setStepStatus(""); setStepSystem(""); setOpen({ kind: "run", network: r.network, id: r.runId }); };
   const openJob = (j) => { setOutcome(""); setOpen({ kind: "job", network: j.network, id: j.id }); };
@@ -298,9 +307,18 @@ export default function TakedownMonitor() {
           <h1 className="text-xl font-bold text-[#1f296a]">Takedown Monitor</h1>
           <p className="text-sm text-gray-500">What was deleted, what is waiting, what failed, and the log of every step. Read only.</p>
         </div>
-        <button onClick={refresh} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white! text-sm hover:bg-gray-50!" aria-label="Refresh">
-          <FiRefreshCw /> Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <div role="status" aria-live="polite" className="inline-flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-600">
+            <span aria-hidden="true" className={`h-2 w-2 rounded-full ${imageHashingHealthy === null ? "bg-gray-400 animate-pulse" : imageHashingHealthy ? "bg-green-500" : "bg-rose-500"}`} />
+            <span>Image hashing service</span>
+            <span className={`font-medium ${imageHashingHealthy === null ? "text-gray-500" : imageHashingHealthy ? "text-green-700" : "text-rose-700"}`}>
+              {imageHashingHealthy === null ? "Checking" : imageHashingHealthy ? "Healthy" : "Unavailable"}
+            </span>
+          </div>
+          <button onClick={refresh} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 bg-white! text-sm hover:bg-gray-50!" aria-label="Refresh">
+            <FiRefreshCw /> Refresh
+          </button>
+        </div>
       </div>
 
       {overviewError && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{overviewError}</div>}

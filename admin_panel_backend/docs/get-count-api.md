@@ -1,5 +1,7 @@
 # Get-Count API
 
+**Last checked against implementation:** 17 November 2026
+
 One SQL endpoint for ad counts. Powers the admin-panel crawler-insight cards and
 gives the DS team the same numbers as their daily report — so both stay in sync.
 
@@ -59,6 +61,8 @@ All responses are wrapped as `{ "code": 200, "message": "success", "data": <belo
 { "total": 5401, "groupBy": "type", "buckets": [ { "key": "VIDEO", "count": 922 }, { "key": "IMAGE", "count": 4479 } ] }
 ```
 
+**Implementation mapping:** `metric=new` without `groupBy` uses each network's configured `firstSeen` column: `first_seen` except YouTube and Pinterest, which use `created_date`. A `new` request with `groupBy` always groups on `first_seen` for every network. Therefore grouped bucket totals may differ from the ungrouped `new` total for YouTube and Pinterest.
+
 ### `active` — total ads in the window
 "Active ads" for a day = ads whose last sighting fell in that day (`last_seen ∈ [day, day+1)`).
 Because `last_seen` keeps moving as ads are re-crawled, a *live* query for a past
@@ -69,8 +73,8 @@ date isn't reproducible — so:
 - **A multi-day range** = the **sum of the daily snapshots** in range (+ live today
   if today is included). Note this is a per-day total — an ad active on N days
   counts N times.
-- If a past day's snapshot is missing (cron hadn't run yet), it transparently
-  falls back to a live count for that span, so the card is never blank.
+- Fallback is span-level: if the snapshot query errors or returns **no rows** (including when the table is missing), the API runs one live count for that entire past span.
+  If at least one snapshot row is returned, it sums the rows present and does **not** live-fill missing dates. Check snapshot completeness before interpreting a partial historical range.
 ```json
 { "network": "youtube", "metric": "active", "range": { "from": "2026-06-15", "to": "2026-06-15" } }
 ```
@@ -94,8 +98,10 @@ Without `platform` → all plugins as buckets:
 { "total": 5401, "buckets": [ { "platform": 12, "count": 5401 } ] }
 ```
 
+**Implementation mapping:** Facebook stores `platform` on `facebook_ad`; other networks use their metadata table. LinkedIn uses `created_at` instead of `created_date`. Bing and LinkedIn count their ad foreign-key columns; the other networks count `id`. These mappings live in `DB_DATA` in `src/dynamic-count-analytics.js`.
+
 ### `processed` — pipeline-stage counts (needs `stage`)
-`destination`/`screenshot`/`builtwith` read `<net>_ad_meta_data`; `ocr`/`ocb` read `<net>_ad_variants`.
+`destination`/`screenshot`/`builtwith` normally read `<net>_ad_meta_data`; `ocr`/`ocb` normally read `<net>_ad_variants`. LinkedIn uses dedicated tables: `linkedin_ad_lander`, `linkedin_ad_meta_data`, `linkedin_ad_built_with`, and `linkedin_ad_ocr_ocb_details`.
 ```json
 { "network": "youtube", "metric": "processed", "range": { "from": "2026-06-15", "to": "2026-06-15" }, "stage": "builtwith" }
 ```
@@ -157,8 +163,7 @@ One JSON line per request, capturing who hit it, with what, and what came back:
   "response": { "code": 200, "message": "success", "data": { "total": 0 } } }
 ```
 
-- **Retention:** only the **most recent 7 days** of files are kept; older day-files
-  are deleted automatically.
+- **Retention:** the default is the **most recent 7 days** of files; older day-files are deleted automatically. `GET_COUNT_LOG_RETENTION_DAYS` can override the default.
 - **Identify yourself:** send a `x-source: <name>` header (e.g. `x-source: ds-daily-report`)
   so your calls are easy to find in the log. Without it, callers are still
   distinguishable by `ip` / `userAgent` / `origin`.
