@@ -183,6 +183,26 @@ function buildAdCountOwnerClause(cfg, competitorName) {
   };
 }
 
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // matches the histograms' time_zone "+05:30"
+
+/**
+ * Resolve a monthly date_histogram bucket to its full month name.
+ * `format: "MMMM"` returns "February" on ES 6.8 (Joda) but "Feb" on ES 9.x
+ * (java.time), so match on the first three letters; fall back to the bucket's
+ * epoch key if the label is anything else. Returns undefined if unresolvable.
+ */
+function bucketMonthName(bucket) {
+  const label = String(bucket?.key_as_string ?? "").slice(0, 3).toLowerCase();
+  const byLabel = label && MONTH_NAMES.find((m) => m.slice(0, 3).toLowerCase() === label);
+  if (byLabel) return byLabel;
+  const key = Number(bucket?.key);
+  return Number.isFinite(key) ? MONTH_NAMES[new Date(key + IST_OFFSET_MS).getUTCMonth()] : undefined;
+}
+
 class AdvertiserService {
   constructor() {
     this.esClient = esClient;
@@ -292,7 +312,10 @@ class AdvertiserService {
           const formatBuckets = (buckets) => {
             const counts = {};
             monthList.forEach(m => counts[m] = 0);
-            for (const b of buckets) counts[b.key_as_string] = b.value.value || 0;
+            for (const b of buckets) {
+              const month = bucketMonthName(b);
+              if (month) counts[month] = b.value.value || 0;
+            }
             return counts;
           };
   
@@ -909,7 +932,9 @@ class AdvertiserService {
           const monthWise = {};
           monthList.forEach((m) => (monthWise[m] = []));
           for (const b of buckets) {
-            monthWise[b.key_as_string] = b.top_cta.buckets.map((cta) => ({
+            const month = bucketMonthName(b);
+            if (!month) continue;
+            monthWise[month] = b.top_cta.buckets.map((cta) => ({
               cta: cta.key,
               count: cta.doc_count,
             }));
@@ -2270,7 +2295,8 @@ class AdvertiserService {
   
             // Accumulate counts for each month
             for (const bucket of buckets) {
-              monthCounts[bucket.key_as_string] += bucket.doc_count;
+              const month = bucketMonthName(bucket);
+              if (month) monthCounts[month] += bucket.doc_count;
             }
   
             /* v8 ignore next -- every advertiserIndexConfig sets a platform and monthlyTotals is pre-initialised for all of them, so this is always true */

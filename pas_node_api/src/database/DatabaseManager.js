@@ -429,7 +429,7 @@ class DatabaseManager {
       if (legacy) log.info(`[${slug}] Elasticsearch ${esMajor}.x — using ES 6.x request compatibility`);
       const indexDoc = (params, options) => (legacy
         ? esCompat.legacyIndex(client, params, options, typeCache)
-        : client.index(params, options));
+        : client.index(esCompat.stripType(params), options));
 
       return {
         type: 'elasticsearch',
@@ -438,20 +438,24 @@ class DatabaseManager {
         indexName: elasticConfig.index,
         // Preserve Elasticsearch transport options (for example requestTimeout)
         // instead of dropping them at this service wrapper boundary.
-        get:    (params, options) => (legacy ? esCompat.legacyGet(client, params, options) : client.get(params, options)),
-        search: (params, options) => search(legacy ? esCompat.toLegacySearch(params) : params, options),
+        get:    (params, options) => (legacy ? esCompat.legacyGet(client, params, options) : client.get(esCompat.stripType(params), options)),
+        search: (params, options) => search(legacy ? esCompat.toLegacySearch(params) : esCompat.stripType(params), options),
         analyze:(params, options) => client.indices.analyze(params, options),
-        count:  (params, options) => client.count(legacy ? esCompat.toLegacySearch(params) : params, options),
+        count:  (params, options) => client.count(legacy ? esCompat.toLegacySearch(params) : esCompat.stripType(params), options),
         index: (params, options) => {
           if (!config.compliance?.copyrightVerification?.enabled) return indexDoc(params, options);
           return require('../services/copyrightVerification/status').indexDocument(slug, elasticConfig.index, params, () => this.getSQL(slug))
             .then((guarded) => indexDoc(guarded, options));
         },
-        update: (params, options) => (legacy ? esCompat.legacyUpdate(client, params, options, typeCache) : client.update(params, options)),
-        delete: (params, options) => (legacy ? esCompat.legacyDelete(client, params, options, typeCache) : client.delete(params, options)),
+        update: (params, options) => (legacy ? esCompat.legacyUpdate(client, params, options, typeCache) : client.update(esCompat.stripType(params), options)),
+        delete: (params, options) => (legacy ? esCompat.legacyDelete(client, params, options, typeCache) : client.delete(esCompat.stripType(params), options)),
         bulk:   (params, options) => (legacy
           ? esCompat.toLegacyBulk(client, params, typeCache).then((p) => client.bulk(p, options))
           : client.bulk(params, options)),
+        // ES 6.x: PUT /index/_mapping/<type>; ES 7+: typeless (a passed `type` is dropped).
+        putMapping: (params, options) => (legacy
+          ? esCompat.legacyPutMapping(client, params, options, typeCache)
+          : client.indices.putMapping(esCompat.stripType(params), options)),
         close:  () => this._releaseEsClient(elasticConfig),
       };
     } catch (err) {
@@ -475,13 +479,15 @@ class DatabaseManager {
         esMajor,
         indexName: elasticConfig.index,
         // Keep the TikTok adapter behavior aligned with the main ES adapter.
-        search: (params, options) => search(params, options),
+        // TikTok's cluster (ES 8) is typeless: a caller-supplied `type` is dropped.
+        search: (params, options) => search(esCompat.stripType(params), options),
         analyze:(params, options) => client.indices.analyze(params, options),
-        count:  (params, options) => client.count(params, options),
-        index:  (params, options) => client.index(params, options),
-        update: (params, options) => client.update(params, options),
-        delete: (params, options) => client.delete(params, options),
+        count:  (params, options) => client.count(esCompat.stripType(params), options),
+        index:  (params, options) => client.index(esCompat.stripType(params), options),
+        update: (params, options) => client.update(esCompat.stripType(params), options),
+        delete: (params, options) => client.delete(esCompat.stripType(params), options),
         bulk:   (params, options) => client.bulk(params, options),
+        putMapping: (params, options) => client.indices.putMapping(esCompat.stripType(params), options),
         close:  () => this._releaseEsClient(elasticConfig),
       };
     } catch (err) {

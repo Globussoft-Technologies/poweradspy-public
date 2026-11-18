@@ -127,7 +127,7 @@ async function main() {
   if (elastic.esMajor != null && elastic.esMajor < 7) {
     params.type = 'doc';
   }
-  await elastic.client.indices.putMapping(params);
+  await elastic.putMapping(params); // 6.x: typed PUT /index/_mapping/doc; 9.x: typeless
   console.log(`[${NETWORK}] APPLIED - mapping updated for ${indexName}`);
 
   await databaseManager.disconnectAll();

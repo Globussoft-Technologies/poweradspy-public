@@ -7,6 +7,9 @@
  * (`esMajor`); only when the cluster is older than 7 are requests passed through the helpers
  * below. ES 9.x requests are sent unchanged.
  *
+ * A `type` a caller passes is dropped on ES 7+ (typeless) and on 6.x search/count — see
+ * stripType — so code written with `type: 'doc'` works on 6.8, 8.x and 9.5 alike.
+ *
  * What differs on ES 6.x:
  *   - document APIs need a mapping type in the URL (`/index/doc/id`). Client v9 cannot send a
  *     type, so index / get / update / delete go out as raw typed requests, and bulk action
@@ -57,10 +60,22 @@ function legacySearchBody(body) {
   return out;
 }
 
+/**
+ * Drop a caller-supplied mapping `type`. Client v9 has no `type` parameter and sends any
+ * unknown key in the request body, which ES rejects (`unknown field [type]`). Needed on
+ * typeless clusters (ES 7+) for every API, and on ES 6.x for search/count (a typeless
+ * search covers the index's single type).
+ */
+function stripType(params) {
+  if (!params || typeof params !== 'object' || !('type' in params)) return params;
+  const { type, ...rest } = params; // eslint-disable-line no-unused-vars
+  return rest;
+}
+
 /** Search/count params for ES 6.x (body keys may sit in `body` or at the top level). */
 function toLegacySearch(params) {
   if (!params || typeof params !== 'object') return params;
-  const out = legacySearchBody(params);
+  const out = legacySearchBody(stripType(params));
   if (out.body) out.body = legacySearchBody(out.body);
   return out;
 }
@@ -133,6 +148,44 @@ async function legacyDelete(client, params, options, cache) {
   }, options);
 }
 
+/**
+ * Put-mapping for ES 6.x: `PUT /index/_mapping/<type>`. Client v9 has no `type` parameter
+ * (it would send `type` inside the mapping body), so the request goes out raw.
+ */
+async function legacyPutMapping(client, params, options, cache) {
+  const type = params.type || await resolveType(client, params.index, cache);
+  return client.transport.request({
+    method: 'PUT',
+    path: `/${enc(params.index)}/_mapping/${enc(type)}`,
+    querystring: pickRest(params, ['index', 'type', 'body']),
+    body: params.body,
+  }, options);
+}
+
+/**
+ * Client options for a standalone client v9 (scripts that build their own Client) so it
+ * works against ES 6.x, 8.x and 9.x — the same transport settings DatabaseManager uses:
+ * no product check (6.x sends no `x-elastic-product` header) and plain JSON headers
+ * (ES 6.x/8.x reject `compatible-with=9`).
+ */
+function compatClientOptions(es) {
+  if (!es || !es.Transport) return {};
+  class PlainJsonTransport extends es.Transport {
+    constructor(opts) {
+      super({
+        ...opts,
+        productCheck: null,
+        vendoredHeaders: {
+          jsonContentType: 'application/json',
+          ndjsonContentType: 'application/x-ndjson',
+          accept: 'application/json, text/plain',
+        },
+      });
+    }
+  }
+  return { Transport: PlainJsonTransport };
+}
+
 const BULK_ACTIONS = ['index', 'create', 'update', 'delete'];
 
 /** Bulk params for ES 6.x: `_type` added to every action line that lacks one. */
@@ -157,6 +210,7 @@ async function toLegacyBulk(client, params, cache) {
 
 module.exports = {
   isLegacy,
+  stripType,
   toLegacySearch,
   renameIntervals,
   legacyDocvalueFields,
@@ -165,5 +219,7 @@ module.exports = {
   legacyGet,
   legacyUpdate,
   legacyDelete,
+  legacyPutMapping,
+  compatClientOptions,
   toLegacyBulk,
 };

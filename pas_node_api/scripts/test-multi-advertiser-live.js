@@ -1,6 +1,8 @@
 'use strict';
 
-const { Client } = require('@elastic/elasticsearch');
+const esModule = require('@elastic/elasticsearch');
+const { Client } = esModule;
+const { compatClientOptions } = require('../src/database/esVersionCompat');
 const networks = require('../src/config/networks');
 
 const VALUES = ['nykaa', 'myntra', 'dell', 'samsung', 'nextdoor'];
@@ -199,6 +201,8 @@ async function main() {
         ...(nodes.length > 1 ? { nodes } : { node: nodes[0] }),
         requestTimeout: 20000,
         maxRetries: 1,
+        // Same transport as DatabaseManager: lets client v9 talk to ES 6.8, 8.x and 9.x.
+        ...compatClientOptions(esModule),
         ...(cfg.auth?.username ? { auth: { username: cfg.auth.username, password: cfg.auth.password || '' } } : {}),
       });
       clients.set(key, client);

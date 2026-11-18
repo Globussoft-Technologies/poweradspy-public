@@ -706,7 +706,7 @@ async function purgeOldActivities(req, elastic, logger) {
 
           // Refresh index
           try {
-            await elastic.indices.refresh({ index: 'user_activities' });
+            await (elastic.client || elastic).indices.refresh({ index: 'user_activities' });
           } catch (refreshErr) {
             logger?.warn?.('Index refresh failed:', refreshErr.message);
           }

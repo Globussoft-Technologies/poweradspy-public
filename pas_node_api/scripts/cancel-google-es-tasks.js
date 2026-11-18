@@ -40,7 +40,7 @@ async function main() {
   // ─── Cancel one specific task id ───
   if (args.taskId) {
     console.log(`Cancelling task ${args.taskId} ...`);
-    const res = await client.tasks.cancel({ taskId: args.taskId });
+    const res = await client.tasks.cancel({ task_id: args.taskId });
     console.log(JSON.stringify(res.body || res, null, 2));
     await databaseManager.disconnectAll();
     return;
@@ -85,7 +85,7 @@ async function main() {
 
   for (const t of toCancel) {
     try {
-      await client.tasks.cancel({ taskId: t.taskId });
+      await client.tasks.cancel({ task_id: t.taskId });
       console.log(`cancelled ${t.taskId}`);
     } catch (err) {
       console.log(`could not cancel ${t.taskId}: ${err.message}`);

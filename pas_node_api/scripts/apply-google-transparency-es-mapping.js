@@ -55,7 +55,7 @@ async function main() {
   }
   const params = { index: indexName, body: prepared.body };
   if (elastic.esMajor && elastic.esMajor < 7) params.type = 'doc';
-  await elastic.client.indices.putMapping(params);
+  await elastic.putMapping(params); // 6.x: typed PUT /index/_mapping/doc; 9.x: typeless
   console.log(`Mapping applied successfully to ${indexName}.`);
 }
 

@@ -77,7 +77,8 @@ const NETWORKS = {
     ],
   },
   youtube: {
-    mainTable: 'youtube_ad', sqlLastSeen: 'datetime',
+    // SQL last_seen is DATETIME; the ES doc stores epoch SECONDS (youtube/insertion/esDocBuilder.js EPOCH_FIELDS).
+    mainTable: 'youtube_ad', sqlLastSeen: 'datetime', esLastSeen: 'epoch',
     esIdField: 'id', esIdIsDocId: true, esLastSeenField: 'last_seen',
     repo: '../src/services/youtube/insertion/repository',
     extraChildDeletes: [
@@ -185,6 +186,15 @@ Options:
   --invalid-dates           Also (or only) delete ads whose last_seen is NULL, 0000-00-00, 1970 or any
                             date before 2000. Confirm phrase: DELETE_ADS_BY_YEAR:invalid-dates
                             (with --year 2019: DELETE_ADS_BY_YEAR:2019,invalid-dates).
+  --orphans                 Scan the WHOLE ES index of each network and remove docs whose ad id no
+                            longer exists in MySQL (so the search API can't return them). MySQL is
+                            not touched. Docs with no ad id are only reported, never deleted.
+                            Confirm phrase: DELETE_ADS_BY_YEAR:orphans
+                            With --year 2023: only ES docs whose last_seen is in 2023, and the normal
+                            SQL+ES year delete is NOT run. Confirm: DELETE_ADS_BY_YEAR:2023,orphans
+  --fix-stale               With --orphans --year: for ES docs whose ad IS in MySQL but MySQL last_seen
+                            is another year, copy MySQL last_seen into the ES doc (nothing deleted).
+                            Confirm: DELETE_ADS_BY_YEAR:2023,orphans,fix-stale
   --help                   Show this help.
 `.trim();
 }
@@ -195,7 +205,7 @@ function parseArgs(argv) {
   const opts = {
     years: [], yearsRaw: '', networks: [...ALL_NETWORKS], apply: false, confirm: null,
     limit: null, batchSize: DEFAULT_BATCH, sleepMs: DEFAULT_SLEEP_MS,
-    esSweep: false, skipEsCount: false, invalidDates: false, help: false,
+    esSweep: false, skipEsCount: false, invalidDates: false, orphans: false, fixStale: false, help: false,
   };
   const val = (i, flag) => {
     const v = argv[i + 1];
@@ -216,6 +226,8 @@ function parseArgs(argv) {
     else if (a === '--es-sweep') opts.esSweep = true;
     else if (a === '--skip-es-count') opts.skipEsCount = true;
     else if (a === '--invalid-dates') opts.invalidDates = true;
+    else if (a === '--orphans') opts.orphans = true;
+    else if (a === '--fix-stale') opts.fixStale = true;
     else if (a === '--help' || a === '-h') opts.help = true;
     else throw new Error(`Unknown argument: ${a}`);
   }
@@ -223,8 +235,11 @@ function parseArgs(argv) {
 
   const thisYear = new Date().getUTCFullYear();
   opts.years = [...new Set(String(opts.yearsRaw).split(',').map((s) => s.trim()).filter(Boolean))];
-  if (!opts.years.length && !opts.invalidDates) {
-    throw new Error('--year is required (e.g. --year 2019), or use --invalid-dates.');
+  if (!opts.years.length && !opts.invalidDates && !opts.orphans) {
+    throw new Error('--year is required (e.g. --year 2019), or use --invalid-dates / --orphans.');
+  }
+  if (opts.fixStale && (!opts.orphans || (!opts.years.length && !opts.invalidDates))) {
+    throw new Error('--fix-stale needs --orphans plus --year (or --invalid-dates), e.g. --orphans --fix-stale --year 2023.');
   }
   for (const y of opts.years) {
     if (!/^\d{4}$/.test(y) || Number(y) < 2000 || Number(y) > thisYear) {
@@ -248,7 +263,7 @@ function parseArgs(argv) {
 }
 
 function confirmPhrase(opts) {
-  const parts = [opts.yearsRaw, opts.invalidDates ? 'invalid-dates' : ''].filter(Boolean);
+  const parts = [opts.yearsRaw, opts.invalidDates ? 'invalid-dates' : '', opts.orphans ? 'orphans' : '', opts.fixStale ? 'fix-stale' : ''].filter(Boolean);
   return `DELETE_ADS_BY_YEAR:${parts.join(',')}`;
 }
 
@@ -281,7 +296,7 @@ function esLastSeenRange(spec, year) {
   if (year === INVALID) {
     const epoch = (spec.esLastSeen || spec.sqlLastSeen) === 'epoch';
     const lt = epoch
-      ? { lt: VALID_FROM.epoch }
+      ? { lt: VALID_FROM.epoch, format: 'epoch_second' }
       : { lt: VALID_FROM.datetime, format: 'yyyy-MM-dd HH:mm:ss' };
     return {
       bool: {
@@ -295,7 +310,9 @@ function esLastSeenRange(spec, year) {
   }
   if ((spec.esLastSeen || spec.sqlLastSeen) === 'epoch') {
     const b = yearBounds(year, 'epoch');
-    return { range: { [spec.esLastSeenField]: { gte: b.from, lt: b.to } } };
+    // ES date field holding epoch SECONDS (linkedin) — without format ES reads numbers as millis.
+    // Same as LinkedinSearchQueryBuilder (format: 'epoch_second').
+    return { range: { [spec.esLastSeenField]: { gte: b.from, lt: b.to, format: 'epoch_second' } } };
   }
   const b = yearBounds(year, 'datetime');
   return { range: { [spec.esLastSeenField]: { gte: b.from, lt: b.to, format: 'yyyy-MM-dd HH:mm:ss' } } };
@@ -626,6 +643,145 @@ async function esOrphanSweep({ network, spec, db, year, apply }) {
   return out;
 }
 
+/**
+ * --orphans: every ES doc in the network's index (no date filter) is checked
+ * against MySQL, a page at a time. Doc whose ad id has no SQL row → orphan
+ * (deleted on apply). Doc with no usable ad id → reported only, never deleted
+ * (protects against a wrong id field causing a mass delete). MySQL untouched.
+ */
+/** MySQL 'YYYY-MM-DD HH:mm:ss' → the value the ES doc stores for last_seen. */
+function esLastSeenValue(spec, sqlStr) {
+  if ((spec.esLastSeen || spec.sqlLastSeen) === 'epoch') {
+    // Same conversion as linkedin/insertion/esDocBuilder.js toEpoch(): datetime read as UTC.
+    const ms = Date.parse(`${sqlStr.replace(' ', 'T')}Z`);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+  }
+  return sqlStr;
+}
+
+async function esFullOrphanSweep({ network, spec, db, apply, year = null, fixStale = false }) {
+  const client = db.elastic.client;
+  const index = db.elastic.indexName;
+  const out = {
+    esTotal: 0, orphans: 0, orphanDeleted: 0, noId: 0, orphanSamples: [], noIdSamples: [],
+    stale: 0, staleFixed: 0, staleSamples: [],
+  };
+  // Stale = ES last_seen in this year, but the MySQL row's last_seen is NOT (only checkable with a year).
+  const p = year === null ? null : sqlPeriod(spec, year);
+  const started = Date.now();
+  // With a year: only ES docs whose ES last_seen is in that year (or invalid dates); else whole index.
+  const query = year === null ? { match_all: {} } : esLastSeenRange(spec, year);
+  const label = year === null ? network : `${network}] [${year}`;
+  network = label; // log prefix only
+  let page = unwrap(await client.search({
+    index, scroll: '5m', size: 1000,
+    body: { query, sort: ['_doc'], _source: [spec.esIdField] },
+  }));
+  let scrollId = page._scroll_id;
+  let pages = 0;
+  try {
+    for (;;) {
+      const hits = page?.hits?.hits || [];
+      if (!hits.length) break;
+      pages += 1;
+      out.esTotal += hits.length;
+
+      // Ad id per hit: the id field, or _id for indices where _id IS the internal id.
+      const withId = [];
+      for (const h of hits) {
+        let raw = sourceValue(h._source, spec.esIdField);
+        if ((raw === undefined || raw === null || raw === '') && spec.esIdIsDocId) raw = h._id;
+        if (raw !== undefined && raw !== null && /^\d+$/.test(String(raw))) {
+          withId.push({ h, id: Number(raw) });
+        } else {
+          out.noId += 1;
+          if (out.noIdSamples.length < 10) out.noIdSamples.push({ _id: h._id, id: raw ?? null });
+        }
+      }
+
+      const ids = [...new Set(withId.map((x) => x.id))];
+      const existing = new Map(); // id → { ls: 'YYYY-MM-DD HH:mm:ss' | null, inYear: bool }
+      if (ids.length) {
+        const marks = ids.map(() => '?').join(',');
+        const rows = p
+          ? await db.sql.query(
+            `SELECT id, DATE_FORMAT(last_seen, '%Y-%m-%d %H:%i:%s') AS ls, IFNULL(${p.cond}, 0) AS in_year
+               FROM ${spec.mainTable} WHERE id IN (${marks})`, [...p.params, ...ids])
+          : await db.sql.query(`SELECT id FROM ${spec.mainTable} WHERE id IN (${marks})`, ids);
+        for (const r of rows) existing.set(Number(r.id), { ls: r.ls ?? null, inYear: Number(r.in_year) === 1 });
+      }
+
+      // Stale: ad exists in MySQL but its MySQL last_seen is in another year → ES date is out of date.
+      if (p) {
+        const staleUpdates = [];
+        for (const x of withId) {
+          const row = existing.get(x.id);
+          if (!row || row.inYear) continue;
+          out.stale += 1;
+          const value = row.ls && !row.ls.startsWith('0000') ? esLastSeenValue(spec, row.ls) : null;
+          if (out.staleSamples.length < 10) out.staleSamples.push({ id: x.id, sqlLastSeen: row.ls, newEsValue: value });
+          if (value !== null) staleUpdates.push({ h: x.h, value });
+        }
+        if (fixStale && apply && staleUpdates.length) {
+          const body = [];
+          for (const { h, value } of staleUpdates) {
+            const action = { _index: h._index || index, _id: h._id };
+            if (db.elastic.esMajor && db.elastic.esMajor < 7 && h._type) action._type = h._type;
+            body.push({ update: action }, { doc: { [spec.esLastSeenField]: value } });
+          }
+          const bulk = unwrap(await client.bulk({ refresh: false, body }));
+          const failed = (bulk.items || []).map((i) => i.update).filter((d) => d && d.status >= 300);
+          if (failed.length) {
+            const reason = failed[0].error?.reason || JSON.stringify(failed[0]).slice(0, 200);
+            throw new Error(`ES last_seen update failed for ${failed.length} doc(s): ${reason}`);
+          }
+          out.staleFixed += staleUpdates.length;
+        }
+      }
+
+      const orphanHits = withId.filter((x) => !existing.has(x.id)).map((x) => x.h);
+      out.orphans += orphanHits.length;
+      for (const h of orphanHits) {
+        if (out.orphanSamples.length < 10) out.orphanSamples.push({ _id: h._id, id: sourceValue(h._source, spec.esIdField) ?? h._id });
+      }
+
+      if (apply && orphanHits.length) {
+        const body = [];
+        for (const h of orphanHits) {
+          const action = { _index: h._index || index, _id: h._id };
+          if (db.elastic.esMajor && db.elastic.esMajor < 7 && h._type) action._type = h._type;
+          body.push({ delete: action });
+        }
+        const bulk = unwrap(await client.bulk({ refresh: false, body }));
+        const failed = (bulk.items || []).map((i) => i.delete).filter((d) => d && d.status >= 300 && d.status !== 404);
+        if (failed.length) {
+          const reason = failed[0].error?.reason || JSON.stringify(failed[0]).slice(0, 200);
+          throw new Error(`ES orphan delete failed for ${failed.length} doc(s): ${reason}`);
+        }
+        out.orphanDeleted += orphanHits.length;
+      }
+
+      if (pages % 20 === 0) {
+        console.log(`[${network}] orphans: scanned ${out.esTotal} | orphans ${out.orphans}${apply ? ` (deleted ${out.orphanDeleted})` : ''} | no-id ${out.noId} | ${Math.round((Date.now() - started) / 1000)}s`);
+      }
+      if (!scrollId) break;
+      page = unwrap(await client.scroll({ scroll_id: scrollId, scroll: '5m' }));
+      scrollId = page._scroll_id || scrollId;
+    }
+  } finally {
+    if (scrollId) await client.clearScroll({ scroll_id: scrollId }).catch(() => {});
+  }
+  if (apply && (out.orphanDeleted || out.staleFixed)) await client.indices.refresh({ index }).catch(() => {});
+
+  console.log(`[${network}] ORPHANS: ES docs scanned ${out.esTotal} | orphans (ad not in MySQL) ${out.orphans}`
+    + `${apply ? ` → deleted ${out.orphanDeleted}` : ' (dry-run, not deleted)'} | no ad id (kept) ${out.noId}`
+    + (p ? ` | year mismatch (ad in MySQL, other year) ${out.stale}${fixStale && apply ? ` → ES last_seen updated ${out.staleFixed}` : fixStale ? ' (dry-run, not updated)' : ' (kept; use --fix-stale to update)'}` : ''));
+  if (out.staleSamples.length) console.log(`[${network}] year-mismatch samples: ${JSON.stringify(out.staleSamples)}`);
+  if (out.orphanSamples.length) console.log(`[${network}] orphan samples: ${JSON.stringify(out.orphanSamples)}`);
+  if (out.noIdSamples.length) console.log(`[${network}] no-id samples (NOT deleted): ${JSON.stringify(out.noIdSamples)}`);
+  return out;
+}
+
 // ── main ────────────────────────────────────────────────────────────────────
 
 async function main(argv = process.argv.slice(2)) {
@@ -639,7 +795,8 @@ async function main(argv = process.argv.slice(2)) {
   console.log('='.repeat(78));
   console.log(`Mode      : ${opts.apply ? 'APPLY (DELETING)' : 'DRY-RUN (read-only)'}`);
   console.log(`Env       : ${config.env || 'unset'}`);
-  console.log(`Years     : ${opts.years.join(', ')}  (by last_seen)`);
+  if (opts.years.length) console.log(`Years     : ${opts.years.join(', ')}  (by last_seen)`);
+  if (opts.orphans) console.log('Orphans   : ES docs whose ad id is not in MySQL (whole index)');
   console.log(`Networks  : ${opts.networks.join(', ')}`);
   if (opts.apply) console.log(`Batch     : ${opts.batchSize}  sleep ${opts.sleepMs}ms  limit ${opts.limit ?? 'none'}  es-sweep ${opts.esSweep}`);
   console.log('='.repeat(78));
@@ -683,6 +840,18 @@ async function main(argv = process.argv.slice(2)) {
 
       for (const year of opts.years) {
         const entry = {};
+        if (opts.orphans) {
+          // --orphans --year: ONLY remove ES docs (last_seen in this year) whose ad is not in MySQL.
+          // The normal SQL+ES year deletion is skipped entirely.
+          try {
+            entry.orphans = await esFullOrphanSweep({ network, spec, db, apply: opts.apply, year, fixStale: opts.fixStale });
+          } catch (err) {
+            entry.error = err.message;
+            console.error(`[${network}] ${year} orphans: ERROR — ${err.message}`);
+          }
+          report.networks[network].years[year] = entry;
+          continue;
+        }
         try {
           const c = await sqlCount(db.sql, spec, year);
           entry.sqlCount = c.count;
@@ -711,6 +880,15 @@ async function main(argv = process.argv.slice(2)) {
         }
         report.networks[network].years[year] = entry;
       }
+
+      if (opts.orphans && !opts.years.length) {
+        try {
+          report.networks[network].orphans = await esFullOrphanSweep({ network, spec, db, apply: opts.apply });
+        } catch (err) {
+          report.networks[network].orphansError = err.message;
+          console.error(`[${network}] orphans: ERROR — ${err.message}`);
+        }
+      }
     }
   } finally {
     await dbManager.disconnectAll().catch(() => {});
@@ -721,6 +899,14 @@ async function main(argv = process.argv.slice(2)) {
   console.log(`\n${'='.repeat(78)}\nSUMMARY (${report.mode})`);
   for (const [network, r] of Object.entries(report.networks)) {
     for (const [year, e] of Object.entries(r.years || {})) {
+      if (e.orphans || (opts.orphans && e.error)) {
+        const o = e.orphans || {};
+        console.log(`  ${network.padEnd(10)} ${year}  orphans  ES scanned=${o.esTotal ?? '-'}  orphans=${o.orphans ?? '-'}`
+          + `${opts.apply ? `  deleted=${o.orphanDeleted ?? 0}` : ''}  no-id(kept)=${o.noId ?? '-'}`
+          + `  year-mismatch=${o.stale ?? '-'}${opts.fixStale && opts.apply ? `  es-date-updated=${o.staleFixed ?? 0}` : ''}`
+          + `${e.error ? `  ERROR: ${e.error}` : ''}`);
+        continue;
+      }
       const parts = [`SQL=${e.sqlCount ?? '-'}`];
       if (e.esCountByLastSeen !== undefined) parts.push(`ES(by last_seen)=${e.esCountByLastSeen}`);
       if (opts.apply) parts.push(`deleted SQL=${e.sqlDeleted ?? 0} ES=${e.esDeleted ?? 0}`);
@@ -728,11 +914,16 @@ async function main(argv = process.argv.slice(2)) {
       if (e.error) parts.push(`ERROR: ${e.error}`);
       console.log(`  ${network.padEnd(10)} ${year}  ${parts.join('  ')}`);
     }
+    if (r.orphans) {
+      const o = r.orphans;
+      console.log(`  ${network.padEnd(10)} orphans  ES scanned=${o.esTotal}  orphans=${o.orphans}${opts.apply ? `  deleted=${o.orphanDeleted}` : ''}  no-id(kept)=${o.noId}`);
+    }
+    if (r.orphansError) console.log(`  ${network.padEnd(10)} orphans  ERROR: ${r.orphansError}`);
     if (r.error) console.log(`  ${network.padEnd(10)} ERROR: ${r.error}`);
   }
   if (!opts.apply) console.log(`\nNothing was deleted. To delete, re-run with: --apply --confirm "${confirmPhrase(opts)}"`);
 
-  const failed = Object.values(report.networks).some((r) => r.error || Object.values(r.years || {}).some((e) => e.error));
+  const failed = Object.values(report.networks).some((r) => r.error || r.orphansError || Object.values(r.years || {}).some((e) => e.error));
   return { code: failed ? 1 : 0 };
 }
 

@@ -138,7 +138,7 @@ async function main() {
       const params = elastic.esMajor != null && elastic.esMajor < 7
         ? { index, type: 'doc', body }
         : { index, body };
-      await elastic.client.indices.putMapping(params);
+      await elastic.putMapping(params); // 6.x: typed PUT /index/_mapping/doc; 9.x: typeless
       console.log(`[${net}] APPLIED — ${label}`);
       summary.push({ net, status: 'applied', field });
     } catch (err) {

@@ -321,8 +321,8 @@ async function propagateDateToEs(service, cfg, domainRowIds, date, log, network)
       index,
       conflicts: 'proceed',
       refresh: false,
-      waitForCompletion: true,
-      requestsPerSecond: ES_REQUESTS_PER_SECOND,
+      wait_for_completion: true,
+      requests_per_second: ES_REQUESTS_PER_SECOND,
       body: { query: { terms: { [cfg.esMatchField]: matchIds } }, script },
     }, {
       requestTimeout: ES_REQUEST_TIMEOUT_MS,

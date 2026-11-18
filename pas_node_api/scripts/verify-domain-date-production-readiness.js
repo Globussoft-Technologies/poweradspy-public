@@ -22,6 +22,7 @@ const fs = require('node:fs');
 const fsPromises = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const esCompat = require('../src/database/esVersionCompat');
 
 const API_ROOT = path.resolve(__dirname, '..');
 const TASK_SCRIPT_SOURCE = 'if (ctx._source[params.f] != params.v) { ctx._source[params.f] = params.v } else { ctx.op = "noop" }';
@@ -502,8 +503,8 @@ function updateByQueryRequest(index, query, field, value, domainDate) {
     index,
     conflicts: 'proceed',
     refresh: false,
-    waitForCompletion: false,
-    requestsPerSecond: domainDate.esRequestsPerSecond,
+    wait_for_completion: false,
+    requests_per_second: domainDate.esRequestsPerSecond,
     body: {
       query,
       script: {
@@ -519,7 +520,7 @@ async function waitForTask(client, taskId, domainDate, options) {
   const deadline = Date.now() + options.timeoutMs;
   while (Date.now() < deadline) {
     const task = bodyOf(await client.tasks.get(
-      { taskId },
+      { task_id: taskId },
       { requestTimeout: domainDate.esRequestTimeoutMs, maxRetries: 0 },
     ));
     if (task?.completed === true) return task;
@@ -532,7 +533,10 @@ async function deleteTaskResult(client, taskId, esMajor, domainDate, reporter, s
   const params = { index: '.tasks', id: taskId };
   if (esMajor <= 6) params.type = 'task';
   try {
-    await client.delete(params, { requestTimeout: domainDate.esRequestTimeoutMs, maxRetries: 0 });
+    const deleteOptions = { requestTimeout: domainDate.esRequestTimeoutMs, maxRetries: 0 };
+    // ES 6.x needs the typed URL (client v9 cannot send a type) — see esVersionCompat.
+    if (esMajor <= 6) await esCompat.legacyDelete(client, params, deleteOptions, new Map());
+    else await client.delete(params, deleteOptions);
     reporter.pass(scope, 'Completed task result was removed from .tasks');
   } catch (error) {
     const status = error?.meta?.statusCode || error?.statusCode;
@@ -598,7 +602,9 @@ async function runActiveEsProbe(client, network, esMajor, domainDate, options, r
       },
     };
     if (esMajor <= 6) indexRequest.type = 'doc';
-    await client.index(indexRequest, { requestTimeout: domainDate.esRequestTimeoutMs, maxRetries: 0 });
+    const indexOptions = { requestTimeout: domainDate.esRequestTimeoutMs, maxRetries: 0 };
+    if (esMajor <= 6) await esCompat.legacyIndex(client, indexRequest, indexOptions, new Map());
+    else await client.index(indexRequest, indexOptions);
 
     const updateRequest = updateByQueryRequest(
       index,
@@ -627,7 +633,10 @@ async function runActiveEsProbe(client, network, esMajor, domainDate, options, r
 
     const getRequest = { index, id: 'preflight-1' };
     if (esMajor <= 6) getRequest.type = 'doc';
-    const document = bodyOf(await client.get(getRequest, { requestTimeout: domainDate.esRequestTimeoutMs, maxRetries: 0 }));
+    const getOptions = { requestTimeout: domainDate.esRequestTimeoutMs, maxRetries: 0 };
+    const document = bodyOf(esMajor <= 6
+      ? await esCompat.legacyGet(client, getRequest, getOptions)
+      : await client.get(getRequest, getOptions));
     if (document?._source?.domain_registered_date !== TEST_DATE_NEW
       || Number(document?._source?.domain_registration_date) !== TEST_EPOCH_NEW) {
       throw new Error('Temporary document did not retain the expected YMD and epoch values');
@@ -653,8 +662,10 @@ async function checkElasticsearchNetwork(network, networkConfig, tableConfig, do
   if (!elastic?.enabled) return;
 
   let Client;
+  let esModule;
   try {
-    ({ Client } = require('@elastic/elasticsearch'));
+    esModule = require('@elastic/elasticsearch');
+    ({ Client } = esModule);
   } catch (error) {
     reporter.fail(scope, 'Elasticsearch client could not be loaded', safeError(error));
     return;
@@ -669,6 +680,8 @@ async function checkElasticsearchNetwork(network, networkConfig, tableConfig, do
     nodes,
     maxRetries: 0,
     requestTimeout: domainDate.esRequestTimeoutMs,
+    // Same transport as DatabaseManager: lets client v9 talk to ES 6.8, 8.x and 9.x.
+    ...esCompat.compatClientOptions(esModule),
   };
   if (elastic.auth?.username || elastic.auth?.password) clientOptions.auth = elastic.auth;
   const client = new Client(clientOptions);
@@ -678,8 +691,9 @@ async function checkElasticsearchNetwork(network, networkConfig, tableConfig, do
     const version = String(info?.version?.number || 'unknown');
     const esMajor = Number(version.split('.')[0]);
     if (esMajor === 6) reporter.pass(scope, `Elasticsearch ${version} matches the reviewed 6.8 production family`);
-    else if (esMajor >= 7 && esMajor <= 8) reporter.warn(scope, `Elasticsearch ${version} is supported by the request shape but differs from the expected 6.8 non-TikTok cluster`);
-    else reporter.fail(scope, `Elasticsearch ${version} is outside the reviewed 6.x-8.x range`);
+    else if (esMajor === 9) reporter.pass(scope, `Elasticsearch ${version} matches the upgraded 9.x cluster`);
+    else if (esMajor >= 7 && esMajor <= 8) reporter.warn(scope, `Elasticsearch ${version} is supported by the request shape but differs from the expected 6.8 / 9.x clusters`);
+    else reporter.fail(scope, `Elasticsearch ${version} is outside the reviewed 6.x-9.x range`);
 
     const exists = bodyOf(await client.indices.exists(
       { index: elastic.index },

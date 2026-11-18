@@ -419,7 +419,7 @@ async function runQueryGuardEs(slug, elastic, tasks, cfg) {
     if (t.runningSec < maxSec) continue;
     if (!guardShouldAttempt(slug, 'es', t.taskId)) continue;
     try {
-      await esCall(elastic.client, 'tasks.cancel', { taskId: t.taskId }, { requestTimeout: ES_TIMEOUT_MS });
+      await esCall(elastic.client, 'tasks.cancel', { task_id: t.taskId }, { requestTimeout: ES_TIMEOUT_MS });
       log.warn('[live-watcher] Query Guard auto-cancelled ES task', { network: slug, taskId: t.taskId, runningSec: t.runningSec });
       if (cfg.telegramAlertsEnabled) {
         sendTelegramAlert(
@@ -652,7 +652,7 @@ router.post('/:network/es/cancel', requireEditorRole, express.json(), async (req
   if (!elastic) return res.status(404).json({ code: 404, message: `No Elasticsearch connection for ${network}` });
 
   try {
-    await esCall(elastic.client, 'tasks.cancel', { taskId }, { requestTimeout: ES_TIMEOUT_MS });
+    await esCall(elastic.client, 'tasks.cancel', { task_id: taskId }, { requestTimeout: ES_TIMEOUT_MS });
     log.warn(`[live-watcher] ES task cancelled by admin`, { network, taskId, admin: req.adminSession?.username });
     res.json({ code: 200, data: { cancelled: taskId } });
   } catch (e) {

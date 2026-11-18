@@ -322,8 +322,8 @@ function buildUpdateRequest(service, job, ids) {
     index: service.db.elastic.indexName,
     conflicts: 'proceed',
     refresh: false,
-    waitForCompletion: false,
-    requestsPerSecond: ES_REQUESTS_PER_SECOND,
+    wait_for_completion: false,
+    requests_per_second: ES_REQUESTS_PER_SECOND,
     body: {
       query: { terms: { [cfg.esMatchField]: ids } },
       script: {
@@ -360,7 +360,7 @@ async function waitForTask(client, taskId) {
     let response;
     try {
       response = await client.tasks.get(
-        { taskId },
+        { task_id: taskId },
         { requestTimeout: ES_REQUEST_TIMEOUT_MS, maxRetries: 0 }
       );
     } catch (error) {
@@ -389,11 +389,14 @@ async function deleteTaskResult(client, taskId, esMajor) {
     // wait_for_completion=false stores the completed response in .tasks until
     // the caller removes it. Cleanup is best-effort and never blocks queue progress.
     const deleteParams = { index: '.tasks', id: taskId };
-    if (!esMajor || esMajor < 7) deleteParams.type = 'task';
-    await client.delete(
-      deleteParams,
-      { requestTimeout: ES_REQUEST_TIMEOUT_MS, maxRetries: 0 }
-    );
+    const deleteOptions = { requestTimeout: ES_REQUEST_TIMEOUT_MS, maxRetries: 0 };
+    if (!esMajor || esMajor < 7) {
+      // ES 6.x needs the typed URL /.tasks/task/<id>; client v9 cannot send a type itself.
+      deleteParams.type = 'task';
+      await require('../../../database/esVersionCompat').legacyDelete(client, deleteParams, deleteOptions, new Map());
+    } else {
+      await client.delete(deleteParams, deleteOptions);
+    }
   } catch (error) {
     const statusCode = Number(error?.statusCode || error?.meta?.statusCode);
     if (statusCode !== 404 && log.debug) {
