@@ -356,7 +356,12 @@ class LinkedinSearchQueryBuilder {
   _getDomainDateEnv() {
     const dd = this._params.domainDate;
     if (!dd || !dd.lower_date || !dd.upper_date) return null;
-    return asFilter({ range: { domain_registration_date: { gte: dd.lower_date, lte: dd.upper_date, format: 'epoch_second' } } });
+    // Exclude placeholder dates: WHOIS-less domains are stored as epoch 0 (1970-01-01) or a
+    // pre-epoch sentinel, so the lower bound is never earlier than 1970-01-02 (86400s).
+    const MIN_REAL_EPOCH = 86400;
+    const lower = (Number.isFinite(Number(dd.lower_date)) && Number(dd.lower_date) < MIN_REAL_EPOCH)
+      ? MIN_REAL_EPOCH : dd.lower_date;
+    return asFilter({ range: { domain_registration_date: { gte: lower, lte: dd.upper_date, format: 'epoch_second' } } });
   }
 
   _getNeedleEnv() {
@@ -490,6 +495,11 @@ class LinkedinSearchQueryBuilder {
     }
     if (this._sortField === 'impression') {
       buckets.filter.push({ exists: { field: 'impression' } });
+    }
+    // Domain-date sort: only ads with a real registration date (drops epoch-0 / pre-epoch
+    // placeholders and missing dates so they don't lead "Oldest First").
+    if (this._sortField === 'domain_registration_date') {
+      buckets.filter.push({ range: { domain_registration_date: { gte: 86400, format: 'epoch_second' } } });
     }
 
     const nc = this._getNotCountryClause();

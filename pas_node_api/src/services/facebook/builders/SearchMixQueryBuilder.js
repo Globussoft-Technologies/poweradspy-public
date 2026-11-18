@@ -553,10 +553,15 @@ class SearchMixQueryBuilder {
   _getDomainDateEnv() {
     const dd = this._params.domainDate;
     if (!dd || !dd.lower_date || !dd.upper_date) return null;
+    // Exclude placeholder dates: WHOIS-less domains are stored as the epoch (1970-01-01)
+    // or the zero-date sentinel (0001-01-01), so never match anything on/before the epoch.
+    const MIN_REAL_DATE = '1970-01-02';
+    const lower = (/^\d{4}-\d{2}-\d{2}/.test(String(dd.lower_date)) && String(dd.lower_date) < MIN_REAL_DATE)
+      ? MIN_REAL_DATE : dd.lower_date;
     return asFilter({
       range: {
         'facebook_ad_domains.domain_registered_date': {
-          gte: dd.lower_date, lte: dd.upper_date,
+          gte: lower, lte: dd.upper_date,
           format: 'yyyy-MM-dd',
         },
       },
@@ -827,6 +832,11 @@ class SearchMixQueryBuilder {
     }
     if (this._sortField === 'facebook_ad.impression') {
       buckets.filter.push({ exists: { field: 'facebook_ad.impression' } });
+    }
+    // Domain-date sort: only ads with a real registration date (drops the 1970-01-01 /
+    // 0001-01-01 placeholders and missing dates so they don't lead "Oldest First").
+    if (this._sortField === 'facebook_ad_domains.domain_registered_date') {
+      buckets.filter.push({ range: { 'facebook_ad_domains.domain_registered_date': { gt: '1970-01-01', format: 'yyyy-MM-dd' } } });
     }
 
     // must_not handling (notCountry + adDetailId exclusion)

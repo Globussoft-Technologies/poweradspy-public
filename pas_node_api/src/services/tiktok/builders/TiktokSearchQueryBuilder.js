@@ -228,7 +228,16 @@ class TiktokSearchQueryBuilder {
   _getAdSeenEnv()     { return this._dateRangeEnv('last_seen',              this._params.adSeen); }
   _getPostDateEnv()   { return this._dateRangeEnv('first_seen',             this._params.postDate); }
   _getFirstSeenEnv()  { return this._dateRangeEnv('first_seen',             this._params.firstSeen); }
-  _getDomainDateEnv() { return this._dateRangeEnv('domain_registered_date', this._params.domainDate); }
+  _getDomainDateEnv() {
+    // Exclude placeholder dates: WHOIS-less domains are stored as the epoch (1970-01-01)
+    // or the zero-date sentinel (0001-01-01), so never match anything on/before the epoch.
+    const r = this._params.domainDate;
+    const MIN_REAL_DATE = '1970-01-02';
+    if (r && /^\d{4}-\d{2}-\d{2}/.test(String(r.startDate)) && String(r.startDate) < MIN_REAL_DATE) {
+      return this._dateRangeEnv('domain_registered_date', { ...r, startDate: MIN_REAL_DATE });
+    }
+    return this._dateRangeEnv('domain_registered_date', r);
+  }
 
   // ─── Query assembly ──
 
@@ -295,6 +304,11 @@ class TiktokSearchQueryBuilder {
     }
     if (this._sortField === 'impression') {
       buckets.filter.push({ exists: { field: 'impression' } });
+    }
+    // Domain-date sort: only ads with a real registration date (drops the 1970-01-01 /
+    // 0001-01-01 placeholders and missing dates so they don't lead "Oldest First").
+    if (this._sortField === 'domain_registered_date') {
+      buckets.filter.push({ range: { domain_registered_date: { gt: '1970-01-01', format: 'strict_date_optional_time' } } });
     }
 
     const partBody = flatBool(buckets);
