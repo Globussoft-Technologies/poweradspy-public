@@ -433,6 +433,7 @@ function buildAllSearchesQuery(params) {
       { exists: { field: 'dashboard.verified' } },
       { exists: { field: 'dashboard.meta_ads_library' } },
       { exists: { field: 'dashboard.ad_seen' } },
+      { exists: { field: 'domain_date_btn_sort' } },
       { exists: { field: 'dashboard.likes' } },
       { exists: { field: 'dashboard.comments' } },
       { exists: { field: 'dashboard.shares' } },
@@ -606,6 +607,8 @@ function buildAllSearchesQuery(params) {
       'search.keyword', 'search.advertiser', 'search.domain',
       'network', 'filterType', 'adsCountOnSerach', 'search_error_detail',
       'dashboard.*',
+      // Domain Reg. date filter (stored under its request name, not dashboard.*).
+      'domain_date_btn_sort',
       'filter.*',
       'filter.native_network',
       'search_by.*',

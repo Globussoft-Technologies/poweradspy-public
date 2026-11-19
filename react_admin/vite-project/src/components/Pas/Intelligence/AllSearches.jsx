@@ -65,6 +65,9 @@ const EMPTY = {
   platform: "", activityTypes: ["keyword"],  // Array of selected activity types - default to keyword
 };
 
+// Feature flag: AI Search filter chip + AI PROMPT column (incl. under "All").
+const AI_SEARCH_ENABLED = String(import.meta.env.VITE_ENABLE_AI_SEARCH ?? "").trim().toLowerCase() === "true";
+
 const ACTIVITY_TYPES = [
   { key: "keyword", label: "Keyword" },
   { key: "advertiser", label: "Advertiser" },
@@ -73,8 +76,9 @@ const ACTIVITY_TYPES = [
   { key: "other_activity", label: "Other Activity" },
   { key: "sorting_filters", label: "Sorting Filters" },
   // Searches run from the AI prompt box (dashboard.ai_search).
+  // Shown only when VITE_ENABLE_AI_SEARCH=true (see AI_SEARCH_ENABLED above).
   { key: "ai_search", label: "✨ AI Search" },
-];
+].filter((a) => a.key !== "ai_search" || AI_SEARCH_ENABLED);
 
 // ── Autocomplete dropdown input ───────────────────────────────────────────────
 const AutocompleteInput = ({ value, onChange, onCommit, placeholder, options, style }) => {
@@ -1018,7 +1022,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
     const showKeyword = showAllActivityTypes || applied.activityTypes?.includes('keyword');
     const showAdvertiser = showAllActivityTypes || applied.activityTypes?.includes('advertiser');
     const showDomain = showAllActivityTypes || applied.activityTypes?.includes('domain');
-    const showAiPrompt = showAllActivityTypes || applied.activityTypes?.includes('ai_search');
+    const showAiPrompt = AI_SEARCH_ENABLED && (showAllActivityTypes || applied.activityTypes?.includes('ai_search'));
 
     return rows.map((row, i) => {
       const { initials, color } = getAvatarProps(row.email);
@@ -1365,7 +1369,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                   { key: "timestamp", style: { minWidth: "100px" } },
                   { key: "user", style: { minWidth: "260px" } },
                 ];
-                if (showAllActivityTypes || applied.activityTypes?.includes('ai_search'))  cols.push({ key: "ai_prompt", style: { minWidth: "200px" } });
+                if (AI_SEARCH_ENABLED && (showAllActivityTypes || applied.activityTypes?.includes('ai_search')))  cols.push({ key: "ai_prompt", style: { minWidth: "200px" } });
                 if (showAllActivityTypes || applied.activityTypes?.includes('keyword'))    cols.push({ key: "keyword", style: { minWidth: "100px" } });
                 if (showAllActivityTypes || applied.activityTypes?.includes('advertiser')) cols.push({ key: "advertiser", style: { minWidth: "100px" } });
                 if (showAllActivityTypes || applied.activityTypes?.includes('domain'))     cols.push({ key: "domain", style: { minWidth: "90px" } });
@@ -1386,7 +1390,7 @@ const AllSearches = ({ forceExpand = false, onDataReady }) => {
                   const showKeyword = showAllActivityTypes || applied.activityTypes?.includes('keyword');
                   const showAdvertiser = showAllActivityTypes || applied.activityTypes?.includes('advertiser');
                   const showDomain = showAllActivityTypes || applied.activityTypes?.includes('domain');
-                  const showAiPrompt = showAllActivityTypes || applied.activityTypes?.includes('ai_search');
+                  const showAiPrompt = AI_SEARCH_ENABLED && (showAllActivityTypes || applied.activityTypes?.includes('ai_search'));
 
                   const headers = ["TIMESTAMP", "USER"];
                   if (showAiPrompt) headers.push("AI PROMPT");

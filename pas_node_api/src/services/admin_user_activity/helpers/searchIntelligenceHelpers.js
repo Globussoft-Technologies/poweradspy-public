@@ -226,6 +226,8 @@ function buildActivityTypeFilter(activity_type) {
 // single activity_type group above.
 const OTHER_BASE_ACTIVITY_FIELDS = [
   'dashboard.verified', 'dashboard.meta_ads_library', 'dashboard.ad_seen',
+  // Domain Reg. date filter (stored under its request name, not dashboard.*).
+  'domain_date_btn_sort',
   'dashboard.likes', 'dashboard.comments', 'dashboard.shares',
   'lander.affiliates', 'lander.ecommerce', 'lander.funnels',
   'lander.sources', 'lander.marketing',
@@ -310,6 +312,7 @@ const RANGE_PAIRS = [
   { label: 'Ad Seen', range: 'dashboard.ad_seen', sort: null },
   { label: 'Post Date', range: 'dashboard.post_date', sort: null },
   { label: 'First Seen', range: 'dashboard.first_seen', sort: null },
+  { label: 'Domain Reg.', range: 'domain_date_btn_sort', sort: null },
   // AdMob Poster Intelligence range sliders (stored as "min-max").
   { label: 'Top Ranked', range: 'dashboard.top_ranked_range', sort: null },
   { label: 'Most Seen', range: 'dashboard.most_seen_range', sort: null },
@@ -351,7 +354,7 @@ const ARRAY_JOIN_KEYS = new Set([
   'Native Network', 'Budget',
 ]);
 
-const DATE_RANGE_KEYS = new Set(['Ad Seen', 'Post Date', 'First Seen']);
+const DATE_RANGE_KEYS = new Set(['Ad Seen', 'Post Date', 'First Seen', 'Domain Reg.']);
 
 // AI Filters modal selections — stored by frontend_user_activity as
 // `dashboard.ai_*` arrays, or the string 'NA' when the group wasn't used.

@@ -356,6 +356,8 @@ const FILTER_FIELDS = [
   'verified','meta_ads_lib_filter','size','nativeNetwork','ad_sub_position','target_keywords',
   'google_transparency_ads','sub_network','source_app','admob_poster_sort','lead_score_range',
   'occurrence_count_range','active_days_range',
+  // Domain Reg. date filter.
+  'domain_date_btn_sort',
   ...AI_FILTER_FIELDS,
 ];
 

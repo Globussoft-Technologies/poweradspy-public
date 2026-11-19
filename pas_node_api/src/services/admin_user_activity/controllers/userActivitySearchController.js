@@ -365,6 +365,7 @@ async function getSummaryStats(req, elastic, logger) {
         { exists: { field: 'dashboard.verified'             } },
         { exists: { field: 'dashboard.meta_ads_library'     } },
         { exists: { field: 'dashboard.ad_seen'       } },
+        { exists: { field: 'domain_date_btn_sort'    } },
         { exists: { field: 'dashboard.likes'         } },
         { exists: { field: 'dashboard.comments'      } },
         { exists: { field: 'dashboard.shares'        } },
