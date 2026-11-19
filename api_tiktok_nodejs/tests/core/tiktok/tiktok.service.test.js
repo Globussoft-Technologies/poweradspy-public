@@ -183,25 +183,31 @@ function mockRes() {
 
 describe("tiktok.service > popularityImpression", () => {
   it("calculates popularity and impression from clicks/ctr/engagements", () => {
-    const [pop, imp] = svc.popularityImpression(
-      [{ value: 1 }, { value: 0.5 }],
-      0.1,
-      10, 5, 3
-    );
-    // totalClicks = round(round(100) + round(50)) = 150; impression = 1500
-    // totalEngagements = 150 + 10 + 5 + 3 = 168
-    // popularity = round(168 / (168 + 1500) * 100) ≈ 10
-    expect(imp).toBe(1500);
-    expect(pop).toBeGreaterThanOrEqual(9);
-    expect(pop).toBeLessThanOrEqual(11);
+    expect(svc.popularityImpression([{ value: 1 }, { value: 0.5 }], 0.1, 10, 5, 3))
+      .toEqual([10, 1500]);
   });
 
-  it("handles empty clicksArr by treating reduce result as undefined → NaN → 0 via Math.round", () => {
-    // reduce on [] without initial value throws; with initial 0 it's 0
-    const [pop, imp] = svc.popularityImpression([], 1, 0, 0, 0);
-    // empty reduce with initial 0 -> 0; impression = 0/1 = 0
-    expect(imp).toBe(0);
-    expect(Number.isNaN(pop)).toBe(true); // 0/0 = NaN
+  it.each([
+    [[], 1, 0, 0, 0],
+    [[], 1, 100, 5, 3],
+    [undefined, undefined, undefined, undefined, undefined],
+    [null, null, null, null, null],
+    [[{ value: 1 }], 0, 10, 5, 3],
+    [[{ value: 1 }], "", 10, 5, 3],
+    [[{ value: 1 }], Infinity, 10, 5, 3],
+    [[{ value: "invalid" }, null], 0.1, 10, 5, 3],
+  ])("returns finite zero metrics when analytics are unavailable (%j, %j)", (...args) => {
+    expect(svc.popularityImpression(...args)).toEqual([0, 0]);
+  });
+
+  it("coerces numeric strings before adding engagement counts", () => {
+    expect(svc.popularityImpression([{ value: "1" }, { value: "0.5" }], "0.1", "10", "5", "3"))
+      .toEqual([10, 1500]);
+  });
+
+  it("ignores malformed click points and non-finite engagement counts", () => {
+    expect(svc.popularityImpression([{ value: 1 }, null, { value: "invalid" }], 0.1, Infinity, null, ""))
+      .toEqual([9, 1000]);
   });
 });
 

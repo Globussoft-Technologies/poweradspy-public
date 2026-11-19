@@ -1312,19 +1312,32 @@ if(esStore?.updated && dbstore?.length){
 
   // Popularity and impression calculation
   popularityImpression(clicksArr, ctr, likes, comments, shares) {
-    let totalClicks = Math.round(
-      clicksArr?.reduce(
-        (sum, element) => sum + Math.round(element.value * 100),
-        0
-      )
-    );
-    let impression = Math.round(totalClicks / ctr);
+    // This runs before Joi validation/coercion. Missing analytics and zero
+    // CTR cannot be used to calculate impressions or a popularity score.
+    const nonNegativeNumber = (raw) => {
+      const value = typeof raw === "number" || typeof raw === "string"
+        ? Number(raw) : NaN;
+      return Number.isFinite(value) && value >= 0 ? value : 0;
+    };
+    const totalClicks = Array.isArray(clicksArr)
+      ? clicksArr.reduce(
+          (sum, element) => sum + Math.round(nonNegativeNumber(element?.value) * 100),
+          0,
+        )
+      : 0;
+    const rate = nonNegativeNumber(ctr);
+    if (!Number.isFinite(totalClicks) || totalClicks === 0 || rate === 0) {
+      return [0, 0];
+    }
 
-    let totalEngagements = totalClicks + likes + comments + shares;
-    let popularity = Math.round(
-      (totalEngagements / (totalEngagements + impression)) * 100
+    const impression = Math.round(totalClicks / rate);
+    if (!Number.isFinite(impression)) return [0, 0];
+    const totalEngagements = totalClicks + nonNegativeNumber(likes)
+      + nonNegativeNumber(comments) + nonNegativeNumber(shares);
+    const popularity = Math.round(
+      (totalEngagements / (totalEngagements + impression)) * 100,
     );
-    return [popularity, impression];
+    return [Number.isFinite(popularity) ? popularity : 0, impression];
   }
 
   // Data that goes into Elasticsearch
