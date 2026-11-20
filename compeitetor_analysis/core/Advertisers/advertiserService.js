@@ -1583,17 +1583,22 @@ class AdvertiserService {
                   ],
                   query: {
                     bool: {
-                      must: [
-                        {
-                          query_string: {
-                            fields: searchFields,
-                            query: `(${competitor})`,
-                            type: "phrase",
-                            default_operator: "AND",
-                            auto_generate_synonyms_phrase_query: false,
-                          },
+                      // Match the graph's advertiser variants in the same search;
+                      // Google uses its normalized keyword prefix field.
+                      must: [platform === "youtube" ? {
+                        query_string: {
+                          fields: searchFields,
+                          query: `(${competitor})`,
+                          type: "phrase",
+                          default_operator: "AND",
+                          auto_generate_synonyms_phrase_query: false,
                         },
-                      ],
+                      } : buildAdCountOwnerClause({
+                        platform,
+                        fields: searchFields,
+                        prefixField: field,
+                        ...(platform === "google" ? { prefixFieldKeyword: "post_owner_lower" } : {}),
+                      }, competitor)],
                       ...(displayableFilters.length || creativeImageFilter.length
                         ? { filter: [...displayableFilters, ...creativeImageFilter] }
                         : {}),
