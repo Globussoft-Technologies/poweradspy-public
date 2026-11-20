@@ -142,6 +142,66 @@ function chatgptSortName(data) {
   return asc ? 'Oldest First' : 'Newest First';
 }
 
+// Sort dropdown (all networks except ChatGPT, see chatgptSortName): the search
+// sends order_column + order_by. Label = dropdown group + direction, e.g.
+// 'Impressions: Low to High'.
+const SORT_LABELS = {
+  last_seen:    { name: 'Ad Seen Date',             desc: 'Newest First',    asc: 'Oldest First' },
+  impression:   { name: 'Impressions',              desc: 'High to Low',     asc: 'Low to High' },
+  popularity:   { name: 'Popularity',               desc: 'High to Low',     asc: 'Low to High' },
+  days_running: { name: 'Ad Running Days',          desc: 'Longest Running', asc: 'Shortest Running' },
+  domain_date:  { name: 'Domain Registration Date', desc: 'Newest First',    asc: 'Oldest First' },
+  post_date:    { name: 'Post Date',                desc: 'Newest First',    asc: 'Oldest First' },
+  likes:        { name: 'Likes',                    desc: 'High to Low',     asc: 'Low to High' },
+  comment:      { name: 'Comments',                 desc: 'High to Low',     asc: 'Low to High' },
+  share:        { name: 'Shares',                   desc: 'High to Low',     asc: 'Low to High' },
+  views:        { name: 'Views',                    desc: 'High to Low',     asc: 'Low to High' },
+  ad_budget:    { name: 'Ad Budget',                desc: 'High to Low',     asc: 'Low to High' },
+  ctr:          { name: 'CTR',                      desc: 'High to Low',     asc: 'Low to High' },
+  // Most Seen: 'hits' (ChatGPT-style) or 'occurrence_count' (AdMob).
+  hits:             { name: 'Most Seen',            desc: 'Most Seen First', asc: 'Least Seen First' },
+  occurrence_count: { name: 'Most Seen',            desc: 'Most Seen First', asc: 'Least Seen First' },
+  // AdMob Poster Intelligence sorts.
+  lead_score:                { name: 'Top Ranked',                desc: 'High to Low', asc: 'Low to High' },
+  poster_intelligence_score: { name: 'Poster Intelligence Score', desc: 'High to Low', asc: 'Low to High' },
+};
+
+// Stores dashboard.sort_by (label with direction) and the sort flag the admin
+// counts use. Ascending Ad Seen / Running Days use their own fields, same as ChatGPT.
+function applySortActivity(base, data) {
+  const col = String(data.order_column || '').toLowerCase();
+  const sort = SORT_LABELS[col];
+  if (!sort) return;
+  const asc = String(data.order_by || '').toLowerCase() === 'asc';
+  base['dashboard.sort_by']    = `${sort.name}: ${asc ? sort.asc : sort.desc}`;
+  base['dashboard.sort_order'] = asc ? 'asc' : 'desc';
+
+  if (col === 'last_seen') {
+    base[asc ? 'dashboard.oldest_sort' : 'dashboard.newest_sort'] = asc ? 'oldest_sort' : 'newest_sort';
+  } else if (col === 'days_running') {
+    if (asc) {
+      base['dashboard.running_longest_sort']  = 'NA';
+      base['dashboard.running_shortest_sort'] = 'running_shortest_sort';
+    } else {
+      base['dashboard.running_longest_sort'] = 'running_longest_sort';
+    }
+  } else if (col === 'domain_date') {
+    base['dashboard.domain_sort'] = 'domain_sort';
+  } else if (col === 'impression') {
+    base['dashboard.impressions_sort'] = 'impressions_sort';
+  } else if (col === 'popularity') {
+    base['dashboard.popularity_sort'] = 'popularity_sort';
+  } else if (col === 'hits' || col === 'occurrence_count') {
+    // Same fields as ChatGPT Most Seen / Least Seen First.
+    if (asc) {
+      base['dashboard.hits_sort']       = 'NA';
+      base['dashboard.least_hits_sort'] = 'least_hits_sort';
+    } else {
+      base['dashboard.hits_sort'] = 'hits_sort';
+    }
+  }
+}
+
 function buildGetAdsInsertData(data, network) {
   // Normalize order_column → sort fields for platforms that send order_column instead of *_sort
   const orderCol = data.order_column;
@@ -276,6 +336,9 @@ function buildGetAdsInsertData(data, network) {
     'filter.budget':                 data.budget,
     'filter.ctr':                    data.ctr,
   });
+
+  // Sort dropdown choice with direction (ChatGPT sets its own below).
+  if (network !== 'Chatgpt') applySortActivity(base, data);
 
   // Network-specific fields only.
   if (network === 'instagram' || network === 'Linkedin') {

@@ -501,6 +501,11 @@ function parseFilterPills(s, other_activity) {
     usedSortKeys.add('dashboard.running_longest_sort');
     usedSortKeys.add('dashboard.oldest_sort');
     usedSortKeys.add('dashboard.running_shortest_sort');
+    // Every network now stores dashboard.sort_by (e.g. 'Impressions: Low to High'),
+    // which already names the sort — skip the generic sort-flag pills.
+    for (const key of Object.keys(DASHBOARD_SORT_MAP)) {
+      if (key.endsWith('_sort')) usedSortKeys.add(key);
+    }
   }
 
   for (const [key, label] of Object.entries(DASHBOARD_SORT_MAP)) {

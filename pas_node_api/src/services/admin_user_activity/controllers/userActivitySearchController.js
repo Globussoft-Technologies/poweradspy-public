@@ -589,6 +589,12 @@ async function getSummaryStats(req, elastic, logger) {
           likes: { filter: { term: { 'dashboard.likes_sort.keyword': 'likes_sort' } } },
           comments: { filter: { term: { 'dashboard.comments_sort.keyword': 'comments_sort' } } },
           shares: { filter: { term: { 'dashboard.shares_sort.keyword': 'shares_sort' } } },
+          // Ascending sorts (Ad Seen Oldest First / Shortest Running).
+          oldest: { filter: { term: { 'dashboard.oldest_sort.keyword': 'oldest_sort' } } },
+          running_shortest: { filter: { term: { 'dashboard.running_shortest_sort.keyword': 'running_shortest_sort' } } },
+          // Most Seen First / Least Seen First.
+          hits: { filter: { term: { 'dashboard.hits_sort.keyword': 'hits_sort' } } },
+          least_hits: { filter: { term: { 'dashboard.least_hits_sort.keyword': 'least_hits_sort' } } },
         } },
         other_breakdown: { filter: { bool: { should: [
           { exists: { field: 'dashboard.exportsAds' } },
@@ -682,6 +688,10 @@ async function getSummaryStats(req, elastic, logger) {
       { name: 'Likes Sort', count: aggs.sorting_breakdown?.likes?.doc_count ?? 0 },
       { name: 'Comments Sort', count: aggs.sorting_breakdown?.comments?.doc_count ?? 0 },
       { name: 'Shares Sort', count: aggs.sorting_breakdown?.shares?.doc_count ?? 0 },
+      { name: 'Oldest Sort', count: aggs.sorting_breakdown?.oldest?.doc_count ?? 0 },
+      { name: 'Ad running days (shortest)', count: aggs.sorting_breakdown?.running_shortest?.doc_count ?? 0 },
+      { name: 'Most Seen Sort', count: aggs.sorting_breakdown?.hits?.doc_count ?? 0 },
+      { name: 'Least Seen Sort', count: aggs.sorting_breakdown?.least_hits?.doc_count ?? 0 },
     ].sort((a, b) => b.count - a.count);
     const otherActionsBreakdown = {
       export_ads: aggs.other_breakdown?.export_ads?.doc_count ?? 0,
