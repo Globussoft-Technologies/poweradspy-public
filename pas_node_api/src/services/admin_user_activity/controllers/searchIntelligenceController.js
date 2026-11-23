@@ -612,7 +612,12 @@ async function purgeOldActivities(req, elastic, logger) {
         wait_for_completion: false,
       };
       // delete_by_query doc limit: ES 7.3+ uses max_docs, ES 6.x uses size.
-      if (maxDocs) dbqParams[elastic.esMajor && elastic.esMajor < 7 ? 'size' : 'max_docs'] = maxDocs;
+      // ES 6.x only honours `size` as the delete limit in the URL — client v9 would put a
+      // top-level `size` into the body, where 6.x treats it as scroll batch size (deletes all).
+      if (maxDocs) {
+        if (elastic.esMajor && elastic.esMajor < 7) dbqParams.querystring = { size: maxDocs };
+        else dbqParams.max_docs = maxDocs;
+      }
 
       const dbqResult = await esClient.deleteByQuery(dbqParams);
       const taskId = dbqResult?.task ?? dbqResult?.body?.task ?? null;

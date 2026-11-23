@@ -112,11 +112,16 @@ async function main() {
 
     try {
       const started = Date.now();
+      // ES 6.x only honours `size` as the delete limit in the URL — client v9 would put a
+      // top-level `size` into the body, where 6.x treats it as scroll batch size (deletes all).
+      const limit = limitParam === 'size'
+        ? { querystring: { size: args.docs } }
+        : { max_docs: args.docs };
       const res = await client.deleteByQuery(
         {
           index,
           body: { query: rangeQuery() },
-          [limitParam]: args.docs,
+          ...limit,
           conflicts: 'proceed',
           refresh: true,
         },

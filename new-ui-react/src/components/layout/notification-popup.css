@@ -40,3 +40,14 @@
 .np-more{padding:10px;text-align:center;color:var(--ps-text-subtle);font-size:12px}
 
 .np-bell{position:relative;display:flex;width:40px;height:40px;align-items:center;justify-content:center;padding:0;border:0;border-radius:10px;background:transparent;color:var(--ps-text-2);transition:background .15s,color .15s}.np-bell:hover{background:var(--ps-surface-3)}.np-bell[aria-expanded="true"]{background:var(--ps-accent-soft);color:var(--ps-accent)}.np-badge{position:absolute;top:2px;right:3px;display:flex;min-width:17px;height:17px;align-items:center;justify-content:center;box-sizing:border-box;padding:0 3px;border:2px solid var(--ps-surface);border-radius:9px;background:#e5484d;color:var(--ps-btn-text);font-size:10.5px;font-weight:700}
+
+/* Toaster-style drop-down when the bell opens the panel (overrides the subtle shared popover fade for this panel only) */
+.np-motion.floating-popover-motion.is-positioned{transform-origin:top right;animation:np-drop-in 280ms cubic-bezier(.22,1.2,.36,1) both}
+@keyframes np-drop-in{
+  0%{opacity:0;transform:translateY(-18px) scale(.97)}
+  60%{opacity:1}
+  100%{opacity:1;transform:translateY(0) scale(1)}
+}
+@media (prefers-reduced-motion: reduce){
+  .np-motion.floating-popover-motion.is-positioned{animation:none;opacity:1}
+}

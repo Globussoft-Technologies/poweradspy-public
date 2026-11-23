@@ -678,6 +678,33 @@ const App = () => {
   const headerDropdownShrink = creditsShrinkBanner
     ? { dropdownLeft: creditsDropdownLeftEdge, bannerLeft: bannerLeftWhileCreditsOpen }
     : null;
+  // Notifications dropdown: while it's open the crawl-status banner slides to the
+  // empty space LEFT of the panel (the "Total Ads" row), its right edge stopping
+  // 12px short of the panel's left edge, instead of being covered by it. The panel
+  // is anchored bottom-end to the bell, so its left edge = bell right - panel width;
+  // a ResizeObserver keeps that current if the panel's width changes.
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+  const [notifPanelLeft, setNotifPanelLeft] = useState(null);
+  useEffect(() => {
+    if (!notifPanelOpen) { setNotifPanelLeft(null); return undefined; }
+    let raf = 0;
+    let ro = null;
+    const attach = () => {
+      const bell = document.getElementById('notification-bell');
+      const panel = document.querySelector('.np-motion');
+      if (!bell || !panel) { raf = requestAnimationFrame(attach); return; }
+      const update = () => setNotifPanelLeft(
+        bell.getBoundingClientRect().right - panel.offsetWidth
+      );
+      update();
+      if (typeof ResizeObserver !== 'undefined') {
+        ro = new ResizeObserver(update);
+        ro.observe(panel);
+      }
+    };
+    attach();
+    return () => { cancelAnimationFrame(raf); ro?.disconnect(); };
+  }, [notifPanelOpen]);
   // Records the banner's default left edge — only while it sits in its default
   // position (no search/credits dropdown open) AND its slide-in
   // animation has finished: the animate-in keyframes override the transform, so
@@ -3851,6 +3878,7 @@ const App = () => {
         aiSearchLoading={aiSearchLoading}
         onAiSuggestionsDismiss={clearAiSearchDisplay}
         onCreditsOpenChange={handleCreditsOpenChange}
+        onNotifOpenChange={setNotifPanelOpen}
         onSearchDropdownOpenChange={handleSearchDropdownOpenChange}
         searchIn={ui.searchIn}
         setSearchIn={guestSetSearchIn}
@@ -4397,7 +4425,8 @@ const App = () => {
             //   below covers the one render before that measurement lands.
             // - Credits dropdown open: inline `left` below pins the banner's
             //   left edge where it already was, so no Tailwind left/right here.
-            // (Notifications dropdown: no change — it just sits on top of the banner.)
+            // (Notifications dropdown: banner keeps its left/width but its `top` moves
+            // to the left of the panel — see notifPanelLeft in the inline style.)
             headerDropdownShrink
               ? ''
               : (searchDropdownOpen && searchDropdownRightEdge != null)
@@ -4443,6 +4472,17 @@ const App = () => {
             borderColor: 'rgba(51, 82, 150, 0.28)',
             color: '#335296',
             boxShadow: '0 4px 12px rgba(51, 82, 150, 0.14)',
+            // Notifications dropdown open: move down into the "Total Ads" row and
+            // right-align against the panel's left edge (see notifPanelLeft).
+            // 147px = default top (87px, platform-tabs row) + 60px to the row below.
+            transition: 'top 260ms cubic-bezier(.22,1,.36,1)',
+            ...(notifPanelLeft != null && !headerDropdownShrink && !searchDropdownOpen ? {
+              top: '147px',
+              left: 'auto',
+              right: `${Math.max(16, window.innerWidth - notifPanelLeft + 12)}px`,
+              transform: 'none',
+              maxWidth: `${Math.max(240, Math.min(580, notifPanelLeft - 12 - 16))}px`,
+            } : {}),
           }}
         >
           <div className="w-6 h-6 shrink-0 rounded-full flex items-center justify-center text-white bg-[#335296] pwa:h-8 pwa:w-8 pwa:bg-white/15" style={isInstalledMobile ? { color: '#ffffff' } : undefined}>
