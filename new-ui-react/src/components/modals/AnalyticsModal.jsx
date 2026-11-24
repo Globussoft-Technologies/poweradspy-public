@@ -656,7 +656,7 @@ function detectMarketingPlatforms(d, ad, insights) {
   const seen = new Set();
   const titles = [];
   for (const url of urlsToCheck) {
-    const lower = url.toLowerCase();
+    const lower = String(url).toLowerCase();
     for (const mp of MARKET_PLATFORMS) {
       if (lower.includes(mp.match) && !seen.has(mp.match)) {
         seen.add(mp.match);
@@ -2725,7 +2725,7 @@ const insightAdId = invalidUrlAdId ? null : ((isAdmob || isChatgpt) ? (ad?.inter
                 const seen = new Set();
                 const mpLogos = [];
                 for (const url of urlsToCheck) {
-                  const lower = url.toLowerCase();
+                  const lower = String(url).toLowerCase();
                   for (const mp of MARKET_PLATFORMS) {
                     if (lower.includes(mp.match) && !seen.has(mp.match)) {
                       seen.add(mp.match);

@@ -2174,6 +2174,7 @@ async function trackUserActivity(payload, meta, info = {}) {
     affiliate:            payload.affiliate            ?? 'NA',
     order_column:         payload.order_column         ?? 'post_date',
     order_by:             payload.order_by             ?? 'desc',
+    sort_selected:        payload.sort_selected        ?? 'NA',
     take:                 payload.take                 ?? '9',
     skip:                 payload.skip                 ?? '0',
     needle:               payload.needle               ?? 'NA',
@@ -2673,6 +2674,9 @@ export const fetchAds = async (filters = {}, { signal } = {}) => {
     popularity_sort:          chosenSortFlag(payload.popularity_sort, 'popular'),
     views_sort:               chosenSortFlag(payload.views_sort,      'view'),
     adBudget_sort:            chosenSortFlag(payload.adBudget_sort,   'budget'),
+    // Sort option the user picked from the sort menu ('NA' = untouched default),
+    // so the log can tell the default sort apart from an applied one.
+    sort_selected:            chosenSort || 'NA',
     // Languages are searched by code (en); the log stores the name (English).
     // A code with no SDUI option is kept as-is.
     lang:                     Array.isArray(payload.lang)

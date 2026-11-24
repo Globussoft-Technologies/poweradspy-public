@@ -2818,7 +2818,9 @@ async isDailyLimitExceeded(userObjectId) {
             brand_url: advertiser, // Domain
             content_ref_id: content_ref_id,
             target_count: TARGET,
-            generation_status: "running"
+            generation_status: "running",
+            // Clear the previous run's DS reason so it can't be shown for this run.
+            generation_message: null
           },
         $setOnInsert: {
           user_id: userObjectId,
@@ -2967,6 +2969,10 @@ async generateCompetitorsInBackground({
   // emit — which fires before this iteration's poll — can still carry the most
   // recent value instead of always being one iteration behind.
   let lastProgressPercentage = null;
+  // DS's `data.message` from the most recent /list poll. DS uses it to explain
+  // an empty result (e.g. no verifiable competitors for a `specific_to`
+  // country). Surfaced to the UI in the finalizer below when nothing attached.
+  let lastDsMessage = null;
   const MAX_STABLE_RETRIES = 5;
   const MAX_PROCESSING_RETRIES = 30; // wait up to ~90s for API to finish processing
   let processingRetries = 0;
@@ -3099,6 +3105,10 @@ async generateCompetitorsInBackground({
           ? apiData.progress_percentage
           : null;
       lastProgressPercentage = progressPercentage;
+      lastDsMessage =
+        typeof apiData?.message === "string" && apiData.message.trim()
+          ? apiData.message.trim()
+          : null;
 
       // SMART LOGIC
 
@@ -3262,7 +3272,16 @@ async generateCompetitorsInBackground({
           content_ref_id,
           advertiserArray,
         }),
-        { $set: { generation_status: "completed" } }
+        // Also keep DS's last message so a page refresh can still explain
+        // an empty result (the socket event below is lost on refresh). Only
+        // when DS returned no candidates at all (lastCount === 0) — a partial
+        // run must not later show a stale "none found" reason.
+        {
+          $set: {
+            generation_status: "completed",
+            generation_message: lastCount === 0 ? lastDsMessage : null
+          }
+        }
       );
     } catch (statusErr) {
       logger.error("Failed to persist final generation_status", statusErr);
@@ -3279,12 +3298,26 @@ async generateCompetitorsInBackground({
           { competitors: 1 }
         );
         const finalCount = finalDoc?.competitors?.length || 0;
+        if (finalCount === 0) {
+          // Record why DS produced nothing, keyed by content_ref_id, so it can
+          // be correlated with DS logs without querying their service again.
+          logger.warn("Competitor generation finished with zero competitors", {
+            content_ref_id,
+            TARGET,
+            dsMessage: lastDsMessage,
+            lastProgressPercentage
+          });
+        }
         getIO().to(content_ref_id).emit("competitor-progress", {
           content_ref_id,
           generated: finalCount,
           target: TARGET,
           status: "completed",
-          progress_percentage: 100
+          progress_percentage: 100,
+          // DS's reason (e.g. no verifiable competitors for the selected
+          // country). Additive field — existing listeners ignore it. Sent
+          // only for an empty result, matching what is persisted above.
+          message: lastCount === 0 ? lastDsMessage : null
         });
       } catch (emitErr) {
         logger.error("Failed to emit final competitor-progress", emitErr);
@@ -3786,7 +3819,9 @@ async checkDailyTokenLimit(req, res) {
         const setFields = {
           content_ref_id: content_ref_id,
           target_count: Number(limit) || project.target_count || 0,
-          generation_status: "running"
+          generation_status: "running",
+          // Clear the previous run's DS reason so it can't be shown for this run.
+          generation_message: null
         };
         if (countryArray.length && !project.country?.length) {
           // Backfill country onto an existing (e.g. race-created) project doc.

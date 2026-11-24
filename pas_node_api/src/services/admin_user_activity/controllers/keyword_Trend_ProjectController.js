@@ -671,6 +671,7 @@ async function getProjectActivity(req, elastic, logger) {
         if (method === 'add_member')                   projectType = 'add_member';
         else if (method === 'delete_member')          projectType = 'delete_member';
         else if (method === 'export_competitors')     projectType = 'export_competitors';
+        else if (method === 'Delete-competitor')      projectType = 'delete_competitor';
         else if (s['deleted_Advertisers'])            projectType = 'delete_brand';
         else if (s['monitoring_status'] !== undefined) projectType = 'monitoring_status';
         else if (s['project_name'] && s['competitors']) projectType = 'project_click';
@@ -700,6 +701,9 @@ async function getProjectActivity(req, elastic, logger) {
         memberEmail = s['delete_member_email'] ?? null;
       } else if (projectType === 'export_competitors') {
         exportedCompetitors = s['exported_Competitors'] ?? null;
+      } else if (projectType === 'delete_competitor') {
+        if (s['project_name']) brands      = String(s['project_name']);
+        if (s['advertiser'])   competitors = Array.isArray(s['advertiser']) ? s['advertiser'].join(', ') : String(s['advertiser']);
       } else if (projectType === 'delete_brand') {
         const del = s['deleted_Advertisers'];
         if (del) brands = Array.isArray(del) ? del.join(', ') : String(del);

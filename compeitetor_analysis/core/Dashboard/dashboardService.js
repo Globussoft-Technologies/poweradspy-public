@@ -20,6 +20,37 @@ import DashboardValidation from "./dashboardValidation.js";
 import moment from "moment";
 import mongoose from "mongoose";
 
+// Mirrors CompetitorService.normalizeAdvertiser — the key projects are stored
+// under (lowercased, scheme/www/path stripped, TLD kept). Duplicated rather
+// than imported because competitorService already imports this module (a
+// circular import). Keep the two in sync.
+const normalizeProjectName = (name = "") =>
+  String(Array.isArray(name) ? name[0] || "" : name)
+    .replace(/^https?:\/\//i, "")
+    .replace(/^www\./i, "")
+    .split("/")[0]
+    .toLowerCase()
+    .trim();
+
+// Find a user's project by its display name. Exact match first, so legacy or
+// renamed mixed-case records keep resolving exactly as before; on a miss, retry
+// with the normalized key projects are created under (e.g. "Amazon" ->
+// "amazon"), which previously returned "Project not found". Costs one extra
+// indexed Mongo query only on a miss; no ES work. If several docs share the
+// normalized key, the newest (_id desc) wins deterministically.
+const findProjectByName = async (user_id, project_name, { lean = false } = {}) => {
+  const userId = new mongoose.Types.ObjectId(user_id);
+  const run = (advertiser) => {
+    const q = Competitors_request.findOne({ user_id: userId, advertiser }).sort({ _id: -1 });
+    return lean ? q.lean() : q;
+  };
+  const exact = await run(project_name);
+  if (exact) return exact;
+  const normalized = normalizeProjectName(project_name);
+  if (!normalized || normalized === project_name) return null;
+  return run(normalized);
+};
+
 // "Now" anchored to IST (+05:30). ES `last_seen` strings are written in IST,
 // but the server may run in UTC — plain moment() there keeps "today" on the
 // previous date until 05:30 IST (e.g. at 1 AM IST on the 13th, UTC is still
@@ -382,7 +413,10 @@ class DashboardService {
                 // socket room to resume live updates.
                 content_ref_id: project.content_ref_id || null,
                 target_count: project.target_count || 0,
-                generation_status: project.generation_status || "idle"
+                generation_status: project.generation_status || "idle",
+                // DS's reason for an empty finished run (null otherwise), so
+                // the UI can explain it after a refresh.
+                generation_message: project.generation_message || null
             }));
 
             if(!projectName || projectName.length === 0) {
@@ -563,10 +597,8 @@ const getAdvertiserAdCount = async (advertiser) => {
       const skip = (page - 1) * limit;
 
       try {
-        const projectName = await Competitors_request.findOne({
-          user_id: new mongoose.Types.ObjectId(user_id),
-          advertiser: project_name
-        });
+        // Case/URL-tolerant lookup — see findProjectByName.
+        const projectName = await findProjectByName(user_id, project_name);
 
         if (!projectName) {
           return res.send(
@@ -746,10 +778,8 @@ const getAdvertiserAdCount = async (advertiser) => {
       const skip = (page - 1) * limit;
 
       // 1️Get user project
-      const projectDoc = await Competitors_request.findOne({
-        user_id: new mongoose.Types.ObjectId(user_id),
-        advertiser: project_name
-      }).lean();
+      // Case/URL-tolerant lookup — see findProjectByName.
+      const projectDoc = await findProjectByName(user_id, project_name, { lean: true });
 
       if (!projectDoc) {
         return res.send(

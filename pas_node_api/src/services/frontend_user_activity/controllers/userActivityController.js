@@ -173,7 +173,12 @@ function applySortActivity(base, data) {
   const sort = SORT_LABELS[col];
   if (!sort) return;
   const asc = String(data.order_by || '').toLowerCase() === 'asc';
-  base['dashboard.sort_by']    = `${sort.name}: ${asc ? sort.asc : sort.desc}`;
+  // The frontend sends sort_selected = 'NA' when the user never picked a sort —
+  // that's the default Ad Seen Date sort, logged as just 'Newest' / 'Oldest'.
+  const isDefaultSort = data.sort_selected === 'NA' && (col === 'last_seen' || col === 'post_date');
+  base['dashboard.sort_by']    = isDefaultSort
+    ? (asc ? 'Oldest' : 'Newest')
+    : `${sort.name}: ${asc ? sort.asc : sort.desc}`;
   base['dashboard.sort_order'] = asc ? 'asc' : 'desc';
 
   if (col === 'last_seen') {
@@ -202,7 +207,37 @@ function applySortActivity(base, data) {
   }
 }
 
+// Sort columns the search switches to on its own when a range filter is applied
+// (new-ui-react buildSearchPayload auto-sorts by the last-moved slider while the
+// sort is on its default). The activity payload keeps the matching *_sort flag
+// only when the user picked that sort, so a flag of 'NA' means auto-sort.
+// ctr / views / likes / comments / shares / ad_budget aren't in the sort menu.
+const RANGE_AUTO_SORT_FLAGS = {
+  likes:      ['likes_sort'],
+  comment:    ['comments_sort'],
+  share:      ['shares_sort'],
+  views:      ['views_sort'],
+  ad_budget:  ['adBudget_sort'],
+  ctr:        [],
+  impression: ['impression_sort', 'impressionsort'],
+  popularity: ['popularity_sort', 'popularitysort'],
+};
+
+// True when the sort column was switched by a range filter, not picked by the user.
+function isRangeAutoSort(data) {
+  const col = String(data.order_column || '').toLowerCase();
+  const flags = RANGE_AUTO_SORT_FLAGS[col];
+  if (!flags) return false;
+  return !flags.some((f) => data[f] && data[f] !== 'NA');
+}
+
 function buildGetAdsInsertData(data, network) {
+  // A range-filter auto-sort only happens while the user's sort is on its default
+  // (Ad Seen Date) — log that default instead of the range metric.
+  if (network !== 'Chatgpt' && isRangeAutoSort(data)) {
+    data = { ...data, order_column: 'last_seen' };
+  }
+
   // Normalize order_column → sort fields for platforms that send order_column instead of *_sort
   const orderCol = data.order_column;
   if (orderCol && (!data.views_sort      || data.views_sort      === 'NA') && orderCol === 'views')      data.views_sort      = 'views_sort';

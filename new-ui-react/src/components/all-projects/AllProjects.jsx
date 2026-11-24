@@ -852,6 +852,9 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                 competitors: [], // full list populated when clicked
                 contentRefId: proj.content_ref_id || null,
                 isGenerating: isStillGenerating,
+                // DS's reason for a finished-but-empty run (e.g. no verifiable
+                // competitors for the selected country); shown in the empty state.
+                generationMessage: proj.generation_message || null,
               };
             });
           } else {
@@ -1280,11 +1283,18 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                   // DS's /list limit cap means a 100-competitor request tops
                   // out at 99 if that batch has one duplicate name).
                   initialCompetitorCount: generated,
+                  // Keep DS's explanation so the empty state can show it.
+                  generationMessage: generated === 0 ? data?.message || null : null,
                 }
               : p,
           ),
         );
-        if (target > 0 && generated < target) {
+        if (generated === 0 && data?.message) {
+          // Zero results: show DS's own reason (e.g. 'No real, verifiable
+          // competitors found for country="india"') instead of the generic
+          // shortfall copy, which wrongly suggests the brand has none at all.
+          showToast(`No competitors generated: ${data.message}`, "error", 8000);
+        } else if (target > 0 && generated < target) {
           // toast only has two visual styles (green "success" / red anything-else)
           // — this isn't an error, so "success" is the correct (green) choice
           // even though the copy explains a shortfall rather than full success.
@@ -3834,6 +3844,12 @@ const AllProjects = ({ onSearch, onNavigateToAds, onRecentActivityClick, onCount
                       ) : (
                         <div className="text-theme-text-muted">
                           No competitors available for this project.
+                          {/* DS's reason when generation finished empty */}
+                          {activeProject?.generationMessage && (
+                            <p className="mt-2 text-sm">
+                              {activeProject.generationMessage}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>

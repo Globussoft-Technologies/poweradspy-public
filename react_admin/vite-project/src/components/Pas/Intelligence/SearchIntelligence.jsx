@@ -646,6 +646,7 @@ async function exportProjectsPDF(data) {
     competitor_comparison: { label: "Competitor Comparison",textCol: "#d97706", bgCol: "#fef3c7" },
     dashboard:             { label: "Dashboard",            textCol: "#059669", bgCol: "#d1fae5" },
     delete_brand:          { label: "Delete Brand",         textCol: "#dc2626", bgCol: "#fee2e2" },
+    delete_competitor:     { label: "Delete Competitor",    textCol: "#dc2626", bgCol: "#fee2e2" },
     monitoring_status:     { label: "Monitoring Status",    textCol: "#7c3aed", bgCol: "#ede9fe" },
     add_member:            { label: "Added Member",         textCol: "#15803d", bgCol: "#dcfce7" },
     delete_member:         { label: "Deleted Member",       textCol: "#b91c1c", bgCol: "#fee2e2" },

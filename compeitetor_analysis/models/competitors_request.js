@@ -70,6 +70,13 @@ const CompetitorRequestSchema = mongoose.Schema(
     generation_status: {
       type: String, enum: ["idle", "running", "completed"], default: "idle"
     },
+    // DS's own explanation from the last /competitors/list poll of a run that
+    // finished with zero competitors (e.g. 'No real, verifiable competitors
+    // found for country="india"...'). Without it the UI can only show an empty
+    // table with no reason. Reset to null whenever a new generation starts.
+    generation_message: {
+      type: String, default: null
+    },
 
     // Per-competitor `specific_to_match` echoed back by the DS `/competitors/list`
     // response when a request was constrained via `specific_to` (see

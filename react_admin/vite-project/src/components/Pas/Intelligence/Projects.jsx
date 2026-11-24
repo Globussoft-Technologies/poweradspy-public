@@ -54,6 +54,7 @@ const PROJECT_TYPE_LABELS = {
   competitor_comparison:  { label: "Competitor Comparison", color: "#d97706", bg: "#fef3c7" },
   dashboard:              { label: "Dashboard",            color: "#059669", bg: "#d1fae5" },
   delete_brand:           { label: "Delete Brand",         color: "#dc2626", bg: "#fee2e2" },
+  delete_competitor:      { label: "Delete Competitor",    color: "#dc2626", bg: "#fee2e2" },
   monitoring_status:      { label: "Monitoring Status",    color: "#7c3aed", bg: "#ede9fe" },
   add_member:             { label: "Added Member",         color: "#15803d", bg: "#dcfce7" },
   delete_member:          { label: "Deleted Member",       color: "#b91c1c", bg: "#fee2e2" },
