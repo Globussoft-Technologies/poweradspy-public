@@ -87,6 +87,18 @@ async function getAdDetails(req, db, logger) {
     }
 
     const adData = { ...rows[0] };
+
+    // gdn_ad_meta_data.redirect_url can arrive as a JSON array (JSON column →
+    // mysql driver parses it) or as JSON text ('["..."]'). Every consumer expects
+    // the GDN "||"-joined string, so normalize it here.
+    let redirectUrl = adData.redirect_url;
+    if (typeof redirectUrl === 'string' && redirectUrl.trim().startsWith('[')) {
+      try { redirectUrl = JSON.parse(redirectUrl); } catch { /* keep as-is */ }
+    }
+    if (Array.isArray(redirectUrl)) {
+      redirectUrl = redirectUrl.filter(Boolean).map(String).join('||');
+    }
+    adData.redirect_url = redirectUrl;
     // Language is ES-only — must agree with the language FILTER, which only
     // ever matches `lang_detect`. Discard the stale SQL `languages` join value
     // seeded above by the spread; it's re-populated below only from ES.

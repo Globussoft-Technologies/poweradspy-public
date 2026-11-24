@@ -20,6 +20,18 @@ const {
   toEpochSeconds,
 } = require('../helpers/youtubeDisplayMerge');
 
+// gdn_ad_meta_data.redirect_url is stored as a JSON array; ES returns it as JSON
+// text ('["..."]') and MySQL as a real array. Consumers expect the GDN
+// "||"-joined string, so normalize both shapes. Other values pass through.
+function toPipedUrls(value) {
+  let v = value;
+  if (typeof v === 'string' && v.trim().startsWith('[')) {
+    try { v = JSON.parse(v); } catch { /* keep as-is */ }
+  }
+  if (Array.isArray(v)) return v.filter(Boolean).map(String).join('||');
+  return v;
+}
+
 // ─── SQL fragments ────────────────────────────────────────────────────────────
 //
 // Mirrors PHP SearchController $select (SearchController.php ~line 562).
@@ -100,7 +112,7 @@ function normalizeEsSource(src) {
     first_seen:                      src['gdn_ad.first_seen'],
     last_seen:                       src['gdn_ad.last_seen'],
     post_date:                       src['gdn_ad.post_date'],
-    redirect_url:                    src['gdn_ad_meta_data.redirect_url'],
+    redirect_url:                    toPipedUrls(src['gdn_ad_meta_data.redirect_url']),
     country:                         src['gdn_country_only.country'],
   };
 }
@@ -391,7 +403,7 @@ ORDER BY FIELD(gdn_ad.id, ${placeholders})`;
         redirect_url:    src['gdn_ad_outgoing_links.redirect_url'] || null,
         final_url:       src['gdn_ad_outgoing_links.final_url']    || null,
         url_redirects:   src['gdn_ad_url.url_redirects']           || null,
-        redirect_urls:   src['gdn_ad_meta_data.redirect_url']      || null,
+        redirect_urls:   toPipedUrls(src['gdn_ad_meta_data.redirect_url']) || null,
         destination_url: src['gdn_ad_meta_data.destination_url']   || null,
       },
     };
