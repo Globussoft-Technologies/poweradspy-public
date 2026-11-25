@@ -65,6 +65,158 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
   const slugOf = (network) => (typeof network === 'string' && NETWORK.test(network.trim().toLowerCase()) ? network.trim().toLowerCase() : null);
   const known = (slug) => networks().includes(slug);
 
+  // ── advertiser names next to ad ids (read only, best effort) ──
+  // Every list that shows ad ids also shows the advertiser, so a person can follow an ad up. The name comes from:
+  //   - the ad itself while it still exists (the network's post-owner table, the same join copyrightVerification uses), or
+  //   - the takedown run's preflight_snapshot once the cleanup deleted it (runs since the snapshot stores `advertiser`).
+  // A failure here never fails the list: the name is then simply left out (null).
+  const ownerOf = (slug) => (slug === 'admob'
+    ? { table: 'mob_post_owners', col: 'name' }
+    : { table: `${slug === 'google' ? 'google_text' : slug}_ad_post_owners`, col: 'post_owner_name' });
+  const SAFE_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+
+  /** Map of ad key -> advertiser name for live ads. `by` is 'id' (our row id) or 'ad_id' (the platform ad id). */
+  async function liveAdvertisers(sql, slug, keys, by = 'id') {
+    const out = new Map();
+    const table = adTables[slug];
+    const owner = ownerOf(slug);
+    const list = [...new Set(keys.filter((k) => k !== null && k !== undefined && k !== '').map(String))].slice(0, 500);
+    if (!list.length || !table || !SAFE_NAME.test(table) || !SAFE_NAME.test(owner.table)) return out;
+    try {
+      const rows = await sql.query(
+        `SELECT a.${by === 'ad_id' ? 'ad_id' : 'id'} AS k, o.${owner.col} AS advertiser
+           FROM \`${table}\` a LEFT JOIN \`${owner.table}\` o ON o.id = a.post_owner_id
+          WHERE a.${by === 'ad_id' ? 'ad_id' : 'id'} IN (${list.map(() => '?').join(',')})`, list);
+      for (const r of rows || []) if (r && r.k !== undefined && r.advertiser) out.set(String(r.k), String(r.advertiser));
+    } catch (err) {
+      log.warn?.('monitor: advertiser lookup failed', { network: slug, error: err.message });
+    }
+    return out;
+  }
+
+  /** Map of run id -> (our row id -> advertiser), from the runs' preflight snapshots (written before the ads are deleted). */
+  async function snapshotAdvertisers(sql, slug, runIds) {
+    const out = new Map();
+    const ids = [...new Set(runIds.filter(Boolean).map((r) => String(r).toLowerCase()))].filter((r) => UUID.test(r)).slice(0, 200);
+    if (!ids.length) return out;
+    try {
+      const rows = await sql.query(`SELECT run_id, preflight_snapshot FROM ${RUNS} WHERE network = ? AND run_id IN (${ids.map(() => '?').join(',')})`, [slug, ...ids]);
+      for (const r of rows || []) {
+        if (!r || typeof r.preflight_snapshot !== 'string') continue;
+        let snap = null;
+        try { snap = JSON.parse(r.preflight_snapshot); } catch { snap = null; }
+        const byAd = new Map();
+        for (const ad of (snap && Array.isArray(snap.ads) ? snap.ads : [])) if (ad && ad.advertiser) byAd.set(String(ad.internalId), String(ad.advertiser));
+        out.set(String(r.run_id).toLowerCase(), byAd);
+      }
+    } catch (err) {
+      log.warn?.('monitor: snapshot lookup failed', { network: slug, error: err.message });
+    }
+    return out;
+  }
+
+  /** Map of blocklist id -> { type, namespace, value, complaintId }: which entry an attempt matched. */
+  async function entriesById(sql, slug, ids) {
+    const out = new Map();
+    const list = [...new Set(ids.map(whole).filter(Boolean))].slice(0, 500);
+    if (!list.length) return out;
+    try {
+      const found = await sql.query(`SELECT id, entry_type, identifier_namespace, value, complaint_id FROM copyright_blocklist WHERE id IN (${list.map(() => '?').join(',')})`, list);
+      for (const e of found || []) {
+        if (e && e.id !== undefined) out.set(String(e.id), { type: e.entry_type, namespace: e.identifier_namespace || null, value: cut(e.value), complaintId: e.complaint_id || null });
+      }
+    } catch (err) { log.warn?.('monitor: matched entries failed', { network: slug, error: err.message }); }
+    return out;
+  }
+
+  // Is idx_blocked_attempts_ad (network, platform_ad_id) on this network's copyright_blocked_attempts? It is added by
+  // copyrightVerification/migrateAttemptsIndex.js. "Yes" is kept for good; "no" is asked again after 10 minutes, so a network
+  // starts using the index soon after the migration, without a restart.
+  const attemptsIndex = new Map();
+  async function hasAttemptsIndex(sql, slug) {
+    const known = attemptsIndex.get(slug);
+    if (known && (known.yes || Date.now() - known.at < 600000)) return known.yes;
+    let yes = false;
+    try {
+      const rows = await sql.query(`SELECT 1 FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = 'copyright_blocked_attempts' AND index_name = 'idx_blocked_attempts_ad' LIMIT 1`);
+      yes = Array.isArray(rows) && rows.length > 0;
+    } catch { yes = false; }
+    attemptsIndex.set(slug, { yes, at: Date.now() });
+    return yes;
+  }
+
+  /**
+   * Why the cleanup blocked an ad id: its "failed copyright verification" reason says nothing about WHAT matched. The check recorded that
+   * when it failed the ad (copyright_blocked_attempts: match type + the entry it matched), so the newest such row of that platform ad id is
+   * the cause.
+   *   - With idx_blocked_attempts_ad (after migrateAttemptsIndex.js): one query straight by ad id, for blocks of any age.
+   *   - Without it: bounded by the (network, created_at) index, one query per day of entries looking two days back, so a network that is
+   *     not migrated yet is never scanned whole.
+   */
+  async function causesOf(sql, slug, entries) {
+    const out = new Map();
+    const found = [];
+    if (await hasAttemptsIndex(sql, slug)) {
+      const ids = [...new Set(entries.map((e) => String(e.value)))].slice(0, 500);
+      try {
+        const rows = await sql.query(
+          `SELECT id, platform_ad_id, advertiser, blocklist_id, match_type, distance, source, created_at FROM copyright_blocked_attempts
+            WHERE network = ? AND platform_ad_id IN (${ids.map(() => '?').join(',')}) ORDER BY id DESC LIMIT 2000`, [slug, ...ids]);
+        found.push(...(rows || []));
+      } catch (err) { log.warn?.('monitor: block causes failed', { network: slug, error: err.message }); }
+      return finishCauses(sql, slug, found, out);
+    }
+    const byDay = new Map();
+    for (const e of entries) {
+      const at = new Date(e.createdAt);
+      if (Number.isNaN(at.getTime())) continue;
+      const day = at.toISOString().slice(0, 10);
+      if (!byDay.has(day)) byDay.set(day, { from: at, to: at, ids: [] });
+      const b = byDay.get(day);
+      if (at < b.from) b.from = at;
+      if (at > b.to) b.to = at;
+      b.ids.push(String(e.value));
+    }
+    for (const b of [...byDay.values()].slice(0, 10)) {
+      const from = new Date(b.from.getTime() - 2 * 86400000);
+      const to = new Date(b.to.getTime() + 3600000);
+      try {
+        const rows = await sql.query(
+          `SELECT id, platform_ad_id, advertiser, blocklist_id, match_type, distance, source, created_at FROM copyright_blocked_attempts
+            WHERE network = ? AND created_at >= ? AND created_at <= ? AND platform_ad_id IN (${b.ids.map(() => '?').join(',')}) ORDER BY id DESC LIMIT 500`,
+          [slug, dbTime(from), dbTime(to), ...b.ids]);
+        found.push(...(rows || []));
+      } catch (err) { log.warn?.('monitor: block causes failed', { network: slug, error: err.message }); }
+    }
+    return finishCauses(sql, slug, found, out);
+  }
+
+  /** The newest non-ingestion attempt per ad id, with the entry it matched. */
+  async function finishCauses(sql, slug, found, out) {
+    const matched = await entriesById(sql, slug, found.map((r) => r.blocklist_id));
+    for (const r of found) {
+      const key = String(r.platform_ad_id);
+      if (!r || out.has(key) || String(r.source || '').startsWith('ingestion')) continue; // newest first; a refusal at the door was never saved
+      out.set(key, {
+        matchType: r.match_type, distance: r.distance === null || r.distance === undefined ? null : num(r.distance), source: r.source || null,
+        advertiser: r.advertiser || null, at: iso(r.created_at), matchedEntry: matched.get(String(r.blocklist_id)) || null,
+      });
+    }
+    return out;
+  }
+
+  /** Adds `advertiser` to rows that carry `internalAdId` (and `runId` / `takedownRunId`): snapshot first, then the live ad. */
+  async function withAdvertisers(sql, slug, items, runOf = (i) => i.runId) {
+    if (!items.length) return items;
+    const snaps = await snapshotAdvertisers(sql, slug, items.map(runOf));
+    const missing = items.filter((i) => !i.advertiser && !snaps.get(String(runOf(i) || '').toLowerCase())?.get(String(i.internalAdId)));
+    const live = missing.length ? await liveAdvertisers(sql, slug, missing.map((i) => i.internalAdId)) : new Map();
+    return items.map((i) => ({
+      ...i,
+      advertiser: i.advertiser || snaps.get(String(runOf(i) || '').toLowerCase())?.get(String(i.internalAdId)) || live.get(String(i.internalAdId)) || null,
+    }));
+  }
+
   /** One network's takedown numbers, from the runs table only. */
   async function takedownOf(sql, network) {
     try {
@@ -156,7 +308,10 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
         stage: r.stage || 'not_checked', detail: r.detail || 'No verification attempt is recorded; check that the verification cron is enabled and running.',
         attempts: num(r.attempts), firstCheckedAt: iso(r.first_checked_at), lastCheckedAt: iso(r.last_checked_at),
       }));
-      return { ok: true, available: true, items, next: rows.length === n ? items[items.length - 1].internalAdId : null };
+      // the advertiser of each waiting ad, read in a second query so a missing owner table never hides the queue
+      const names = await liveAdvertisers(sql, slug, items.map((i) => i.internalAdId));
+      const named = items.map((i) => ({ ...i, advertiser: names.get(i.internalAdId) || null }));
+      return { ok: true, available: true, items: named, next: rows.length === n ? items[items.length - 1].internalAdId : null };
     } catch (err) {
       if (missingTable(err)) return { ok: true, available: false, reason: 'diagnostics_not_migrated', items: [], next: null };
       if (err?.code === 'ER_BAD_FIELD_ERROR' || err?.errno === 1054) return { ok: true, available: false, reason: 'no_column', items: [], next: null };
@@ -274,7 +429,8 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
         bySystem[c.system].byStatus[c.status] = (bySystem[c.system].byStatus[c.status] || 0) + num(c.steps);
         addTo(byGroup, g, num(c.steps));
       }
-      return { ok: true, run: runShape(run), steps: { byGroup, bySystem }, items: rows.map(actionShape), next: rows.length === n ? rows[rows.length - 1].id : null };
+      const steps = await withAdvertisers(sql, slug, rows.map((a) => ({ ...actionShape(a), runId: a.run_id })));
+      return { ok: true, run: runShape(run), steps: { byGroup, bySystem }, items: steps.map(({ runId: _r, ...st }) => st), next: rows.length === n ? rows[rows.length - 1].id : null };
     } catch (err) {
       if (missingTable(err)) return bad('no_table', 'the takedown tables do not exist in that database yet');
       log.warn?.('monitor: run logs failed', { network: slug, error: err.message });
@@ -294,7 +450,8 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       const params = [...FAILED_WORDS, slug];
       if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
       const rows = await sql.query(`SELECT ${ACTION_COLUMNS} FROM ${ACTIONS} WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`, params);
-      return { ok: true, items: rows.map((a) => ({ ...actionShape(a), runId: a.run_id })), next: rows.length === n ? rows[rows.length - 1].id : null };
+      const items = await withAdvertisers(sql, slug, rows.map((a) => ({ ...actionShape(a), runId: a.run_id })));
+      return { ok: true, items, next: rows.length === n ? rows[rows.length - 1].id : null };
     } catch (err) {
       if (missingTable(err)) return bad('no_table', 'the takedown tables do not exist in that database yet');
       log.warn?.('monitor: failures failed', { network: slug, error: err.message });
@@ -311,7 +468,12 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
   async function hashJobResults(query = {}) {
     if (!jobs) return bad('not_configured', 'the hash jobs are not available');
     if (!known(slugOf(query.network))) return bad('invalid_network', 'network must be a known network slug');
-    return jobs.results({ network: query.network, jobId: query.jobId, generation: query.generation, outcome: query.outcome, afterId: query.afterId, limit: pageSize(query.limit, 200, 500) });
+    const out = await jobs.results({ network: query.network, jobId: query.jobId, generation: query.generation, outcome: query.outcome, afterId: query.afterId, limit: pageSize(query.limit, 200, 500) });
+    // the advertiser of each image's ad, when the ad still exists (best effort, never fails the answer)
+    const sql = getSql(slugOf(query.network));
+    if (!out?.ok || !sql || !Array.isArray(out.items) || !out.items.length) return out;
+    const names = await liveAdvertisers(sql, slugOf(query.network), out.items.map((r) => r.internalAdId));
+    return { ...out, items: out.items.map((r) => ({ ...r, advertiser: r.advertiser || names.get(String(r.internalAdId)) || null })) };
   }
 
   // ── the blocklist itself and the ads it refused (B1; read only) ──
@@ -323,11 +485,14 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
    * Who and what is blocked in one network: newest entry first, by id, with a cursor. Optional filters: status, entry type, and a text
    * search inside the blocked value (the blocklist is small, so the search is a plain scan with a limit). `counts` says how many entries
    * the network has by status, and how many ACTIVE ones by type. It reads identifier_namespace too (in the schema since the namespace change), to tell a platform ad id from our row id.
+   * `complaintId` keeps only the entries of one claim (the advertiser block and the image_hash entries its hash job added), through the
+   * idx_blocklist_complaint index, so a reviewer can follow one claim from the Requests tab.
    */
-  async function blocklist({ network, status, entryType, q, beforeId, limit } = {}) {
+  async function blocklist({ network, status, entryType, q, complaintId, beforeId, limit } = {}) {
     const slug = slugOf(network);
     if (!slug || !known(slug)) return bad('invalid_network', 'network must be a known network slug');
     if (status && !BLOCK_STATUSES.includes(status)) return bad('invalid_status', `status must be one of ${BLOCK_STATUSES.join(', ')}`);
+    if (complaintId && !UUID.test(String(complaintId))) return bad('invalid_id', 'complaintId must be a complaint id');
     if (entryType && !BLOCK_TYPES.includes(entryType)) return bad('invalid_type', `entryType must be one of ${BLOCK_TYPES.join(', ')}`);
     const text = typeof q === 'string' ? q.trim().slice(0, 100) : '';
     const n = pageSize(limit, 50, 200);
@@ -339,9 +504,11 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       if (status) { where.push('status = ?'); params.push(status); }
       if (entryType) { where.push('entry_type = ?'); params.push(entryType); }
       if (text) { where.push('LOWER(value) LIKE ?'); params.push(likeOf(text)); }
+      // one claim's entries only (complaint ids are stored lowercase, as the runs filter assumes)
+      if (complaintId) { where.push('complaint_id = ?'); params.push(String(complaintId).toLowerCase()); }
       if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
       const rows = await sql.query(
-        `SELECT id, network, entry_type, identifier_namespace, value, reason, source, complaint_id, status, expires_at, created_at, added_by, removed_at, removed_by
+        `SELECT id, network, entry_type, identifier_namespace, value, reason, source, complaint_id, status, expires_at, created_at, added_by, removed_at, removed_by, details
            FROM copyright_blocklist WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`,
         params
       );
@@ -353,14 +520,39 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
         counts.byStatus[c.status] = (counts.byStatus[c.status] || 0) + k;
         if (c.status === 'active') counts.activeByType[c.entry_type] = (counts.activeByType[c.entry_type] || 0) + k;
       }
+      let items = rows.map((r) => {
+        // image fingerprints: which ad the image came from (the hash job keeps identifiers only in `details`)
+        let origin = null;
+        if (r.entry_type === 'image_hash' && typeof r.details === 'string') {
+          try {
+            const d = JSON.parse(r.details);
+            if (d && (d.ad_id || d.internal_ad_id || d.image_url || d.media_url)) {
+              origin = { platformAdId: d.ad_id ? String(d.ad_id) : null, internalAdId: d.internal_ad_id ? String(d.internal_ad_id) : null, imageUrl: cut(d.image_url || d.media_url || null), job: d.job ?? null };
+            }
+          } catch { origin = null; }
+        }
+        return {
+          id: r.id, network: r.network, entryType: r.entry_type, identifierNamespace: r.identifier_namespace || null, value: cut(r.value), reason: r.reason || null, source: r.source || null,
+          complaintId: r.complaint_id || null, status: r.status, expiresAt: iso(r.expires_at), createdAt: iso(r.created_at),
+          addedBy: r.added_by || null, removedAt: iso(r.removed_at), removedBy: r.removed_by || null, origin,
+        };
+      });
+      // the cleanup's ad ids: what the ad matched when it failed the check
+      const cleanupIds = items.filter((i) => i.entryType === 'ad_id' && i.addedBy === 'copyright-verification' && i.identifierNamespace !== 'internal');
+      if (cleanupIds.length) {
+        const causes = await causesOf(sql, slug, cleanupIds);
+        items = items.map((i) => (cleanupIds.includes(i) ? { ...i, cause: causes.get(String(i.value)) || null } : i));
+      }
+      // the advertiser of the ad an image fingerprint came from
+      const withOrigin = items.filter((i) => i.origin?.internalAdId);
+      if (withOrigin.length) {
+        const names = await liveAdvertisers(sql, slug, withOrigin.map((i) => i.origin.internalAdId));
+        items = items.map((i) => (i.origin?.internalAdId ? { ...i, origin: { ...i.origin, advertiser: names.get(i.origin.internalAdId) || null } } : i));
+      }
       return {
         ok: true,
         counts,
-        items: rows.map((r) => ({
-          id: r.id, network: r.network, entryType: r.entry_type, identifierNamespace: r.identifier_namespace || null, value: cut(r.value), reason: r.reason || null, source: r.source || null,
-          complaintId: r.complaint_id || null, status: r.status, expiresAt: iso(r.expires_at), createdAt: iso(r.created_at),
-          addedBy: r.added_by || null, removedAt: iso(r.removed_at), removedBy: r.removed_by || null,
-        })),
+        items,
         next: rows.length === n ? rows[rows.length - 1].id : null,
       };
     } catch (err) {
@@ -370,29 +562,45 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
     }
   }
 
-  /** The ads the blocklist refused at ingestion in one network, newest first (identifiers only: copyright_blocked_attempts never holds the payload). */
-  async function attempts({ network, beforeId, limit } = {}) {
+  /**
+   * The ads the blocklist refused or failed in one network, newest first (identifiers only: copyright_blocked_attempts never holds the payload).
+   * `complaintId` keeps only the ads refused because of one claim's entries: the attempt's blocklist_id must be an entry of that complaint
+   * (idx_blocked_attempts_entry + idx_blocklist_complaint, so both sides are indexed).
+   */
+  async function attempts({ network, complaintId, beforeId, limit } = {}) {
     const slug = slugOf(network);
     if (!slug || !known(slug)) return bad('invalid_network', 'network must be a known network slug');
+    if (complaintId && !UUID.test(String(complaintId))) return bad('invalid_id', 'complaintId must be a complaint id');
     const n = pageSize(limit, 50, 200);
     const sql = getSql(slug);
     if (!sql) return bad('no_database', 'there is no database connection for that network');
     try {
       const where = ['network = ?'];
       const params = [slug];
+      if (complaintId) {
+        where.push('blocklist_id IN (SELECT id FROM copyright_blocklist WHERE network = ? AND complaint_id = ?)');
+        params.push(slug, String(complaintId).toLowerCase());
+      }
       if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
       const rows = await sql.query(
         `SELECT id, network, platform_ad_id, advertiser, image_url, blocklist_id, match_type, distance, source, created_at
            FROM copyright_blocked_attempts WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`,
         params
       );
+      // the entry that matched (so "Ad id" or "Same image" says WHICH ad id or image), and the advertiser of ads the attempt has no name for
+      const entries = await entriesById(sql, slug, rows.map((r) => r.blocklist_id));
+      const names = await liveAdvertisers(sql, slug, rows.filter((r) => !r.advertiser).map((r) => r.platform_ad_id), 'ad_id');
       return {
         ok: true,
-        items: rows.map((r) => ({
-          id: r.id, network: r.network, platformAdId: r.platform_ad_id || null, advertiser: r.advertiser || null, imageUrl: cut(r.image_url),
-          blocklistId: r.blocklist_id, matchType: r.match_type, distance: r.distance === null || r.distance === undefined ? null : num(r.distance),
-          source: r.source || null, createdAt: iso(r.created_at),
-        })),
+        items: rows.map((r) => {
+          const e = entries.get(String(r.blocklist_id));
+          return {
+            id: r.id, network: r.network, platformAdId: r.platform_ad_id || null, advertiser: r.advertiser || names.get(String(r.platform_ad_id)) || null, imageUrl: cut(r.image_url),
+            blocklistId: r.blocklist_id, matchType: r.match_type, distance: r.distance === null || r.distance === undefined ? null : num(r.distance),
+            source: r.source || null, createdAt: iso(r.created_at),
+            matchedEntry: e || null,
+          };
+        }),
         next: rows.length === n ? rows[rows.length - 1].id : null,
       };
     } catch (err) {
@@ -470,11 +678,16 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
         ok: true,
         audit: auditShape(run),
         counts: { total: Object.values(byStatus).reduce((a, b) => a + b, 0), byStatus },
-        items: rows.map((f) => ({
-          id: f.id, findingType: f.finding_type, system: f.system, location: cut(f.location), internalAdId: f.internal_ad_id || null, platformAdId: f.platform_ad_id || null,
-          targetType: f.target_type || null, targetValue: cut(f.target_value), details: cut(f.details), status: f.status, resolution: f.resolution || null,
-          resolutionNote: cut(f.resolution_note), resolvedAt: iso(f.resolved_at), takedownRunId: f.takedown_run_id || null, createdAt: iso(f.created_at),
-        })),
+        items: await withAdvertisers(sql, slug, rows.map((f) => {
+          let saved = null;
+          try { saved = f.details ? JSON.parse(f.details)?.advertiser || null : null; } catch { saved = null; }
+          return {
+            id: f.id, findingType: f.finding_type, system: f.system, location: cut(f.location), internalAdId: f.internal_ad_id || null, platformAdId: f.platform_ad_id || null,
+            targetType: f.target_type || null, targetValue: cut(f.target_value), details: cut(f.details), status: f.status, resolution: f.resolution || null,
+            resolutionNote: cut(f.resolution_note), resolvedAt: iso(f.resolved_at), takedownRunId: f.takedown_run_id || null, createdAt: iso(f.created_at),
+            advertiser: saved,
+          };
+        }), (f) => f.takedownRunId),
         next: rows.length === n ? rows[rows.length - 1].id : null,
       };
     } catch (err) {

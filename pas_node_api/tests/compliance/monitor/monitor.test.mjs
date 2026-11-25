@@ -17,8 +17,8 @@ function fakeSql(answer) {
 }
 const noTable = () => Object.assign(new Error("Table doesn't exist"), { code: "ER_NO_SUCH_TABLE", errno: 1146 });
 
-function service({ sqls, jobs, networks = Object.keys(sqls) } = {}) {
-  return createMonitorService({ networks: () => networks, getSql: (n) => sqls[n] || null, jobs, log: silent });
+function service({ sqls, jobs, networks = Object.keys(sqls), adTables } = {}) {
+  return createMonitorService({ networks: () => networks, getSql: (n) => sqls[n] || null, jobs, adTables, log: silent });
 }
 
 describe("status groups", () => {
@@ -316,6 +316,8 @@ describe("routes", () => {
       expect(monitor.blocklist).toHaveBeenCalledWith({ network: "facebook", status: "active", entryType: "advertiser", q: "test", beforeId: "9", limit: "5" });
       expect((await t.get("/admin/monitor/attempts?network=facebook&beforeId=4&limit=10")).status).toBe(200);
       expect(monitor.attempts).toHaveBeenCalledWith({ network: "facebook", beforeId: "4", limit: "10" });
+      expect((await t.get(`/admin/monitor/attempts?network=facebook&complaintId=${COMPLAINT}`)).status).toBe(200);
+      expect(monitor.attempts).toHaveBeenLastCalledWith(expect.objectContaining({ complaintId: COMPLAINT }));
       expect((await t.get("/admin/monitor/audits?network=facebook", {})).status).toBe(401);
       expect((await t.get(`/admin/monitor/audits?network=facebook&takedownRunId=${RUN}&cursor=c&limit=3`)).status).toBe(200);
       expect(monitor.audits).toHaveBeenCalledWith({ network: "facebook", takedownRunId: RUN, cursor: "c", limit: "3" });
@@ -406,11 +408,110 @@ describe("blocklist and rejected ads", () => {
     expect(sql.seen[0].params).toEqual(["facebook", 13]);
   });
 
+  // Following one claim from the Requests tab: the blocks and the refused ads of one complaint id.
+  it("keeps only one complaint's entries and refused ads, and refuses a value that is not a complaint id", async () => {
+    const sql = fakeSql(answer);
+    const s = service({ sqls: { facebook: sql } });
+    await s.blocklist({ network: "facebook", complaintId: COMPLAINT.toUpperCase(), limit: "10" });
+    expect(sql.seen[0].text).toMatch(/WHERE network = \? AND complaint_id = \? ORDER BY id DESC LIMIT 10$/);
+    expect(sql.seen[0].params).toEqual(["facebook", COMPLAINT]);
+    sql.seen.length = 0;
+    await s.attempts({ network: "facebook", complaintId: COMPLAINT, beforeId: "13", limit: "5" });
+    expect(sql.seen[0].text).toMatch(/WHERE network = \? AND blocklist_id IN \(SELECT id FROM copyright_blocklist WHERE network = \? AND complaint_id = \?\) AND id < \? ORDER BY id DESC LIMIT 5$/);
+    expect(sql.seen[0].params).toEqual(["facebook", "facebook", COMPLAINT, 13]);
+    sql.seen.length = 0;
+    expect((await s.blocklist({ network: "facebook", complaintId: "CR-ABC234" })).error).toBe("invalid_id");
+    expect((await s.attempts({ network: "facebook", complaintId: "1 OR 1=1" })).error).toBe("invalid_id");
+    expect(sql.seen).toHaveLength(0);
+  });
+
   it("only reads: every query is a SELECT", async () => {
     const sql = fakeSql(answer);
     const s = service({ sqls: { facebook: sql } });
     await s.blocklist({ network: "facebook", q: "x" }); await s.attempts({ network: "facebook" });
     expect(sql.seen.length).toBeGreaterThan(2);
     for (const q of sql.seen) expect(q.text).toMatch(/^SELECT /);
+  });
+});
+
+// Every list that shows ad ids also names the advertiser (live ad, or the run snapshot once deleted), and Rejected ads says which entry matched.
+describe("advertiser names next to ad ids", () => {
+  it("names the advertiser of each ad waiting for the check, from the network's post-owner table", async () => {
+    const sql = fakeSql((text) => (/post_owners/.test(text) ? [{ k: 5, advertiser: "Acme Brand" }] : [{ internal_ad_id: 5, platform_ad_id: "p5", stage: null }]));
+    const out = await service({ sqls: { facebook: sql }, adTables: { facebook: "facebook_ad" } }).verificationQueue({ network: "facebook" });
+    expect(out.items[0]).toMatchObject({ internalAdId: "5", platformAdId: "p5", advertiser: "Acme Brand" });
+    expect(sql.seen[1].text).toMatch(/FROM `facebook_ad` a LEFT JOIN `facebook_ad_post_owners` o ON o.id = a.post_owner_id WHERE a.id IN \(\?\)$/);
+  });
+
+  it("names the advertiser of a deleted ad from its run's snapshot, and of a live ad from the ad", async () => {
+    const snapshot = JSON.stringify({ snapshotVersion: 1, ads: [{ internalId: "1", platformAdId: "p1", advertiser: "Gone Brand" }] });
+    const sql = fakeSql((text) => {
+      if (/preflight_snapshot/.test(text)) return [{ run_id: RUN, preflight_snapshot: snapshot }];
+      if (/post_owners/.test(text)) return [{ k: 2, advertiser: "Live Brand" }];
+      return [{ id: 9, run_id: RUN, internal_ad_id: "1", target_id: "p1", status: "failed" }, { id: 8, run_id: RUN, internal_ad_id: "2", target_id: "p2", status: "failed" }];
+    });
+    const out = await service({ sqls: { facebook: sql }, adTables: { facebook: "facebook_ad" } }).failures({ network: "facebook" });
+    expect(out.items.map((i) => i.advertiser)).toEqual(["Gone Brand", "Live Brand"]);
+  });
+
+  it("says which entry a rejected ad matched, and a lookup that fails only leaves the name out", async () => {
+    const sql = fakeSql((text) => {
+      if (/FROM copyright_blocklist WHERE id IN/.test(text)) return [{ id: 7, entry_type: "ad_id", identifier_namespace: "platform", value: "990001110002", complaint_id: COMPLAINT }];
+      if (/post_owners/.test(text)) throw new Error("no owner table");
+      return [{ id: 12, network: "facebook", platform_ad_id: "990001110002", advertiser: null, blocklist_id: 7, match_type: "ad_id", source: "verification-recheck", created_at: "2026-11-05 10:05:00" }];
+    });
+    const out = await service({ sqls: { facebook: sql }, adTables: { facebook: "facebook_ad" } }).attempts({ network: "facebook" });
+    expect(out.ok).toBe(true);
+    expect(out.items[0]).toMatchObject({ advertiser: null, matchedEntry: { type: "ad_id", namespace: "platform", value: "990001110002", complaintId: COMPLAINT } });
+  });
+});
+
+// The cleanup's ad id blocks say only "failed copyright verification": the monitor adds what the ad matched when it failed.
+describe("why an ad id was blocked by the cleanup", () => {
+  const cleanupRow = { id: 30, network: "facebook", entry_type: "ad_id", identifier_namespace: "platform", value: "1748325809745951", reason: "failed copyright verification", source: "verification", complaint_id: null, status: "active", expires_at: null, created_at: "2026-11-11 16:00:00", added_by: "copyright-verification", removed_at: null, removed_by: null, details: null };
+  const hashRow = { ...cleanupRow, id: 31, entry_type: "image_hash", identifier_namespace: "none", value: "ab".repeat(32), added_by: "landing-form", source: "imagematch:job", details: JSON.stringify({ job: 4, ad_id: "p9", internal_ad_id: "9", image_url: "/b/x.jpg" }) };
+
+  it("finds the cause in the blocked attempts (inside a bounded time window) and names the entry it matched", async () => {
+    const sql = fakeSql((text) => {
+      if (/information_schema/.test(text)) return []; // not migrated: no idx_blocked_attempts_ad
+      if (/GROUP BY entry_type, status/.test(text)) return [];
+      if (/FROM copyright_blocked_attempts/.test(text)) return [
+        { id: 70, platform_ad_id: "1748325809745951", advertiser: "Acme Brand", blocklist_id: 7, match_type: "advertiser", distance: null, source: "verification-recheck", created_at: "2026-11-11 15:58:00" },
+        { id: 60, platform_ad_id: "1748325809745951", advertiser: null, blocklist_id: 8, match_type: "ad_id", source: "ingestion:facebook", created_at: "2026-11-11 15:00:00" },
+      ];
+      if (/FROM copyright_blocklist WHERE id IN/.test(text)) return [{ id: 7, entry_type: "advertiser", identifier_namespace: "none", value: "Acme Brand", complaint_id: COMPLAINT }];
+      return [cleanupRow, hashRow];
+    });
+    const out = await service({ sqls: { facebook: sql } }).blocklist({ network: "facebook" });
+    expect(out.items[0].cause).toMatchObject({ matchType: "advertiser", source: "verification-recheck", advertiser: "Acme Brand", matchedEntry: { type: "advertiser", value: "Acme Brand", complaintId: COMPLAINT } });
+    const look = sql.seen.find((q) => /FROM copyright_blocked_attempts/.test(q.text));
+    expect(look.text).toMatch(/WHERE network = \? AND created_at >= \? AND created_at <= \? AND platform_ad_id IN \(\?\)/);
+    expect(out.items[1].origin).toMatchObject({ platformAdId: "p9", internalAdId: "9", imageUrl: "/b/x.jpg" });
+  });
+
+  it("with idx_blocked_attempts_ad, looks the cause up straight by ad id, with no time window", async () => {
+    const sql = fakeSql((text) => {
+      if (/information_schema/.test(text)) return [{ 1: 1 }];
+      if (/GROUP BY entry_type, status/.test(text)) return [];
+      if (/FROM copyright_blocked_attempts/.test(text)) return [{ id: 5, platform_ad_id: "1748325809745951", advertiser: "Old Brand", blocklist_id: 0, match_type: "sha256", distance: null, source: "verification", created_at: "2026-01-02 10:00:00" }];
+      return [cleanupRow];
+    });
+    const out = await service({ sqls: { facebook: sql } }).blocklist({ network: "facebook" });
+    expect(out.items[0].cause).toMatchObject({ matchType: "sha256", advertiser: "Old Brand", matchedEntry: null });
+    const look = sql.seen.find((q) => /FROM copyright_blocked_attempts/.test(q.text));
+    expect(look.text).toMatch(/WHERE network = \? AND platform_ad_id IN \(\?\) ORDER BY id DESC LIMIT 2000$/);
+    expect(look.text).not.toMatch(/created_at >=/);
+  });
+
+  it("leaves the cause empty when nothing was recorded, without failing the list", async () => {
+    const sql = fakeSql((text) => {
+      if (/information_schema/.test(text)) return [];
+      if (/GROUP BY entry_type, status/.test(text)) return [];
+      if (/FROM copyright_blocked_attempts/.test(text)) throw new Error("timeout");
+      return [cleanupRow];
+    });
+    const out = await service({ sqls: { facebook: sql } }).blocklist({ network: "facebook" });
+    expect(out.ok).toBe(true);
+    expect(out.items[0].cause).toBeNull();
   });
 });

@@ -150,6 +150,9 @@ const TABLES = [
       pk('id'),
       ix('idx_blocked_attempts_time', 'network', 'created_at'),
       ix('idx_blocked_attempts_entry', 'blocklist_id'),
+      // the newest attempt of one ad (the monitor's "why was this ad id blocked"); existing tables get it from
+      // src/services/copyrightVerification/migrateAttemptsIndex.js, which adds it online
+      ix('idx_blocked_attempts_ad', 'network', 'platform_ad_id'),
     ],
   },
 

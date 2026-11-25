@@ -14,6 +14,9 @@ import "react-toastify/dist/ReactToastify.css";
  *
  * Accept needs the reviewer to confirm that the supporting documents were reviewed. A failed or partial processing after Accept is shown per
  * network with a Retry button; "unable to check" in the search is never shown as "no ads found".
+ *
+ * The claim shows its full complaint id (with Copy), because the Monitoring tab filters by it. When the page is opened inside Copyright
+ * Request, `onFollowClaim` is given and an accepted claim gets "Follow this claim in Monitoring", which opens Monitoring filtered to it.
  */
 
 const BASE = `${import.meta.env.VITE_ADMIN_PANEL_API || "http://localhost:4000/admin-panel"}/copyright-claims`;
@@ -76,11 +79,13 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
   return { ok: res.ok, status: res.status, json };
 }
 
-export default function CopyrightClaims() {
+export default function CopyrightClaims({ onFollowClaim } = {}) {
   const [summary, setSummary] = useState(null);
   const [status, setStatus] = useState("pending");
   const [items, setItems] = useState([]);
   const [next, setNext] = useState(null);
+  // paging: the cursors of the pages before this one, and the cursor of the page on screen (null = page 1)
+  const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState("");
   const [forbidden, setForbidden] = useState(false);
@@ -97,6 +102,7 @@ export default function CopyrightClaims() {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const openRef = useRef(null);
+  const cursorRef = useRef(null);
   openRef.current = openId;
 
   const loadSummary = useCallback(async () => {
@@ -107,7 +113,7 @@ export default function CopyrightClaims() {
     } catch { /* the login redirect, or the network: the list shows its own error */ }
   }, []);
 
-  const loadList = useCallback(async (reset = true, cursor = null) => {
+  const loadList = useCallback(async (reset = true, cursor = null, dir = "next") => {
     setLoading(true);
     setListError("");
     try {
@@ -118,8 +124,15 @@ export default function CopyrightClaims() {
       const { ok, status: code, json } = await api(`?${qs.toString()}`);
       if (code === 403) { setForbidden(true); return; }
       if (!ok) { setListError(json?.message || "The claims could not be loaded."); return; }
-      setItems((prev) => (reset ? json.data.items : [...prev, ...json.data.items]));
+      // one page at a time: the rows are replaced, and the page history moves with the direction
+      setItems(json.data.items);
       setNext(json.data.items.length ? json.data.next : null);
+      // read the cursor of the page being left now: the state updater runs later, after cursorRef has moved on
+      const leaving = cursorRef.current;
+      if (reset) setHistory([]);
+      else if (dir === "back") setHistory((h) => h.slice(0, -1));
+      else setHistory((h) => [...h, leaving]);
+      cursorRef.current = reset ? null : cursor;
     } catch {
       setListError("The claims could not be loaded.");
     } finally {
@@ -224,6 +237,10 @@ export default function CopyrightClaims() {
   const copyLink = async (url) => {
     try { await navigator.clipboard.writeText(url); toast.success("Link copied."); } catch { toast.error("Could not copy the link."); }
   };
+  // the complaint id is what Monitoring searches by, so it can be copied in one click
+  const copyComplaintId = async (id) => {
+    try { await navigator.clipboard.writeText(id); toast.success("Complaint id copied."); } catch { toast.error("Could not copy the complaint id."); }
+  };
   const openLink = (url) => {
     if (!/^https:\/\//i.test(url)) return;
     if (window.confirm(`This is a website outside PowerAdspy, given by the claimant:\n\n${url}\n\nOpen it in a new tab?`)) {
@@ -260,14 +277,17 @@ export default function CopyrightClaims() {
         <div className="bg-white rounded-xl border border-gray-100 p-4">
           <div className="text-xs text-gray-500">Waiting for review</div>
           <div className="text-2xl font-semibold text-gray-900">{summary?.unavailable ? "unavailable" : (summary ? summary.pending : "…")}</div>
+          <div className="text-[11px] text-gray-400 mt-0.5">claims with no decision yet</div>
         </div>
         <div className="bg-white rounded-xl border border-gray-100 p-4">
           <div className="text-xs text-gray-500">Oldest waiting</div>
           <div className={`text-2xl font-semibold ${waitedHours !== null && waitedHours >= 48 ? "text-rose-600" : "text-gray-900"}`}>{summary?.unavailable ? "unavailable" : (waitedHours === null ? "—" : `${waitedHours} h`)}</div>
+          <div className="text-[11px] text-gray-400 mt-0.5">hours the oldest waiting claim has waited; red from 48 h</div>
         </div>
         <div className="bg-white rounded-xl border border-gray-100 p-4">
           <div className="text-xs text-gray-500">Accepted, but not fully processed</div>
           <div className={`text-2xl font-semibold ${summary?.failingProcessing > 0 ? "text-amber-600" : "text-gray-900"}`}>{summary?.unavailable ? "unavailable" : (summary ? summary.failingProcessing : "…")}</div>
+          <div className="text-[11px] text-gray-400 mt-0.5">accepted claims where a network did not finish; open them and press Retry</div>
         </div>
       </div>
 
@@ -294,12 +314,18 @@ export default function CopyrightClaims() {
             {!loading && !items.length && !listError && <div className="py-8 text-center text-sm text-gray-500">No claims here.</div>}
           </div>
           {loading && <div className="py-3 text-center text-sm text-gray-500">Loading…</div>}
-          {next && !loading && <button onClick={() => loadList(false, next)} className="mt-3 w-full h-9 text-[13px] rounded-lg border border-gray-200 hover:bg-gray-50!">Load more</button>}
+          {(history.length > 0 || next) && (
+            <nav className="mt-3 flex items-center gap-2" aria-label="Pages">
+              <button type="button" disabled={!history.length || loading} onClick={() => loadList(false, history[history.length - 1] ?? null, "back")} className="h-9 px-3 text-[13px] rounded-lg border border-gray-200 hover:bg-gray-50! disabled:opacity-40">‹ Previous</button>
+              <span className="flex-1 text-center text-[13px] text-gray-600">Page {history.length + 1}</span>
+              <button type="button" disabled={!next || loading} onClick={() => loadList(false, next, "next")} className="h-9 px-3 text-[13px] rounded-lg border border-gray-200 hover:bg-gray-50! disabled:opacity-40">Next ›</button>
+            </nav>
+          )}
         </div>
 
         {/* one claim */}
         <div className="xl:col-span-3 bg-white rounded-xl border border-gray-100 p-4 min-h-[320px]">
-          {!openId && <div className="py-16 text-center text-sm text-gray-500">Choose a claim to review it.</div>}
+          {!openId && <div className="py-16 text-center text-sm text-gray-500">Choose a claim on the left to see it here. Claims marked <b>Waiting</b> need a decision.</div>}
           {openId && detailError && <div className="text-sm text-rose-600">{detailError}</div>}
           {openId && !detail && !detailError && <div className="text-sm text-gray-500">Loading…</div>}
           {claim && (
@@ -308,6 +334,12 @@ export default function CopyrightClaims() {
                 <div>
                   <div className="text-lg font-semibold text-gray-900 break-words">{claim.name}</div>
                   <div className="text-xs text-gray-500">{claim.reference} · received {fmtDate(claim.receivedAt)}</div>
+                  {/* the long id: Monitoring filters by it (the short reference is only for the claimant) */}
+                  <div className="text-xs text-gray-500 mt-1 flex items-center gap-1 flex-wrap">
+                    <span>Complaint id:</span>
+                    <code className="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 break-all">{openId}</code>
+                    <button onClick={() => copyComplaintId(openId)} aria-label="Copy complaint id" title="Copy complaint id" className="h-6 px-1.5 rounded border border-gray-200 hover:bg-gray-50! flex items-center"><FiCopy size={11} /></button>
+                  </div>
                 </div>
                 <span className="ml-auto"><Pill meta={STATUS_META} value={claim.status} /></span>
               </div>
@@ -387,9 +419,14 @@ export default function CopyrightClaims() {
                   <div className="flex items-center gap-2 mb-2">
                     <div className="text-xs font-semibold text-gray-500">What happened after the decision</div>
                     <Pill meta={PROCESSING_META} value={claim.processingStatus} />
-                    {(claim.processingStatus === "partial" || claim.processingStatus === "failed") && (
-                      <button onClick={retry} disabled={busy} className="ml-auto h-8 px-3 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50! disabled:opacity-50">Retry</button>
-                    )}
+                    <div className="ml-auto flex gap-2">
+                      {(claim.processingStatus === "partial" || claim.processingStatus === "failed") && (
+                        <button onClick={retry} disabled={busy} className="h-8 px-3 text-[12px] rounded-lg border border-gray-200 hover:bg-gray-50! disabled:opacity-50">Retry</button>
+                      )}
+                      {onFollowClaim && (
+                        <button onClick={() => onFollowClaim({ complaintId: openId, reference: claim.reference, name: claim.name })} className="h-8 px-3 text-[12px] rounded-lg border border-[#1540a4] text-[#1540a4] hover:bg-indigo-50!">Follow this claim in Monitoring</button>
+                      )}
+                    </div>
                   </div>
                   {claim.processing?.message && <div className="text-sm text-rose-600 mb-2">{claim.processing.message}</div>}
                   {(claim.processing?.networks || []).length > 0 && (

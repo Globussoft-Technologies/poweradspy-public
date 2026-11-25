@@ -13,12 +13,33 @@ import TakedownMonitor from "./TakedownMonitor";
  * not a yes: the admin server cannot be reached, copyright claims are not set up on it, the person is not a reviewer, or the claims service is
  * down. Each of those has a Retry. When it is a yes, the two tabs show a badge: claims waiting, and delete steps that failed. Only the open
  * tab is on screen, so only it asks the backend for its data.
+ *
+ * "Follow this claim" on an accepted claim (Requests) switches to Monitoring and shows only what that claim blocked and refused: the claim is
+ * handed over as { complaintId, reference, name } and a counter, so pressing it twice for the same claim still re-applies the filter.
+ * The "How this page works" box is a plain <details>: closed by default, it explains the flow in a few lines for people new to the page.
  */
 
 const ROOT = import.meta.env.VITE_ADMIN_PANEL_API || "http://localhost:4000/admin-panel";
 const CLAIMS = `${ROOT}/copyright-claims`;
 const POLL_MS = 60000;
 const TABS = [{ key: "requests", label: "Requests" }, { key: "monitoring", label: "Monitoring" }];
+
+/** The short "start here" explanation shown above the tabs (closed by default). Kept in words a first-time tester understands. */
+function HowItWorks() {
+  return (
+    <details className="mx-4 md:mx-6 mt-3 rounded-xl border border-indigo-100 bg-indigo-50/60 px-4 py-3 text-sm text-gray-700">
+      <summary className="cursor-pointer font-semibold text-[#1f296a]">How this page works (start here)</summary>
+      <ol className="list-decimal ml-5 mt-2 space-y-1">
+        <li><b>A claim comes in</b> from the copyright form on the website. It waits on the <b>Requests</b> tab with the status <i>Waiting</i>.</li>
+        <li><b>You decide.</b> Open the claim, read it, download the files, then press <b>Accept…</b> or <b>Reject…</b>. Only these two buttons (and <b>Retry</b> after an accept) change anything.</li>
+        <li><b>Accept blocks the advertiser</b> on every network and starts a <i>hash job</i> that fingerprints its images. Reject blocks nothing.</li>
+        <li><b>Background jobs do the rest</b> (when the copyright check is switched on): every 2 minutes new and existing ads are checked against the block list; every 15 minutes the ads that failed are deleted.</li>
+        <li><b>Watch it on the Monitoring tab</b> (read only). On an accepted claim, <b>Follow this claim</b> opens Monitoring filtered to that claim.</li>
+      </ol>
+      <p className="mt-2 text-xs text-gray-500">Every claim has two codes: the short <b>reference</b> (CR-XXXXXX) shown to the claimant, and the long <b>complaint id</b> shown on the claim page, which links the claim to its blocks.</p>
+    </details>
+  );
+}
 
 /** Ask the backend. Resolves { state, pending?, failed? }; state is ok | unreachable | not_configured | forbidden | service_down. A 401 sends the person to the login page. */
 async function probeBackend() {
@@ -76,6 +97,12 @@ export default function CopyrightRequest() {
   const [tab, setTab] = useState("requests");
   const [probe, setProbe] = useState({ state: "checking" });
   const [checkedAt, setCheckedAt] = useState(null);
+  // the claim the Monitoring tab should follow (set by "Follow this claim" on the Requests tab)
+  const [follow, setFollow] = useState(null);
+  const followClaim = useCallback((claim) => {
+    setFollow((prev) => ({ ...claim, nonce: (prev?.nonce || 0) + 1 }));
+    setTab("monitoring");
+  }, []);
 
   const check = useCallback(async () => {
     const result = await probeBackend();
@@ -141,10 +168,11 @@ export default function CopyrightRequest() {
         <div className="p-6 text-sm text-gray-500">Checking the connection…</div>
       ) : blocked ? blocked : (
         <>
+          <HowItWorks />
           <div className="px-4 md:px-6 mt-3 flex items-center gap-2 border-b border-gray-200" role="tablist" aria-label="Copyright request">
             {TABS.map((t) => {
               const badge = state === "ok" ? (t.key === "requests" ? probe.pending : probe.failed) : 0;
-              const badgeTitle = t.key === "requests" ? "Claims waiting for a decision" : "Delete steps that failed";
+              const badgeTitle = t.key === "requests" ? "Claims waiting for a decision" : "Ads whose delete failed";
               return (
                 <button
                   key={t.key}
@@ -159,7 +187,9 @@ export default function CopyrightRequest() {
               );
             })}
           </div>
-          {tab === "requests" ? <CopyrightClaims /> : <TakedownMonitor />}
+          {tab === "requests"
+            ? <CopyrightClaims onFollowClaim={followClaim} />
+            : <TakedownMonitor follow={follow} onOpenRequests={() => setTab("requests")} />}
         </>
       )}
     </div>

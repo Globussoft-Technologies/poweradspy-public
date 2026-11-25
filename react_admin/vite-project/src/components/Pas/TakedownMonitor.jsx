@@ -10,6 +10,17 @@ import { FiRefreshCw, FiX, FiSearch } from "react-icons/fi";
  * Shows current verification stages, B3's takedown runs (and each delete step), and B2's image hash jobs. A network whose tables do not exist
  * yet is shown as "not available", never as zero.
  * A dry run is listed apart: it deleted nothing.
+ *
+ * Following one claim: `follow` ({ complaintId, reference, name, nonce }, from "Follow this claim" on the Requests tab, or the Complaint
+ * column of the Blocked list) narrows the Blocked list and Rejected ads to what that complaint blocked and refused. Takedown runs are not
+ * filtered by it: the cleanup job's runs carry no complaint id, and the page says so instead of showing an unexplained empty table.
+ * Every tab starts with one plain sentence saying what it lists, and hash-job statuses are shown in words (the raw value is the tooltip).
+ *
+ * Ad ids: wherever an ad is shown, AdRef labels each id with its kind ("Platform ad id" = the network's own id, "Our row id" = the row in
+ * our database; a tooltip explains both) and names the advertiser above it, so a tester can follow the ad up without guessing.
+ *
+ * Paging: every list that can grow without end shows one page at a time with Previous / Page N / Next (no endless "Load more"). The
+ * APIs page by cursor, so each list keeps the cursors of the pages before it (`history`) and the cursor of the page on screen (`cursor`).
  */
 
 const CLAIMS = `${import.meta.env.VITE_ADMIN_PANEL_API || "http://localhost:4000/admin-panel"}/copyright-claims`;
@@ -48,6 +59,43 @@ const CLAIM_STATUS = { pending: "bg-amber-100 text-amber-700", accepted: "bg-gre
 const PROCESSING = { none: ["Not started", "bg-gray-100 text-gray-600"], ok: ["Done", "bg-green-100 text-green-700"], partial: ["Partly done", "bg-amber-100 text-amber-700"], failed: ["Failed", "bg-rose-100 text-rose-700"] };
 const RUN_FILTERS = [{ key: "", label: "All" }, { key: "failed", label: "Failed" }, { key: "running", label: "Running" }, { key: "pending", label: "Waiting" }, { key: "succeeded", label: "Done" }];
 const HASH_FILTERS = ["", "pending", "running", "failed", "limit_reached", "unresolved", "done", "no_owner"];
+// hash-job statuses in plain words (the stored value stays in the tooltip, and is what the filter sends)
+const HASH_LABEL = {
+  pending: "Waiting", running: "Running", failed: "Failed", limit_reached: "Stopped at image limit", unresolved: "Ads not found",
+  done: "Done", no_owner: "No ads to hash",
+};
+const hashLabel = (s) => HASH_LABEL[s] || s;
+// one plain sentence per tab, shown at its top (the tabs that already explain themselves inline are not listed)
+const TAB_HELP = {
+  runs: "A takedown run is one pass of the cleanup job on one network: it deletes the ads that failed the copyright check. Click a run to see every delete step.",
+  failures: "Single delete steps (storage, database or search) that failed on this network, newest first. Click one to open the run it belongs to.",
+  hash: "A hash job fingerprints the images of one blocked advertiser (or ad, or link), so copies of those images are caught later. Click a job to see each image.",
+  claims: "The claims that came in from the website form, read only. Decide on them in the Requests tab.",
+};
+
+/**
+ * Where a list is after a page move. reset: back to page 1. "next": the page on screen goes onto the history. "back": the last page of the
+ * history comes off it (its cursor is the one being loaded).
+ */
+const pageMove = (prev, reset, cursor, dir) => (reset
+  ? { history: [], cursor: null }
+  : dir === "back"
+    ? { history: (prev.history || []).slice(0, -1), cursor }
+    : { history: [...(prev.history || []), prev.cursor ?? null], cursor });
+
+/** Previous / Page N / Next under a list. Hidden while everything fits on page 1. `onPage(cursor, dir)` loads the page. */
+function Pager({ state, onPage }) {
+  const page = (state.history?.length || 0) + 1;
+  if (page === 1 && !state.next) return null;
+  const btn = "px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-sm disabled:opacity-40";
+  return (
+    <nav className="flex items-center gap-2" aria-label="Pages">
+      <button type="button" className={btn} disabled={page === 1 || state.loading} onClick={() => onPage(state.history[state.history.length - 1] ?? null, "back")}>‹ Previous</button>
+      <span className="text-sm text-gray-600">Page {page}</span>
+      <button type="button" className={btn} disabled={!state.next || state.loading} onClick={() => onPage(state.next, "next")}>Next ›</button>
+    </nav>
+  );
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—");
@@ -60,6 +108,67 @@ const ageOf = (d) => {
   if (minutes < 1440) return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`;
   return `${Math.floor(minutes / 1440)}d ago`;
 };
+
+// What the two kinds of ad id are, in the words shown on hover.
+const ID_HELP = {
+  platform: "Platform ad id: the ad network's own id for this ad (what the scraper sent). Use it to find the ad on the network or in PowerAdSpy search.",
+  row: "Our row id: the number of the ad's row in our own database table for this network. It is not the same as the platform ad id.",
+};
+
+/** One ad, readable at a glance: the advertiser, then each id with a label saying which kind it is. Missing parts are left out. */
+function AdRef({ advertiser, platformId, rowId }) {
+  if (!advertiser && !platformId && !rowId) return <span>—</span>;
+  return (
+    <div className="space-y-0.5">
+      <div className="font-medium text-gray-900 break-words" title="Advertiser of this ad">{advertiser || <span className="text-gray-400 font-normal">advertiser unknown</span>}</div>
+      {platformId && <div className="text-xs break-all" title={ID_HELP.platform}><span className="text-gray-400">Platform ad id </span><span className="font-mono">{platformId}</span></div>}
+      {rowId && <div className="text-xs break-all" title={ID_HELP.row}><span className="text-gray-400">Our row id </span><span className="font-mono">{rowId}</span></div>}
+    </div>
+  );
+}
+
+/** A takedown step's target: an ad as an AdRef, anything else as "type: value". */
+function StepTarget({ s }) {
+  if (s.targetType === "ad") return <AdRef advertiser={s.advertiser} platformId={s.targetId || s.targetValue} rowId={s.internalAdId} />;
+  return <>{s.targetType}: {s.targetValue || s.targetId || s.internalAdId || "—"}</>;
+}
+
+// What each kind of block catches, in one line (shown under the type in the Blocked list).
+const BLOCK_EXPLAIN = {
+  advertiser: "blocks every ad of this advertiser name (also spelled without spaces, with dashes or dots)",
+  page: "blocks every ad of this page name",
+  url: "blocks ads using this link (image, video or landing page)",
+  domain: "blocks ads landing on this website or its sub-domains",
+  image_url: "blocks ads using this image address",
+  image_hash: "blocks this exact image under any advertiser",
+};
+// Where the check found the match, in words.
+const CAUSE_SOURCE = { verification: "new-ad check", "verification-recheck": "recheck of existing ads" };
+
+/**
+ * Why the cleanup blocked an ad id: the ad failed the copyright check, and `cause` (from the check's own record) says what it matched.
+ * Without a record the page says so, instead of leaving only "failed copyright verification".
+ */
+function BlockCause({ b }) {
+  if (b.entryType !== "ad_id" || b.addedBy !== "copyright-verification") return null;
+  const c = b.cause;
+  if (!c) return <div className="mt-1 text-xs text-gray-400">What this ad matched was not found. Without the attempts index on this network, only the two days before the block are searched; otherwise no record was kept.</div>;
+  const e = c.matchedEntry;
+  return (
+    <div className="mt-1 rounded-lg bg-amber-50 border border-amber-100 px-2 py-1.5 text-xs text-amber-900 space-y-0.5">
+      <div>
+        <b>Why:</b> the ad matched <b>{MATCH_LABEL[c.matchType] || c.matchType}</b>
+        {e && <> — blocked {ENTRY_LABEL[e.type] || e.type}{e.type === "ad_id" ? (e.namespace === "internal" ? " (our row id)" : " (platform ad id)") : ""} <span className="font-mono break-all" title={e.value}>{shortHash(e.value)}</span></>}
+        {c.distance !== null && c.distance !== undefined && <> ({c.distance} bits apart)</>}
+      </div>
+      {c.advertiser && <div>Advertiser of the ad: <b>{c.advertiser}</b></div>}
+      <div className="text-amber-800/80">Found by the {CAUSE_SOURCE[c.source] || c.source || "check"}{e?.complaintId ? <> · claim <span className="font-mono" title={e.complaintId}>{e.complaintId.slice(0, 8)}</span></> : null} · {fmtDate(c.at)}</div>
+    </div>
+  );
+}
+
+// The kind of blocklist entry a rejected ad matched, in words.
+const ENTRY_LABEL = { advertiser: "advertiser", page: "page", ad_id: "ad id", url: "URL", domain: "domain", image_url: "image URL", image_hash: "image" };
 
 function Badge({ cls, children }) {
   return <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${cls || "bg-gray-100 text-gray-600"}`}>{children}</span>;
@@ -90,9 +199,9 @@ async function api(path, params = {}, base = BASE) {
   return { ok: res.ok, status: res.status, json };
 }
 
-function Stat({ label, value, tone = "text-[#1f296a]", hint }) {
+function Stat({ label, value, tone = "text-[#1f296a]", hint, help }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 min-w-[140px]">
+    <div className="bg-white rounded-xl border border-gray-200 p-4 min-w-[140px]" title={help}>
       <div className="text-xs text-gray-500">{label}</div>
       <div className={`text-2xl font-bold ${tone}`}>{value}</div>
       {hint && <div className="text-[11px] text-gray-400 mt-0.5">{hint}</div>}
@@ -100,7 +209,7 @@ function Stat({ label, value, tone = "text-[#1f296a]", hint }) {
   );
 }
 
-export default function TakedownMonitor() {
+export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
   const [overview, setOverview] = useState(null);
   const [overviewError, setOverviewError] = useState("");
   const [imageHashingHealthy, setImageHashingHealthy] = useState(null);
@@ -126,6 +235,8 @@ export default function TakedownMonitor() {
   const [audits, setAudits] = useState({ items: [], next: null, error: "", loading: false });
 
   const [claimStatus, setClaimStatus] = useState("");
+  // the claim being followed: Blocked list and Rejected ads show only what this complaint blocked / refused
+  const [followed, setFollowed] = useState(null);
   const [claims, setClaims] = useState({ items: [], next: null, error: "", loading: false });
 
   const [open, setOpen] = useState(null); // { kind: 'run'|'job', network, id }
@@ -135,7 +246,9 @@ export default function TakedownMonitor() {
   const [outcome, setOutcome] = useState("");
   const [findingStatus, setFindingStatus] = useState("");
   const openRef = useRef(null);
+  const verificationRef = useRef(null);
   openRef.current = open;
+  verificationRef.current = verification;
 
   const loadOverview = useCallback(async () => {
     try {
@@ -155,92 +268,92 @@ export default function TakedownMonitor() {
     } catch { setImageHashingHealthy(false); }
   }, []);
 
-  const loadVerification = useCallback(async (reset = true, cursor = null) => {
+  const loadVerification = useCallback(async (reset = true, cursor = null, dir = "next") => {
     if (!network) return;
     setVerification((v) => ({ ...v, loading: true, error: "" }));
     try {
       const { ok, json } = await api("/verification", { network, afterId: reset ? undefined : cursor, limit: 50 });
       if (!ok) { setVerification((v) => ({ ...v, loading: false, error: json?.message || "The verification details could not be loaded." })); return; }
       setVerification((v) => ({
-        items: reset ? json.data.items : [...v.items, ...json.data.items], next: json.data.next,
+        items: json.data.items, ...pageMove(v, reset, cursor, dir), next: json.data.next,
         available: json.data.available, reason: json.data.reason || "", error: "", loading: false,
       }));
     } catch { setVerification((v) => ({ ...v, loading: false, error: "The verification details could not be loaded." })); }
   }, [network]);
 
-  const loadRuns = useCallback(async (reset = true, cursor = null) => {
+  const loadRuns = useCallback(async (reset = true, cursor = null, dir = "next") => {
     if (!network && !complaintQuery) return;
     setRuns((r) => ({ ...r, loading: true, error: "" }));
     try {
       const { ok, json } = await api("/runs", { network: complaintQuery ? undefined : network, complaintId: complaintQuery, status: runFilter, cursor: reset ? undefined : cursor, limit: 25 });
       if (!ok) { setRuns((r) => ({ ...r, loading: false, error: json?.message || "The runs could not be loaded." })); return; }
-      setRuns((r) => ({ items: reset ? json.data.items : [...r.items, ...json.data.items], next: json.data.next, unavailable: json.data.unavailable || [], error: "", loading: false }));
+      setRuns((r) => ({ items: json.data.items, ...pageMove(r, reset, cursor, dir), next: json.data.next, unavailable: json.data.unavailable || [], error: "", loading: false }));
     } catch { setRuns((r) => ({ ...r, loading: false, error: "The runs could not be loaded." })); }
   }, [network, runFilter, complaintQuery]);
 
-  const loadFailures = useCallback(async (reset = true, cursor = null) => {
+  const loadFailures = useCallback(async (reset = true, cursor = null, dir = "next") => {
     if (!network) return;
     setFailures((f) => ({ ...f, loading: true, error: "" }));
     try {
       const { ok, json } = await api("/failures", { network, beforeId: reset ? undefined : cursor, limit: 50 });
       if (!ok) { setFailures((f) => ({ ...f, loading: false, error: json?.message || "The failed steps could not be loaded." })); return; }
-      setFailures((f) => ({ items: reset ? json.data.items : [...f.items, ...json.data.items], next: json.data.next, error: "", loading: false }));
+      setFailures((f) => ({ items: json.data.items, ...pageMove(f, reset, cursor, dir), next: json.data.next, error: "", loading: false }));
     } catch { setFailures((f) => ({ ...f, loading: false, error: "The failed steps could not be loaded." })); }
   }, [network]);
 
-  const loadHash = useCallback(async (reset = true, cursor = null) => {
+  const loadHash = useCallback(async (reset = true, cursor = null, dir = "next") => {
     if (!network) return;
     setHash((h) => ({ ...h, loading: true, error: "" }));
     try {
       const { ok, json } = await api("/hash-jobs", { network, status: hashStatus, afterId: reset ? undefined : cursor, limit: 50 });
       if (!ok) { setHash((h) => ({ ...h, loading: false, error: json?.message || "The hash jobs could not be loaded." })); return; }
-      setHash((h) => ({ items: reset ? json.data.items : [...h.items, ...json.data.items], next: json.data.items.length ? json.data.next : null, error: "", loading: false }));
+      setHash((h) => ({ items: json.data.items, ...pageMove(h, reset, cursor, dir), next: json.data.items.length ? json.data.next : null, error: "", loading: false }));
     } catch { setHash((h) => ({ ...h, loading: false, error: "The hash jobs could not be loaded." })); }
   }, [network, hashStatus]);
 
   // Who and what is blocked in the chosen network (B1), and the ads the blocklist refused.
-  const loadBlocklist = useCallback(async (reset = true, cursor = null) => {
+  const loadBlocklist = useCallback(async (reset = true, cursor = null, dir = "next") => {
     if (!network) return;
     setBlocklist((b) => ({ ...b, loading: true, error: "" }));
     try {
-      const { ok, json } = await api("/blocklist", { network, status: blockStatus, entryType: blockType, q: blockSearch, beforeId: reset ? undefined : cursor, limit: 50 });
+      const { ok, json } = await api("/blocklist", { network, status: blockStatus, entryType: blockType, q: blockSearch, complaintId: followed?.complaintId, beforeId: reset ? undefined : cursor, limit: 50 });
       if (!ok) { setBlocklist((b) => ({ ...b, loading: false, error: json?.message || "The blocklist could not be loaded." })); return; }
-      setBlocklist((b) => ({ items: reset ? json.data.items : [...b.items, ...json.data.items], next: json.data.next, counts: json.data.counts, error: "", loading: false }));
+      setBlocklist((b) => ({ items: json.data.items, ...pageMove(b, reset, cursor, dir), next: json.data.next, counts: json.data.counts, error: "", loading: false }));
     } catch { setBlocklist((b) => ({ ...b, loading: false, error: "The blocklist could not be loaded." })); }
-  }, [network, blockStatus, blockType, blockSearch]);
+  }, [network, blockStatus, blockType, blockSearch, followed]);
 
-  const loadAttempts = useCallback(async (reset = true, cursor = null) => {
+  const loadAttempts = useCallback(async (reset = true, cursor = null, dir = "next") => {
     if (!network) return;
     setAttempts((a) => ({ ...a, loading: true, error: "" }));
     try {
-      const { ok, json } = await api("/attempts", { network, beforeId: reset ? undefined : cursor, limit: 50 });
+      const { ok, json } = await api("/attempts", { network, complaintId: followed?.complaintId, beforeId: reset ? undefined : cursor, limit: 50 });
       if (!ok) { setAttempts((a) => ({ ...a, loading: false, error: json?.message || "The rejected ads could not be loaded." })); return; }
-      setAttempts((a) => ({ items: reset ? json.data.items : [...a.items, ...json.data.items], next: json.data.next, error: "", loading: false }));
+      setAttempts((a) => ({ items: json.data.items, ...pageMove(a, reset, cursor, dir), next: json.data.next, error: "", loading: false }));
     } catch { setAttempts((a) => ({ ...a, loading: false, error: "The rejected ads could not be loaded." })); }
-  }, [network]);
+  }, [network, followed]);
 
   // B6's audit runs (each verification cleanup writes one) and, when one is opened, what it found.
-  const loadAudits = useCallback(async (reset = true, cursor = null) => {
+  const loadAudits = useCallback(async (reset = true, cursor = null, dir = "next") => {
     if (!network) return;
     setAudits((a) => ({ ...a, loading: true, error: "" }));
     try {
       const { ok, json } = await api("/audits", { network, cursor: reset ? undefined : cursor, limit: 25 });
       if (!ok) { setAudits((a) => ({ ...a, loading: false, error: json?.message || "The audit could not be loaded." })); return; }
-      setAudits((a) => ({ items: reset ? json.data.items : [...a.items, ...json.data.items], next: json.data.next, error: "", loading: false }));
+      setAudits((a) => ({ items: json.data.items, ...pageMove(a, reset, cursor, dir), next: json.data.next, error: "", loading: false }));
     } catch { setAudits((a) => ({ ...a, loading: false, error: "The audit could not be loaded." })); }
   }, [network]);
 
   // The claim requests that came in (the claims list of the same backend): who sent what, and what was decided. Deciding is done on the Copyright Claims page.
-  const loadClaims = useCallback(async (reset = true, cursor = null) => {
+  const loadClaims = useCallback(async (reset = true, cursor = null, dir = "next") => {
     setClaims((c) => ({ ...c, loading: true, error: "" }));
     try {
       const { ok, json } = await api("", { status: claimStatus, beforeId: reset ? undefined : cursor, limit: 25 }, CLAIMS);
       if (!ok) { setClaims((c) => ({ ...c, loading: false, error: json?.message || "The claim requests could not be loaded." })); return; }
-      setClaims((c) => ({ items: reset ? json.data.items : [...c.items, ...json.data.items], next: json.data.items.length ? json.data.next : null, error: "", loading: false }));
+      setClaims((c) => ({ items: json.data.items, ...pageMove(c, reset, cursor, dir), next: json.data.items.length ? json.data.next : null, error: "", loading: false }));
     } catch { setClaims((c) => ({ ...c, loading: false, error: "The claim requests could not be loaded." })); }
   }, [claimStatus]);
 
-  const loadLog = useCallback(async (target, reset = true, cursor = null) => {
+  const loadLog = useCallback(async (target, reset = true, cursor = null, dir = "next") => {
     setLog((l) => ({ ...l, loading: true, error: "", ...(reset ? { data: null, items: [], next: null } : {}) }));
     try {
       const res = target.kind === "run"
@@ -251,16 +364,24 @@ export default function TakedownMonitor() {
       if (openRef.current !== target) return;
       if (!res.ok) { setLog((l) => ({ ...l, loading: false, error: res.json?.message || "The log could not be loaded." })); return; }
       const d = res.json.data;
-      setLog((l) => ({ data: reset ? d : l.data, items: reset ? d.items : [...l.items, ...d.items], next: d.items.length ? d.next : null, error: "", loading: false }));
+      setLog((l) => ({ data: reset ? d : l.data, items: d.items, ...pageMove(l, reset, cursor, dir), next: d.items.length ? d.next : null, error: "", loading: false }));
     } catch { setLog((l) => ({ ...l, loading: false, error: "The log could not be loaded." })); }
   }, [stepStatus, stepSystem, outcome, findingStatus]);
 
+  // "Follow this claim" from the Requests tab: show that claim's blocks (the nonce re-applies it when the same claim is followed again)
+  useEffect(() => {
+    if (!follow?.complaintId) return;
+    setFollowed({ complaintId: follow.complaintId, reference: follow.reference || null, name: follow.name || null });
+    setTab("blocklist");
+  }, [follow?.complaintId, follow?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  const followComplaint = (complaintId, name = null) => { setFollowed({ complaintId, reference: null, name }); setTab("blocklist"); };
   useEffect(() => { loadOverview(); const t = setInterval(loadOverview, 60000); return () => clearInterval(t); }, [loadOverview]);
   useEffect(() => { loadImageHashingHealth(); const t = setInterval(loadImageHashingHealth, 60000); return () => clearInterval(t); }, [loadImageHashingHealth]);
   useEffect(() => {
     if (tab !== "verification") return undefined;
     loadVerification(true);
-    const t = setInterval(() => loadVerification(true), 60000);
+    // the minute refresh only on page 1: someone reading page 3 is not sent back to the first page
+    const t = setInterval(() => { if (!verificationRef.current.history?.length) loadVerification(true); }, 60000);
     return () => clearInterval(t);
   }, [tab, loadVerification]);
   useEffect(() => { if (tab === "runs") loadRuns(true); }, [tab, loadRuns]);
@@ -325,13 +446,13 @@ export default function TakedownMonitor() {
 
       {totals && (
         <div className="flex gap-3 flex-wrap">
-          <Stat label="Deleted" value={totals.items.deleted} tone="text-green-600" hint="ads removed in real runs" />
-          <Stat label="Waiting" value={totals.items.waiting} tone="text-amber-600" hint="planned, not yet done" />
-          <Stat label="Failed" value={totals.items.failed} tone="text-rose-600" hint="ads whose delete failed" />
-          {totals.verification && <Stat label="Waiting for check" value={totals.verification.pending} tone="text-amber-600" hint="new ads hidden until verified" />}
-          {totals.verification && <Stat label="Waiting for cleanup" value={totals.verification.failed} tone="text-rose-600" hint="failed check, not deleted yet" />}
-          <Stat label="Takedown runs" value={totals.runs.total} hint={Object.entries(totals.runs.byGroup).map(([g, n]) => `${(GROUP_META[g] || GROUP_META.other).label} ${n}`).join(" · ") || "none yet"} />
-          <Stat label="Hash jobs" value={totals.hashJobs.total} hint={Object.entries(totals.hashJobs.byStatus).map(([s, n]) => `${s} ${n}`).join(" · ") || "none yet"} />
+          <Stat label="Deleted" value={totals.items.deleted} tone="text-green-600" hint="ads removed in real runs" help="Ads really deleted by takedown runs, all networks added up. A dry run never counts." />
+          <Stat label="Waiting" value={totals.items.waiting} tone="text-amber-600" hint="planned, not yet done" help="Ads a run planned to delete that are neither done nor failed yet. Normally 0, or a few while a run is working." />
+          <Stat label="Failed" value={totals.items.failed} tone="text-rose-600" hint="ads whose delete failed (per run)" help="Counted per run: an ad in two stopped runs counts twice. To know what is really left, look at Waiting for cleanup." />
+          {totals.verification && <Stat label="Waiting for check" value={totals.verification.pending} tone="text-amber-600" hint="new ads hidden until verified" help="New ads saved but hidden from search until the copyright check (every 2 minutes) looks at them." />}
+          {totals.verification && <Stat label="Waiting for cleanup" value={totals.verification.failed} tone="text-rose-600" hint="failed check, not deleted yet" help="Ads that matched the block list. They are hidden already, and the cleanup job (every 15 minutes) deletes them." />}
+          <Stat label="Takedown runs" value={totals.runs.total} hint={Object.entries(totals.runs.byGroup).map(([g, n]) => `${(GROUP_META[g] || GROUP_META.other).label} ${n}`).join(" · ") || "none yet"} help="How many cleanup passes have run, by state." />
+          <Stat label="Hash jobs" value={totals.hashJobs.total} hint={Object.entries(totals.hashJobs.byStatus).map(([s, n]) => `${hashLabel(s)} ${n}`).join(" · ") || "none yet"} help="Image fingerprint jobs, one per blocked entry and network, by state." />
         </div>
       )}
       {unavailableNames.length > 0 && (
@@ -369,7 +490,7 @@ export default function TakedownMonitor() {
                   </td>
                   <td className="p-3">
                     {n.hashJobs.available
-                      ? (Object.entries(n.hashJobs.byStatus).map(([s, c]) => <span key={s} className={`mr-1 inline-block px-2 py-0.5 rounded-full text-xs ${HASH_META[s] || "bg-gray-100 text-gray-600"}`}>{s} {c}</span>) || null)
+                      ? (Object.entries(n.hashJobs.byStatus).map(([s, c]) => <span key={s} title={s} className={`mr-1 inline-block px-2 py-0.5 rounded-full text-xs ${HASH_META[s] || "bg-gray-100 text-gray-600"}`}>{hashLabel(s)} {c}</span>) || null)
                       : <span className="text-gray-400">not available</span>}
                     {n.hashJobs.available && n.hashJobs.total === 0 && <span className="text-gray-400">none</span>}
                   </td>
@@ -380,12 +501,31 @@ export default function TakedownMonitor() {
         </div>
       )}
 
+      {overview && <p className="text-xs text-gray-500 -mt-2">Click a network in the table to choose it. The tabs below always show the chosen network.</p>}
+
+      {followed && (
+        <div className="bg-indigo-50 border border-indigo-200 text-indigo-900 rounded-lg p-3 text-sm flex items-start gap-3 flex-wrap" role="status">
+          <div className="space-y-1">
+            <div>Following claim <b>{followed.reference || followed.complaintId.slice(0, 8)}</b>{followed.name ? <> (<b>{followed.name}</b>)</> : null} on <b>{network || "—"}</b>.</div>
+            <div className="text-xs">Blocked list and Rejected ads show only what this claim blocked and refused. Choose another network in the table to see it there. Takedown runs are not linked to a claim, so that tab is not filtered.</div>
+            <div className="text-[11px] font-mono break-all">complaint id {followed.complaintId}</div>
+          </div>
+          <div className="ml-auto flex gap-2">
+            <button type="button" onClick={() => setTab("blocklist")} className="px-3 py-1.5 rounded-lg border border-indigo-300 bg-white! text-xs">Blocked list</button>
+            <button type="button" onClick={() => setTab("attempts")} className="px-3 py-1.5 rounded-lg border border-indigo-300 bg-white! text-xs">Rejected ads</button>
+            <button type="button" onClick={() => setFollowed(null)} className="px-3 py-1.5 rounded-lg border border-indigo-300 bg-white! text-xs">Stop following</button>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 flex-wrap border-b border-gray-200">
         {TABS.map((t) => (
           <button key={t.key} onClick={() => setTab(t.key)} className={`px-4 py-2 text-sm font-semibold border-b-2 ${tab === t.key ? "border-[#1f296a] text-[#1f296a]" : "border-transparent text-gray-500"}`}>{t.label}</button>
         ))}
         <span className="ml-auto text-sm text-gray-500 pb-2">Network: <b>{network || "—"}</b></span>
       </div>
+
+      {TAB_HELP[tab] && <p className="text-sm text-gray-500">{TAB_HELP[tab]}</p>}
 
       {tab === "verification" && (
         <section className="space-y-3">
@@ -405,12 +545,11 @@ export default function TakedownMonitor() {
           {verification.available && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Internal row id</th><th className="p-3">Platform ad id</th><th className="p-3">Current stage</th><th className="p-3">Image attempts</th><th className="p-3">Detail</th><th className="p-3">First checked</th><th className="p-3">Last checked</th></tr></thead>
+                <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Ad</th><th className="p-3">Current stage</th><th className="p-3">Image attempts</th><th className="p-3">Detail</th><th className="p-3">First checked</th><th className="p-3">Last checked</th></tr></thead>
                 <tbody>
                   {verification.items.map((item) => (
                     <tr key={`${network}-${item.internalAdId}`} className="border-t border-gray-100">
-                      <td className="p-3 font-mono text-xs">{item.internalAdId}</td>
-                      <td className="p-3 font-mono text-xs">{item.platformAdId || "—"}</td>
+                      <td className="p-3 min-w-48"><AdRef advertiser={item.advertiser} platformId={item.platformAdId} rowId={item.internalAdId} /></td>
                       <td className="p-3"><Badge cls={item.stage === "near_match_review" || item.stage === "blocklist_unavailable" || item.stage === "search_index_unavailable" || item.stage === "hash_service_unavailable" || item.stage === "images_unavailable" || item.stage.endsWith("failed") ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-700"}>{VERIFICATION_STAGES[item.stage] || item.stage}</Badge></td>
                       <td className="p-3">{item.attempts}</td>
                       <td className="p-3 min-w-64">{item.detail}</td>
@@ -418,11 +557,11 @@ export default function TakedownMonitor() {
                       <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(item.lastCheckedAt)}<div className="text-xs text-gray-400">{ageOf(item.lastCheckedAt)}</div></td>
                     </tr>
                   ))}
-                  {!verification.items.length && !verification.loading && <tr><td className="p-4 text-gray-500" colSpan={7}>No ads are waiting for check on this network.</td></tr>}
-                  {verification.loading && !verification.items.length && <tr><td className="p-4 text-gray-500" colSpan={7}>Loading verification details…</td></tr>}
+                  {!verification.items.length && !verification.loading && <tr><td className="p-4 text-gray-500" colSpan={6}>No ads are waiting for check on this network.</td></tr>}
+                  {verification.loading && !verification.items.length && <tr><td className="p-4 text-gray-500" colSpan={6}>Loading verification details…</td></tr>}
                 </tbody>
               </table>
-              {verification.next && <div className="p-3 border-t border-gray-100"><button onClick={() => loadVerification(false, verification.next)} disabled={verification.loading} className="text-sm text-[#1f296a] underline disabled:opacity-50">Load more</button></div>}
+              <div className="p-3 border-t border-gray-100 empty:hidden"><Pager state={verification} onPage={(c, d) => loadVerification(false, c, d)} /></div>
             </div>
           )}
         </section>
@@ -435,7 +574,7 @@ export default function TakedownMonitor() {
               <button key={f.key || "all"} onClick={() => setRunFilter(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${runFilter === f.key ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{f.label}</button>
             ))}
             <form onSubmit={submitComplaint} className="ml-auto flex items-center gap-2">
-              <input value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder="Find by complaint id" aria-label="Complaint id" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-72" />
+              <input value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder="Find by complaint id (the long id)" title="The long complaint id shown on the claim page, for example 11111111-1111-4111-8111-111111111111. The short CR- reference does not work here." aria-label="Complaint id" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-72" />
               <button type="submit" className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-sm" aria-label="Search"><FiSearch /></button>
               {complaintQuery && <button type="button" onClick={() => { setComplaint(""); setComplaintQuery(""); }} className="text-xs text-gray-500 underline">clear</button>}
             </form>
@@ -452,14 +591,21 @@ export default function TakedownMonitor() {
                     <td className="p-3">{r.mode === "dry_run" ? <Badge>dry run: deleted nothing</Badge> : "real"}</td>
                     <td className="p-3">{r.itemsPlanned}</td><td className="p-3 text-green-700">{r.itemsSucceeded}</td><td className="p-3 text-rose-700">{r.itemsFailed}</td>
                     <td className="p-3 text-gray-500">{fmtDate(r.startedAt || r.createdAt)}</td>
-                    <td className="p-3 font-mono text-xs text-gray-500">{r.complaintId ? r.complaintId.slice(0, 8) : (r.triggerType || "—")}</td>
+                    <td className="p-3 font-mono text-xs text-gray-500" title={r.complaintId || undefined}>{r.complaintId ? r.complaintId.slice(0, 8) : (r.triggerType || "—")}</td>
                   </tr>
                 ))}
-                {!runs.loading && !runs.items.length && !runs.error && <tr><td className="p-4 text-gray-500" colSpan={8}>No takedown runs{runs.unavailable.length ? ` (not available: ${runs.unavailable.join(", ")})` : ""}.</td></tr>}
+                {!runs.loading && !runs.items.length && !runs.error && !complaintQuery && <tr><td className="p-4 text-gray-500" colSpan={8}>No takedown runs{runs.unavailable.length ? ` (not available: ${runs.unavailable.join(", ")})` : ""}.</td></tr>}
+                {/* the cleanup job's runs carry no complaint id, so a complaint search is normally empty: say why, and offer what does work */}
+                {!runs.loading && !runs.items.length && !runs.error && complaintQuery && (
+                  <tr><td className="p-4 text-gray-600" colSpan={8}>
+                    No takedown run is linked to this complaint. Runs are started by the cleanup job (trigger <i>verification</i>), which deletes the ads that failed the copyright check without recording which claim caused it.
+                    {" "}<button type="button" onClick={() => followComplaint(complaintQuery)} className="text-[#1f296a] underline">Show this claim&apos;s blocks and rejected ads instead</button>
+                  </td></tr>
+                )}
               </tbody>
             </table>
           </div>
-          {runs.next && <button onClick={() => loadRuns(false, runs.next)} disabled={runs.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
+          <Pager state={runs} onPage={(c, d) => loadRuns(false, c, d)} />
         </section>
       )}
 
@@ -474,7 +620,7 @@ export default function TakedownMonitor() {
                   <tr key={s.id} className="border-t border-gray-100 align-top cursor-pointer hover:bg-gray-50" onClick={() => openRun({ network, runId: s.runId })}>
                     <td className="p-3 text-gray-500">{fmtDate(s.finishedAt || s.createdAt)}</td>
                     <td className="p-3">{s.system} / {s.operation}</td>
-                    <td className="p-3 break-all">{s.targetType}: {s.targetValue || s.targetId || s.internalAdId || "—"}</td>
+                    <td className="p-3 break-all min-w-48"><StepTarget s={s} /></td>
                     <td className="p-3"><GroupBadge group={s.group} status={s.status} /></td>
                     <td className="p-3">{s.attempts}</td>
                     <td className="p-3 text-rose-700 break-words max-w-md">{s.errorMessage || "—"}</td>
@@ -485,7 +631,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {failures.next && <button onClick={() => loadFailures(false, failures.next)} disabled={failures.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
+          <Pager state={failures} onPage={(c, d) => loadFailures(false, c, d)} />
         </section>
       )}
 
@@ -493,7 +639,7 @@ export default function TakedownMonitor() {
         <section className="space-y-3">
           <div className="flex gap-2 flex-wrap">
             {HASH_FILTERS.map((s) => (
-              <button key={s || "all"} onClick={() => setHashStatus(s)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${hashStatus === s ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{s || "All"}</button>
+              <button key={s || "all"} onClick={() => setHashStatus(s)} title={s || undefined} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${hashStatus === s ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{s ? hashLabel(s) : "All"}</button>
             ))}
           </div>
           {hash.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{hash.error}</div>}
@@ -505,7 +651,7 @@ export default function TakedownMonitor() {
                   <tr key={j.id} className="border-t border-gray-100 align-top cursor-pointer hover:bg-gray-50" onClick={() => openJob(j)}>
                     <td className="p-3 font-mono text-xs">#{j.id}</td>
                     <td className="p-3 break-all">{j.entryType}: {j.value}</td>
-                    <td className="p-3"><Badge cls={HASH_META[j.status]}>{j.status}</Badge></td>
+                    <td className="p-3" title={j.status}><Badge cls={HASH_META[j.status]}>{hashLabel(j.status)}</Badge></td>
                     <td className="p-3">{j.attempts}</td>
                     <td className="p-3 text-gray-500">{fmtDate(j.updatedAt)}</td>
                     <td className="p-3 text-rose-700 break-words max-w-md">{j.lastError || "—"}</td>
@@ -515,7 +661,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {hash.next && <button onClick={() => loadHash(false, hash.next)} disabled={hash.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
+          <Pager state={hash} onPage={(c, d) => loadHash(false, c, d)} />
         </section>
       )}
 
@@ -545,24 +691,36 @@ export default function TakedownMonitor() {
           {blocklist.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{blocklist.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Type</th><th className="p-3">Blocked</th><th className="p-3">Status</th><th className="p-3">Added by</th><th className="p-3">Added</th><th className="p-3">Reason</th><th className="p-3">Complaint</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Type</th><th className="p-3">Blocked</th><th className="p-3">Status</th><th className="p-3">Added by</th><th className="p-3">Added</th><th className="p-3">Reason (and why)</th><th className="p-3">Complaint</th></tr></thead>
               <tbody>
                 {blocklist.items.map((b) => (
                   <tr key={b.id} className="border-t border-gray-100 align-top">
-                    <td className="p-3 whitespace-nowrap">{b.entryType}{b.entryType === "ad_id" && b.identifierNamespace && <div className="text-xs text-gray-400">{b.identifierNamespace === "internal" ? "our row id" : "platform id"}</div>}</td>
-                    <td className="p-3 break-all font-medium" title={b.value}>{shortHash(b.value)}</td>
+                    <td className="p-3 max-w-[14rem]">
+                      <div className="whitespace-nowrap">{b.entryType}</div>
+                      {b.entryType === "ad_id" && b.identifierNamespace && <div className="text-xs text-gray-400" title={b.identifierNamespace === "internal" ? ID_HELP.row : ID_HELP.platform}>{b.identifierNamespace === "internal" ? "our row id: blocks this one ad" : "platform ad id: blocks this one ad"}</div>}
+                      {BLOCK_EXPLAIN[b.entryType] && <div className="text-xs text-gray-400">{BLOCK_EXPLAIN[b.entryType]}</div>}
+                    </td>
+                    <td className="p-3 break-all font-medium" title={b.value}>
+                      {shortHash(b.value)}
+                      {/* an image fingerprint: the ad the image was taken from */}
+                      {b.origin && (b.origin.platformAdId || b.origin.internalAdId) && (
+                        <div className="mt-1 font-normal text-xs text-gray-500"><div className="text-gray-400">image of the ad:</div><AdRef advertiser={b.origin.advertiser} platformId={b.origin.platformAdId} rowId={b.origin.internalAdId} /></div>
+                      )}
+                    </td>
                     <td className="p-3"><Badge cls={BLOCK_STATUS_META[b.status]}>{b.status}</Badge>{b.removedBy && <div className="text-xs text-gray-400 mt-1">by {b.removedBy} · {fmtDate(b.removedAt)}</div>}</td>
                     <td className="p-3 text-gray-600">{b.addedBy || "—"}{b.source && <div className="text-xs text-gray-400">{b.source}</div>}</td>
                     <td className="p-3 text-gray-500">{fmtDate(b.createdAt)}{b.expiresAt && <div className="text-xs text-gray-400">expires {fmtDate(b.expiresAt)}</div>}</td>
-                    <td className="p-3 break-words max-w-xs">{b.reason || "—"}</td>
-                    <td className="p-3 font-mono text-xs text-gray-500">{b.complaintId ? b.complaintId.slice(0, 8) : "—"}</td>
+                    <td className="p-3 break-words max-w-sm"><div>{b.reason || "—"}</div><BlockCause b={b} /></td>
+                    <td className="p-3 font-mono text-xs text-gray-500">{b.complaintId
+                      ? <button type="button" title={`${b.complaintId}\nClick to show only this claim's blocks and rejected ads`} onClick={() => followComplaint(b.complaintId, b.entryType === "advertiser" ? b.value : null)} className="text-[#1f296a] underline">{b.complaintId.slice(0, 8)}</button>
+                      : "—"}</td>
                   </tr>
                 ))}
-                {!blocklist.loading && !blocklist.items.length && !blocklist.error && <tr><td className="p-4 text-gray-500" colSpan={7}>Nothing is blocked here{blockSearch || blockType || blockStatus ? " with these filters" : " yet"}.</td></tr>}
+                {!blocklist.loading && !blocklist.items.length && !blocklist.error && <tr><td className="p-4 text-gray-500" colSpan={7}>Nothing is blocked here{followed ? " for this claim" : ""}{blockSearch || blockType || blockStatus ? " with these filters" : followed ? "" : " yet"}.</td></tr>}
               </tbody>
             </table>
           </div>
-          {blocklist.next && <button onClick={() => loadBlocklist(false, blocklist.next)} disabled={blocklist.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
+          <Pager state={blocklist} onPage={(c, d) => loadBlocklist(false, c, d)} />
         </section>
       )}
 
@@ -572,23 +730,25 @@ export default function TakedownMonitor() {
           {attempts.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{attempts.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">When</th><th className="p-3">Refused because</th><th className="p-3">Advertiser</th><th className="p-3">Ad id</th><th className="p-3">Image</th><th className="p-3">Source</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">When</th><th className="p-3">Refused because</th><th className="p-3">Advertiser</th><th className="p-3" title={ID_HELP.platform}>Platform ad id</th><th className="p-3">Image</th><th className="p-3">Source</th></tr></thead>
               <tbody>
                 {attempts.items.map((a) => (
                   <tr key={a.id} className="border-t border-gray-100 align-top">
                     <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(a.createdAt)}</td>
-                    <td className="p-3"><Badge cls="bg-rose-100 text-rose-700">{MATCH_LABEL[a.matchType] || a.matchType}</Badge>{a.distance !== null && <div className="text-xs text-gray-400 mt-1">{a.distance} bits apart</div>}</td>
-                    <td className="p-3 break-words">{a.advertiser || "—"}</td>
+                    <td className="p-3"><Badge cls="bg-rose-100 text-rose-700">{MATCH_LABEL[a.matchType] || a.matchType}</Badge>{a.distance !== null && <div className="text-xs text-gray-400 mt-1">{a.distance} bits apart</div>}
+                      {/* which block entry it hit: the advertiser name, the platform ad id or row id, the image fingerprint… */}
+                      {a.matchedEntry && <div className="text-xs text-gray-500 mt-1 break-all" title={a.matchedEntry.value}>matched {ENTRY_LABEL[a.matchedEntry.type] || a.matchedEntry.type}{a.matchedEntry.type === "ad_id" ? (a.matchedEntry.namespace === "internal" ? " (our row id)" : " (platform ad id)") : ""}: <span className="font-mono">{shortHash(a.matchedEntry.value)}</span></div>}</td>
+                    <td className="p-3 break-words">{a.advertiser || <span className="text-gray-400" title="The ad did not carry a name, and it no longer exists in our data">unknown</span>}</td>
                     <td className="p-3 font-mono text-xs break-all">{a.platformAdId || "—"}</td>
                     <td className="p-3 break-all text-gray-500 text-xs max-w-xs">{a.imageUrl || "—"}</td>
                     <td className="p-3 text-gray-500 text-xs">{a.source || "—"}</td>
                   </tr>
                 ))}
-                {!attempts.loading && !attempts.items.length && !attempts.error && <tr><td className="p-4 text-gray-500" colSpan={6}>No ad has been refused here yet.</td></tr>}
+                {!attempts.loading && !attempts.items.length && !attempts.error && <tr><td className="p-4 text-gray-500" colSpan={6}>{followed ? "No ad has been refused for this claim on this network yet." : "No ad has been refused here yet."}</td></tr>}
               </tbody>
             </table>
           </div>
-          {attempts.next && <button onClick={() => loadAttempts(false, attempts.next)} disabled={attempts.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
+          <Pager state={attempts} onPage={(c, d) => loadAttempts(false, c, d)} />
         </section>
       )}
 
@@ -617,7 +777,7 @@ export default function TakedownMonitor() {
               </tbody>
             </table>
           </div>
-          {audits.next && <button onClick={() => loadAudits(false, audits.next)} disabled={audits.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
+          <Pager state={audits} onPage={(c, d) => loadAudits(false, c, d)} />
         </section>
       )}
 
@@ -627,16 +787,23 @@ export default function TakedownMonitor() {
             {CLAIM_FILTERS.map((f) => (
               <button key={f.key || "all"} onClick={() => setClaimStatus(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${claimStatus === f.key ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{f.label}</button>
             ))}
-            <Link to="/pas/copyright-claims" className="ml-auto text-sm text-[#1f296a] underline">Review and decide on the Copyright Claims page</Link>
+            {/* inside Copyright Request the decision is one tab away; on its own (old route) the page links to the claims page */}
+            {onOpenRequests
+              ? <button type="button" onClick={onOpenRequests} className="ml-auto text-sm text-[#1f296a] underline">Review and decide on the Requests tab</button>
+              : <Link to="/pas/copyright-claims" className="ml-auto text-sm text-[#1f296a] underline">Review and decide on the Copyright Claims page</Link>}
           </div>
           {claims.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{claims.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Claim</th><th className="p-3">Advertiser named</th><th className="p-3">Sent by</th><th className="p-3">Received</th><th className="p-3">Decision</th><th className="p-3">After accept</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Claim</th><th className="p-3">Complaint id</th><th className="p-3">Advertiser named</th><th className="p-3">Sent by</th><th className="p-3">Received</th><th className="p-3">Decision</th><th className="p-3">After accept</th></tr></thead>
               <tbody>
                 {claims.items.map((c) => (
                   <tr key={c.complaintId} className="border-t border-gray-100 align-top">
                     <td className="p-3 font-mono text-xs">{c.reference}</td>
+                    <td className="p-3 font-mono text-xs text-gray-500 whitespace-nowrap">
+                      <span title={c.complaintId}>{c.complaintId.slice(0, 8)}…</span>
+                      {c.status === "accepted" && <button type="button" onClick={() => { setFollowed({ complaintId: c.complaintId, reference: c.reference, name: c.name }); setTab("blocklist"); }} className="ml-2 font-sans text-[#1f296a] underline">Follow</button>}
+                    </td>
                     <td className="p-3 break-words">{c.name}</td>
                     <td className="p-3 text-gray-600">{c.organization || "—"}</td>
                     <td className="p-3 text-gray-500">{fmtDate(c.receivedAt)}</td>
@@ -644,11 +811,11 @@ export default function TakedownMonitor() {
                     <td className="p-3">{c.status === "accepted" ? <Badge cls={(PROCESSING[c.processingStatus] || PROCESSING.none)[1]}>{(PROCESSING[c.processingStatus] || PROCESSING.none)[0]}</Badge> : "—"}</td>
                   </tr>
                 ))}
-                {!claims.loading && !claims.items.length && !claims.error && <tr><td className="p-4 text-gray-500" colSpan={6}>No claim requests.</td></tr>}
+                {!claims.loading && !claims.items.length && !claims.error && <tr><td className="p-4 text-gray-500" colSpan={7}>No claim requests.</td></tr>}
               </tbody>
             </table>
           </div>
-          {claims.next && <button onClick={() => loadClaims(false, claims.next)} disabled={claims.loading} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
+          <Pager state={claims} onPage={(c, d) => loadClaims(false, c, d)} />
         </section>
       )}
 
@@ -693,7 +860,7 @@ export default function TakedownMonitor() {
                         <tr key={s.id} className="border-t border-gray-100 align-top">
                           <td className="p-2 text-gray-400">{s.id}</td>
                           <td className="p-2">{s.system} / {s.operation}</td>
-                          <td className="p-2 break-all">{s.targetType}: {s.targetValue || s.targetId || s.internalAdId || "—"}{s.targetUrl ? <div className="text-gray-400">{s.targetUrl}</div> : null}</td>
+                          <td className="p-2 break-all min-w-40"><StepTarget s={s} />{s.targetUrl ? <div className="text-gray-400">{s.targetUrl}</div> : null}</td>
                           <td className="p-2"><GroupBadge group={s.group} status={s.status} />{s.nextRetryAt && <div className="text-gray-400 mt-1">retry {fmtDate(s.nextRetryAt)}</div>}</td>
                           <td className="p-2">{s.attempts}</td>
                           <td className="p-2 text-gray-500">{fmtDate(s.finishedAt || s.startedAt || s.createdAt)}</td>
@@ -731,7 +898,7 @@ export default function TakedownMonitor() {
                     <tbody>
                       {log.items.map((f) => (
                         <tr key={f.id} className="border-t border-gray-100 align-top">
-                          <td className="p-2 break-all">{f.platformAdId || "—"}{f.internalAdId && <div className="text-gray-400">row {f.internalAdId}</div>}</td>
+                          <td className="p-2 break-all min-w-40"><AdRef advertiser={f.advertiser} platformId={f.platformAdId} rowId={f.internalAdId} /></td>
                           <td className="p-2">{f.findingType}</td>
                           <td className="p-2 break-all">{f.system}{f.location ? ` / ${f.location}` : ""}</td>
                           <td className="p-2"><Badge cls={AUDIT_STATUS_META[f.status]}>{f.status}</Badge>{f.resolution && <div className="text-gray-400 mt-1">{f.resolution}</div>}</td>
@@ -749,7 +916,7 @@ export default function TakedownMonitor() {
             {open.kind === "job" && log.data?.job && (
               <>
                 <div className="flex gap-2 items-center flex-wrap text-sm">
-                  <Badge cls={HASH_META[log.data.job.status]}>{log.data.job.status}</Badge>
+                  <span title={log.data.job.status}><Badge cls={HASH_META[log.data.job.status]}>{hashLabel(log.data.job.status)}</Badge></span>
                   <span>{log.data.job.entryType}: <b>{log.data.job.value}</b></span>
                   <span className="text-gray-500">run {log.data.generation} of {log.data.latestGeneration}</span>
                   {log.data.job.stats && <span className="text-gray-500">{Object.entries(log.data.job.stats).map(([k, v]) => `${k} ${v}`).join(" · ")}</span>}
@@ -765,7 +932,7 @@ export default function TakedownMonitor() {
                     <tbody>
                       {log.items.map((r) => (
                         <tr key={r.id} className="border-t border-gray-100 align-top">
-                          <td className="p-2 break-all">{r.platformAdId || r.internalAdId || "—"}</td>
+                          <td className="p-2 break-all min-w-40"><AdRef advertiser={r.advertiser || (log.data.job.entryType === "advertiser" ? log.data.job.value : null)} platformId={r.platformAdId} rowId={r.internalAdId} /></td>
                           <td className="p-2 break-all text-gray-500">{r.sourceUrl}</td>
                           <td className="p-2"><Badge cls={OUTCOME_META[r.outcome]}>{r.outcome}</Badge></td>
                           <td className="p-2">{r.reason || "—"}</td>
@@ -780,7 +947,7 @@ export default function TakedownMonitor() {
             )}
 
             {log.loading && <div className="text-sm text-gray-500">Loading…</div>}
-            {log.next && !log.loading && <button onClick={() => loadLog(open, false, log.next)} className="px-4 py-2 rounded-lg border border-gray-300 bg-white! text-sm">Load more</button>}
+            <Pager state={log} onPage={(c, d) => loadLog(open, false, c, d)} />
           </div>
         </div>
       )}

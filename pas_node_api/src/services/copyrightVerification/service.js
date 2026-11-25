@@ -461,7 +461,8 @@ async function closeStaleRuns(sql, network) {
 async function startRun(sql, network, ads) {
   const runId = crypto.randomUUID();
   const snapshot = { snapshotVersion: 1, capturedAt: new Date().toISOString(),
-    ads: ads.map((ad) => ({ internalId: ad.id, platformAdId: ad.adId ?? null, storagePaths: [...ad.paths].filter((p) => ownFile(p, ad)) })) };
+    // advertiser: kept so the monitor can name the advertiser of an ad after it is deleted
+    ads: ads.map((ad) => ({ internalId: ad.id, platformAdId: ad.adId ?? null, advertiser: ad.ad?.post_owner ?? null, storagePaths: [...ad.paths].filter((p) => ownFile(p, ad)) })) };
   await sql.query(`INSERT INTO copyright_takedown_runs (run_id, network, trigger_type, mode, status, started_at, items_planned, items_succeeded,
     items_failed, operator, preflight_snapshot, created_at) VALUES (?, ?, 'verification', 'execute', 'running', UTC_TIMESTAMP(), ?, 0, 0, ?, ?, UTC_TIMESTAMP())`,
   [runId, network, ads.length, ADDED_BY, JSON.stringify(snapshot)]);
@@ -495,7 +496,7 @@ async function finishRun(sql, network, runId, steps, removed, refused) {
         takedown_run_id, created_at) VALUES (?, ?, 'verification_cleanup', 'completed', UTC_TIMESTAMP(), UTC_TIMESTAMP(), ?, ?, ?, UTC_TIMESTAMP())`,
       [auditId, network, removed.length, removed.length, runId]);
       const rows = removed.map((r) => [auditId, network, 'blocklist_hit', 'sql', NETWORKS[network][0], r.ad.id, r.ad.adId ?? null,
-        'ad_id', r.ad.adId ?? null, JSON.stringify({ nasDeleted: r.nasDeleted, nasFailed: r.nasFailed }), 'resolved', 'removed', runId]);
+        'ad_id', r.ad.adId ?? null, JSON.stringify({ nasDeleted: r.nasDeleted, nasFailed: r.nasFailed, advertiser: r.ad.ad?.post_owner ?? null }), 'resolved', 'removed', runId]);
       await sql.query(`INSERT INTO copyright_audit_findings (audit_id, network, finding_type, \`system\`, location, internal_ad_id, platform_ad_id,
         target_type, target_value, details, status, resolution, takedown_run_id, resolved_at, created_at)
         VALUES ${rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(), UTC_TIMESTAMP())').join(', ')}`, rows.flat());

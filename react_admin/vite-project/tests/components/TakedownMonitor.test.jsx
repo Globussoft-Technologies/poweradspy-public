@@ -301,3 +301,99 @@ describe("TakedownMonitor > read only", () => {
     for (const c of calls) expect(c.key.startsWith("GET ")).toBe(true);
   });
 });
+
+describe("TakedownMonitor > pages, and following one claim", () => {
+  it("shows one page at a time: Next asks for the next cursor, Previous goes back to page 1", async () => {
+    const calls = backend([
+      [/^GET \/monitor\/overview/, () => ok(OVERVIEW)],
+      [/^GET \/monitor\/runs\?.*cursor=c2/, () => ok({ items: [run({ runId: DRY, mode: "dry_run", status: "succeeded", group: "done" })], unavailable: [], next: null })],
+      [/^GET \/monitor\/runs\?/, () => ok({ items: [run()], unavailable: [], next: "c2" })],
+    ]);
+    show();
+    expect(await screen.findByText("Page 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "‹ Previous" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next ›" }));
+    expect(await screen.findByText("Page 2")).toBeInTheDocument();
+    expect(screen.getByText("dry run: deleted nothing")).toBeInTheDocument();
+    expect(screen.queryByText(RUN.slice(0, 8))).toBeNull(); // page 1's rows are replaced, not kept above
+    expect(screen.getByRole("button", { name: "Next ›" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "‹ Previous" }));
+    expect(await screen.findByText("Page 1")).toBeInTheDocument();
+    expect(calls.filter((c) => c.key.startsWith("GET /monitor/runs?")).at(-1).key).not.toContain("cursor=");
+  });
+
+  it("a claim followed from the Requests tab filters the blocked list and the rejected ads by its complaint id", async () => {
+    const calls = backend(base([
+      [/^GET \/monitor\/blocklist\?/, () => ok({ counts: { total: 1, byStatus: { active: 1 }, activeByType: { advertiser: 1 } }, items: [], next: null })],
+      [/^GET \/monitor\/attempts\?/, () => ok({ items: [], next: null })],
+    ]));
+    render(<MemoryRouter><TakedownMonitor follow={{ complaintId: COMPLAINT, reference: "CR-ABC234", name: "Example Advertiser", nonce: 1 }} /></MemoryRouter>);
+    expect(await screen.findByText(/Following claim/)).toBeInTheDocument();
+    await waitFor(() => expect(calls.some((c) => c.key.startsWith("GET /monitor/blocklist?") && c.key.includes(`complaintId=${COMPLAINT}`))).toBe(true));
+    fireEvent.click(screen.getAllByRole("button", { name: "Rejected ads" })[0]); // the banner's button (the tab has the same name)
+    await waitFor(() => expect(calls.some((c) => c.key.startsWith("GET /monitor/attempts?") && c.key.includes(`complaintId=${COMPLAINT}`))).toBe(true));
+    expect(await screen.findByText("No ad has been refused for this claim on this network yet.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop following" }));
+    await waitFor(() => expect(calls.filter((c) => c.key.startsWith("GET /monitor/attempts?")).at(-1).key).not.toContain("complaintId="));
+  });
+
+  it("explains an empty complaint search of the runs, and offers the claim's blocks instead", async () => {
+    backend([
+      [/^GET \/monitor\/overview/, () => ok(OVERVIEW)],
+      [/^GET \/monitor\/runs\?.*complaintId=/, () => ok({ items: [], unavailable: [], next: null })],
+      [/^GET \/monitor\/runs\?/, () => ok({ items: [run()], unavailable: [], next: null })],
+      [/^GET \/monitor\/blocklist\?/, () => ok({ counts: { total: 0, byStatus: {}, activeByType: {} }, items: [], next: null })],
+    ]);
+    show();
+    await screen.findAllByText(RUN.slice(0, 8));
+    fireEvent.change(screen.getByLabelText("Complaint id"), { target: { value: COMPLAINT } });
+    fireEvent.click(screen.getByLabelText("Search"));
+    expect(await screen.findByText(/No takedown run is linked to this complaint/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Show this claim.s blocks/ }));
+    expect(await screen.findByText(/Following claim/)).toBeInTheDocument();
+  });
+});
+
+describe("TakedownMonitor > ad ids say what they are, with the advertiser", () => {
+  it("a step's ad shows its advertiser and labels the platform ad id and our row id", async () => {
+    backend(base([[new RegExp(`^GET /monitor/runs/${RUN}/logs`), () => ok({
+      run: run(), steps: { byGroup: { failed: 1 }, bySystem: { sql: { total: 1, byStatus: { failed: 1 } } } },
+      items: [step(4, { targetId: "990001110009", internalAdId: "131579", advertiser: "Acme Brand", status: "failed", group: "failed" })], next: null,
+    })]]));
+    show();
+    fireEvent.click((await screen.findAllByText(RUN.slice(0, 8)))[0].closest("tr"));
+    const dialog = await screen.findByRole("dialog", { name: "Run log" });
+    expect(await within(dialog).findByText("Acme Brand")).toBeInTheDocument();
+    expect(within(dialog).getByText("990001110009").parentElement).toHaveTextContent("Platform ad id 990001110009");
+    expect(within(dialog).getByText("131579").parentElement).toHaveTextContent("Our row id 131579");
+  });
+
+  it("the verification queue shows each waiting ad with its advertiser", async () => {
+    backend(base([[/^GET \/monitor\/verification\?/, () => ok({ available: true, items: [{ internalAdId: "77", platformAdId: "p77", advertiser: null, stage: "checking_images", detail: "x", attempts: 1, firstCheckedAt: when, lastCheckedAt: when }], next: null })]]));
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Ad verification" }));
+    expect(await screen.findByText("advertiser unknown")).toBeInTheDocument();
+    expect(screen.getByText("p77").parentElement).toHaveTextContent("Platform ad id p77");
+  });
+});
+
+describe("TakedownMonitor > why something is blocked", () => {
+  const entry = (over = {}) => ({ id: 30, network: "facebook", entryType: "ad_id", identifierNamespace: "platform", value: "1748325809745951", reason: "failed copyright verification", source: "verification", complaintId: null, status: "active", expiresAt: null, createdAt: when, addedBy: "copyright-verification", removedAt: null, removedBy: null, ...over });
+  const list = (items) => ok({ counts: { total: items.length, byStatus: { active: items.length }, activeByType: {} }, items, next: null });
+
+  it("a cleanup ad id says what the ad matched, and an image fingerprint says which ad it came from", async () => {
+    backend(base([[/^GET \/monitor\/blocklist\?/, () => list([
+      entry({ cause: { matchType: "advertiser", distance: null, source: "verification-recheck", advertiser: "Acme Brand", at: when, matchedEntry: { type: "advertiser", namespace: "none", value: "Acme Brand", complaintId: COMPLAINT } } }),
+      entry({ id: 29, value: "1600249845048314", cause: null }),
+      entry({ id: 28, entryType: "image_hash", identifierNamespace: "none", value: "ab".repeat(32), addedBy: "landing-form", reason: "claim", origin: { platformAdId: "p9", internalAdId: "9", imageUrl: "/b/x.jpg", advertiser: "Copy Co" } }),
+    ])]]));
+    show();
+    fireEvent.click(await screen.findByText("Blocked list", { selector: "button" }));
+    expect(await screen.findByText(/the ad matched/)).toHaveTextContent("Why: the ad matched Advertiser name — blocked advertiser Acme Brand");
+    expect(screen.getByText(/recheck of existing ads/)).toBeInTheDocument();
+    expect(screen.getByText(/What this ad matched was not found/)).toBeInTheDocument();
+    expect(screen.getByText("image of the ad:")).toBeInTheDocument();
+    expect(screen.getByText("Copy Co")).toBeInTheDocument();
+    expect(screen.getAllByText(/blocks this one ad/).length).toBe(2);
+  });
+});

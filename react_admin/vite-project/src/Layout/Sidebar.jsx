@@ -16,7 +16,7 @@ const Sidebar = () => {
   // Copyright claims: the menu entry is shown only to people on the reviewers' list (the answer is 200 only for them), with how many wait.
   const [claimsAccess, setClaimsAccess] = useState(false);
   const [claimsPending, setClaimsPending] = useState(0);
-  // The takedown monitor's two numbers for its badge (steps that failed, steps waiting); read only, asked every 2 minutes and only by reviewers.
+  // The takedown monitor's two numbers for its badge (ads whose delete failed, ads waiting to be deleted; summed per run); read only, asked every 2 minutes and only by reviewers.
   const [takedown, setTakedown] = useState({ failed: 0, waiting: 0 });
   useEffect(() => {
     let stopped = false;
@@ -339,12 +339,12 @@ const navLabelClass = (active) =>
                       </span>
                     )}
                     {claimsAccess && takedown.failed > 0 && (
-                      <span title="Delete steps that failed" className={`${claimsPending > 0 ? "ml-1" : "ml-auto"} bg-gray-800 text-white text-[12px] font-semibold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center`}>
+                      <span title="Ads whose delete failed" className={`${claimsPending > 0 ? "ml-1" : "ml-auto"} bg-gray-800 text-white text-[12px] font-semibold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center`}>
                         {takedown.failed}
                       </span>
                     )}
                     {claimsAccess && takedown.failed === 0 && takedown.waiting > 0 && (
-                      <span title="Delete steps waiting" className={`${claimsPending > 0 ? "ml-1" : "ml-auto"} bg-amber-500 text-white text-[12px] font-semibold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center`}>
+                      <span title="Ads waiting to be deleted" className={`${claimsPending > 0 ? "ml-1" : "ml-auto"} bg-amber-500 text-white text-[12px] font-semibold rounded-full min-w-[22px] h-[22px] px-1.5 flex items-center justify-center`}>
                         {takedown.waiting}
                       </span>
                     )}

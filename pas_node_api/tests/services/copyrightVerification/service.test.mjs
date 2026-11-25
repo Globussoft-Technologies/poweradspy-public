@@ -241,7 +241,7 @@ describe("cleanup cron", () => {
     // The takedown run (with its snapshot) is saved before anything is deleted, then closed with its steps.
     const runAt = sql.calls.findIndex((c) => c.q.includes("INSERT INTO copyright_takedown_runs"));
     expect(runAt).toBeGreaterThan(-1);
-    expect(JSON.parse(sql.calls[runAt].p[4]).ads[0]).toEqual({ internalId: "11", platformAdId: "p11", storagePaths: ["/b/stream/fb/adImage/2026-11/11.jpg"] });
+    expect(JSON.parse(sql.calls[runAt].p[4]).ads[0]).toEqual({ internalId: "11", platformAdId: "p11", advertiser: "Bad Co", storagePaths: ["/b/stream/fb/adImage/2026-11/11.jpg"] });
     expect(del.mock.invocationCallOrder[0]).toBeGreaterThan(0);
     const steps = sql.calls.find((c) => c.q.includes("INSERT INTO copyright_takedown_actions"));
     expect(steps.p.filter((v) => v === "storage" || v === "sql")).toEqual(["storage", "sql"]);

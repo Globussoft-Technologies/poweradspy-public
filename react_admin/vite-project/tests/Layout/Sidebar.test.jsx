@@ -146,7 +146,7 @@ describe("Sidebar > Copyright Request (below Competitor Tracker)", () => {
     withBackend(answer(200, { pending: 3 }), answer(200, { totals: { items: { failed: 6, waiting: 15 } } }));
     const { getByText, findByText, container } = renderWithCtx();
     expect(await findByText("Copyright Request")).toBeInTheDocument();
-    expect((await findByText("6")).getAttribute("title")).toBe("Delete steps that failed");
+    expect((await findByText("6")).getAttribute("title")).toBe("Ads whose delete failed");
     const text = container.textContent;
     expect(text.indexOf("Competitor Tracker")).toBeLessThan(text.indexOf("Copyright Request"));
     expect(getByText("3").getAttribute("title")).toBe("Claims waiting for a decision");
@@ -156,7 +156,7 @@ describe("Sidebar > Copyright Request (below Competitor Tracker)", () => {
   it("shows the amber waiting number when nothing failed", async () => {
     withBackend(answer(200, { pending: 0 }), answer(200, { totals: { items: { failed: 0, waiting: 15 } } }));
     const { findByText } = renderWithCtx();
-    expect((await findByText("15")).getAttribute("title")).toBe("Delete steps waiting");
+    expect((await findByText("15")).getAttribute("title")).toBe("Ads waiting to be deleted");
   });
 
   it("is shown to everyone (the backend decides who may use it) but with no badges for a person who is not a reviewer", async () => {
@@ -166,6 +166,6 @@ describe("Sidebar > Copyright Request (below Competitor Tracker)", () => {
     expect(getByText("Copyright Request")).toBeInTheDocument();
     expect(container.querySelector("a[href='/pas/copyright-request']")).not.toBeNull();
     expect(container.querySelector("[title='Claims waiting for a decision']")).toBeNull();
-    expect(container.querySelector("[title='Delete steps that failed']")).toBeNull();
+    expect(container.querySelector("[title='Ads whose delete failed']")).toBeNull();
   });
 });

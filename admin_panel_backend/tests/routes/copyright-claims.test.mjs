@@ -219,6 +219,13 @@ describe("routes/copyright-claims > the monitor (read only)", () => {
     await request(app).get(`${BASE}/monitor/attempts?network=reddit&beforeId=4&limit=10&token=x`).set(as());
     expect(fakeAxios.mock.calls[0][0]).toMatchObject({ url: `${MONITOR}/attempts`, params: { network: "reddit", beforeId: "4", limit: "10" } });
     expect(fakeAxios.mock.calls[0][0].params).not.toHaveProperty("token");
+    // following one claim: the complaint id is passed on for both views
+    fakeAxios.mockClear();
+    await request(app).get(`${BASE}/monitor/blocklist?network=facebook&complaintId=${ID}`).set(as());
+    expect(fakeAxios.mock.calls[0][0]).toMatchObject({ url: `${MONITOR}/blocklist`, params: { network: "facebook", complaintId: ID } });
+    fakeAxios.mockClear();
+    await request(app).get(`${BASE}/monitor/attempts?network=facebook&complaintId=${ID}`).set(as());
+    expect(fakeAxios.mock.calls[0][0]).toMatchObject({ url: `${MONITOR}/attempts`, params: { network: "facebook", complaintId: ID } });
     expect((await request(app).get(`${BASE}/monitor/blocklist?network=../x`).set(as())).status).toBe(400);
     expect((await request(app).post(`${BASE}/monitor/blocklist`).set(as())).status).toBe(404);
   });

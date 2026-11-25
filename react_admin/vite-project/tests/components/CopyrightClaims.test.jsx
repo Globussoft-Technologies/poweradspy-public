@@ -246,3 +246,35 @@ describe("CopyrightClaims > the login", () => {
     expect(assignSpy).toHaveBeenCalledWith("/");
   });
 });
+
+describe("CopyrightClaims > the complaint id, following a claim, and pages", () => {
+  it("shows the full complaint id with a Copy button, and an accepted claim can be followed in Monitoring", async () => {
+    const accepted = claim({ status: "accepted", decision: { by: "asha.rao", at: "2026-11-03T11:00:00Z", reason: null, evidenceReviewed: true }, processingStatus: "ok", processing: { ok: true, networks: [] } });
+    backend(baseHandlers([[new RegExp(`^GET /${ID}$`), () => ok({ claim: accepted, files: [], filesError: null })]]));
+    const onFollowClaim = vi.fn();
+    render(<CopyrightClaims onFollowClaim={onFollowClaim} />);
+    fireEvent.click(await screen.findByText("Example Advertiser"));
+    expect(await screen.findByText(ID)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy complaint id" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Follow this claim in Monitoring" }));
+    expect(onFollowClaim).toHaveBeenCalledWith(expect.objectContaining({ complaintId: ID, reference: "CR-ABC234" }));
+  });
+
+  it("pages the list: Next shows the next page instead of adding to it, Previous goes back", async () => {
+    const OTHER = { ...LIST_ITEM, id: 4, complaintId: "33333333-3333-4333-8333-333333333333", name: "Second Page Brand" };
+    const calls = backend([
+      [/^GET \/summary/, () => ok({ pending: 2, oldestPendingAt: null, failingProcessing: 0 })],
+      [/^GET \?.*beforeId=5/, () => ok({ items: [OTHER], next: null })],
+      [/^GET \?/, () => ok({ items: [LIST_ITEM], next: 5 })],
+    ]);
+    render(<CopyrightClaims />);
+    expect(await screen.findByText("Page 1")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next ›" }));
+    expect(await screen.findByText("Second Page Brand")).toBeInTheDocument();
+    expect(screen.queryByText("Example Advertiser")).toBeNull();
+    expect(screen.getByText("Page 2")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "‹ Previous" }));
+    expect(await screen.findByText("Example Advertiser")).toBeInTheDocument();
+    expect(calls.filter((c) => c.key.startsWith("GET ?")).at(-1).key).not.toContain("beforeId=");
+  });
+});

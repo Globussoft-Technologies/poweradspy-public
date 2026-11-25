@@ -1,12 +1,14 @@
 # Copyright compliance: the whole flow
 
-For everyone who works on, tests or supports the copyright work in PowerAdSpy: developers, QA, reviewers and leads. It explains, in order, what happens from the moment someone complains about an ad until the ad is gone and the deletion is proven. Updated 6 November 2026.
+For everyone who works on, tests or supports the copyright work in PowerAdSpy: developers, QA, reviewers and leads. It explains, in order, what happens from the moment someone complains about an ad until the ad is gone and the deletion is proven, which record links to which, and how to check each step. Updated 24 November 2026.
+
+New to this? Read section 1 and the picture in section 2 first, then the admin panel guide. Testers mostly need sections 4, 4a, 8 and 9a.
 
 Other documents go deeper on one part:
 
 | Document | What it covers |
 | --- | --- |
-| [COPYRIGHT_ADMIN_PANEL_GUIDE.md](COPYRIGHT_ADMIN_PANEL_GUIDE.md) | Every screen and button of the admin panel's Copyright Request page |
+| [COPYRIGHT_ADMIN_PANEL_GUIDE.md](COPYRIGHT_ADMIN_PANEL_GUIDE.md) | Every screen and button of the admin panel's Copyright Request page, written for first-time users, with a click-by-click test walkthrough (its section 13) |
 | [COPYRIGHT_BLOCKLIST_B1_MANIFEST.md](COPYRIGHT_BLOCKLIST_B1_MANIFEST.md) | The blocklist (B1) and image matching (B2) in full technical detail: settings, queries, speed |
 
 ---
@@ -307,7 +309,7 @@ Cron `copyrightCleanup`. For each network:
 0. **Close stuck runs.** A run still `running` after 1 hour (for example after a server restart) is closed as `failed`. Its unfinished ads count as failed **in that run** (`failed = planned − done`), and `details` says they are retried by a later run.
 1. It reads up to `cleanupBatchSize` (50) ads with status `2`.
 2. **Block first.** It adds each ad's platform id to the blocklist (`ad_id`, added by `copyright-verification`, source `verification`), and the advertiser too if `blockAdvertiser` is on. A re-scraped copy is then refused at insertion.
-3. **Open a takedown run.** It writes one row in `copyright_takedown_runs` (trigger `verification`, mode `execute`, status `running`, `items_planned`) with a **snapshot** of every ad before deletion (`preflight_snapshot`). **If this row cannot be saved, nothing is deleted.**
+3. **Open a takedown run.** It writes one row in `copyright_takedown_runs` (trigger `verification`, mode `execute`, status `running`, `items_planned`) with a **snapshot** of every ad before deletion (`preflight_snapshot`: our row id, platform ad id, the advertiser name since 24 November 2026, and its own stored files). The monitor reads the advertiser from it once the ad is gone. **If this row cannot be saved, nothing is deleted.**
 4. For each ad:
    1. **NAS:** it deletes the ad's own stored files (`nasConcurrency` at once). A shared or default file is never deleted. If NAS fails, the ad waits for the next pass, up to `maxNasAttempts` (3).
    2. **SQL and ES:** it calls the network's existing **delete pipeline**, the same one the delete API uses. That deletes the ad and its child rows in the right order (tables with RESTRICT foreign keys first) and removes the ES document.
@@ -344,8 +346,9 @@ Expected = found means the run removed everything it meant to. The audit is our 
 
 | Where | Shows |
 | --- | --- |
-| Top boxes | Deleted, Waiting, Failed (summed from runs), Waiting for check (status 0), Waiting for cleanup (status 2), Takedown runs, Hash jobs |
-| Ad verification | Each current status-0 ad, its last stage, retry count, detail and check timestamps |
+| Header | **Image hashing service: Healthy / Unavailable**, checked every minute by admin_panel_backend against the hashing service's `/health` (5 s timeout) |
+| Top boxes | Deleted, Waiting, Failed (summed from runs), Waiting for check (status 0), Waiting for cleanup (status 2), Takedown runs, Hash jobs. Each has a tooltip explaining it. |
+| Ad verification | Each current status-0 ad, its last stage (from `copyright_verification_diagnostics`), retry count, detail and check timestamps |
 | Network table | The same per network. "To check / to remove" shows status 0 / status 2 counts, or "not migrated". |
 | Takedown runs | Every run, its counts, and its step log |
 | Failed steps | Steps that failed, with the error and next retry |
@@ -356,6 +359,13 @@ Expected = found means the run removed everything it meant to. The audit is our 
 | Claim requests | The claims, read only |
 
 A network whose tables are missing is shown as "not available", **never as zero**.
+
+Every ad on the monitor is shown with its **advertiser** and its ids **labelled** (*Platform ad id* / *Our row id*). The name comes from the live ad (the network's post-owner table) or, for a deleted ad, from its run's snapshot or its audit finding's `details.advertiser`. Rejected ads also show the blocklist entry that matched (`matchedEntry`). In the Blocked list, an `ad_id` entry added by the cleanup gets a `cause` (the newest `copyright_blocked_attempts` row of that platform ad id, not from ingestion, read straight by ad id through `idx_blocked_attempts_ad` when the network has it, otherwise within two days before the entry through the `(network, created_at)` index; plus its matched entry), and an `image_hash` entry gets an `origin` (the source ad from its `details`, with its advertiser). These lookups are extra read-only queries: if one fails, only the name is left out.
+
+Two features help people find their way:
+
+- **Pages.** Every list that can grow without end is shown one page at a time (‹ Previous / Page N / Next ›). The APIs page by cursor (`beforeId`, `afterId` or `cursor`, depending on the list); the page keeps the cursors of the earlier pages so Previous works.
+- **Following a claim.** On an accepted claim, *Follow this claim in Monitoring* filters **Blocked list** and **Rejected ads** by the claim's complaint id (`complaintId` on `GET /monitor/blocklist` and `GET /monitor/attempts`). Section 4a says what can and cannot be linked to a claim.
 
 Code: [src/compliance/monitor/monitor.js](../src/compliance/monitor/monitor.js), [TakedownMonitor.jsx](../../react_admin/vite-project/src/components/Pas/TakedownMonitor.jsx). Screen guide: [COPYRIGHT_ADMIN_PANEL_GUIDE.md](COPYRIGHT_ADMIN_PANEL_GUIDE.md).
 
@@ -375,6 +385,32 @@ Code: [src/compliance/monitor/monitor.js](../src/compliance/monitor/monitor.js),
 | 10:30 | The cleanup run deletes the first 43 ads (batch of 50), adds their ad ids to the blocklist, and writes the steps and the audit. | Takedown runs: 43 / 43 / 0; Audit: expected 43, found 43 |
 | 11:05 | A scraper sends a new Acme Brand ad. | Refused at insertion (422), Rejected ads (ingestion) |
 | 11:10 | Another advertiser's new ad uses an Acme image. It is saved hidden (status 0); the verify cron matches the image and sets it to 2. Cleanup deletes it at 11:15. | Rejected ads (verification) → Takedown runs |
+
+---
+
+## 4a. What links to what: following one claim
+
+A claim has two codes:
+
+| Code | Example | Used for |
+| --- | --- | --- |
+| Reference | `CR-7K3QXP` | Shown to the claimant and to people. Stored only on the claim. |
+| Complaint id | `11111111-1111-4111-8111-111111111111` | The key that links the claim to what it caused. Shown in full on the claim page (with Copy) and in Monitoring › Claim requests. |
+
+How far the complaint id reaches:
+
+| Record | Carries the complaint id? | How to find one claim's rows |
+| --- | --- | --- |
+| `copyright_claims` | Yes (its own id) | Requests tab |
+| `copyright_blocklist`, the `advertiser` entry made by Accept | Yes, `complaint_id` | Monitoring › Blocked list while following the claim; SQL `WHERE complaint_id = ?` |
+| `copyright_blocklist`, the `image_hash` entries made by its hash job | Yes, the same `complaint_id` | Same as above |
+| `copyright_image_hash_jobs` | Indirectly: one job per blocklist entry | Hash jobs, by the advertiser name |
+| `copyright_blocked_attempts` (refused or failed ads) | Indirectly: `blocklist_id` points at the entry that matched | Monitoring › Rejected ads while following the claim (`blocklist_id IN (that complaint's entries)`) |
+| `copyright_takedown_runs` | **No.** The cleanup job opens runs with trigger `verification` and no complaint id, because one run deletes failed ads of many causes. | Match the platform ad ids of the claim's Rejected ads with the run's steps or the audit findings |
+| `copyright_audit_runs` / `copyright_audit_findings` | No; linked to the takedown run | Through the run |
+| `ad_id` entries added by the cleanup (`copyright-verification`) | No | By platform ad id |
+
+So the **Find by complaint id** search on Takedown runs normally returns nothing today; the admin panel says so and offers to follow the claim instead. Recording the causing complaint on each failed ad, and from there on each run, would close this gap. It is not built yet.
 
 ---
 
@@ -439,6 +475,7 @@ Settings are per server in `config.json`. Secrets are only in the environment.
 | 4 | Turn on the hash jobs | `crons.jobs.imageHashJobs.enabled` (every 1 min) |
 | 5 | Turn on claims and the admin page | `compliance.claims.enabled`; site and admin tokens in env; in `admin_panel_backend`: `JWT_SECRET`, `PAS_NODE_API_URL`, `COPYRIGHT_CLAIMS_ADMIN_TOKEN`, `COPYRIGHT_CLAIMS_REVIEWERS`; in `react_admin`: `VITE_ADMIN_PANEL_API` |
 | 6 | Add the status column | `node src/services/copyrightVerification/migrate.js` (dry run), then `--apply` |
+| 6b | Add the attempts index (the monitor's "why was this ad id blocked", for blocks of any age) | `node src/services/copyrightVerification/migrateAttemptsIndex.js` (dry run, prints table sizes), then `--apply`. Online (`ALGORITHM=INPLACE, LOCK=NONE`), one network at a time. New databases get it from step 1. |
 | 7 | Turn on verification and cleanup | `compliance.copyrightVerification.enabled`; `crons.jobs.copyrightVerification` (2 min) and `crons.jobs.copyrightCleanup` (15 min) |
 | optional | Block request route | `compliance.request.enabled` with a token |
 | optional | Near-copy matching | `compliance.imageMatch.perceptual.enabled` **only after the distances are tuned** |
@@ -473,6 +510,10 @@ Main settings of `compliance.copyrightVerification`:
 | Monitor says "not available" | Tables missing | Run the schema script for that network. |
 | Monitor says "not migrated" | No `copyright_status` column | Run `migrate.js --apply` for that network. |
 | Failed total looks too high | Counted per run | An ad in several stopped runs counts several times. Check *Waiting for cleanup* for what is really left. |
+| Complaint search of the runs is empty | Runs carry no complaint id (section 4a) | Normal. Follow the claim through Blocked list and Rejected ads. |
+| Image hashing service shows Unavailable | The DS service's `/health` did not answer within 5 s | Hash jobs and image checks wait. Ask the DS team. |
+| Ad verification says stage details are not installed | No `copyright_verification_diagnostics` table on that network | Run `node scripts/apply-copyright-schema.js` for that network. |
+| An ad stays on one stage and "last checked" keeps getting older | The verify cron does not reach it, or keeps hitting the same problem | Read the stage and detail; check that the cron is on and the service it waits for is up. |
 
 ---
 
@@ -487,6 +528,25 @@ Main settings of `compliance.copyrightVerification`:
 - **TikTok** has only the insertion check: no verification, hashing or cleanup.
 - **No emails** are sent to claimants or reviewers.
 - Runs from before 5 November 2026 have no step log or audit.
+- **Takedown runs are not linked to a claim** (section 4a).
+- A decision cannot be undone, and a block cannot be revoked, from the admin panel.
+
+---
+
+## 9a. How to check each step (for testers)
+
+Use a test server. The admin panel guide's section 13 has the click-by-click walkthrough; this table says what to expect at each step and where.
+
+| Step | Do | Expect in the admin panel | Expect in the data |
+| --- | --- | --- | --- |
+| 1 Claim | Send the website form | Requests › Waiting: the claim, a `CR-` reference, the complaint id | One `copyright_claims` row, status `pending`; one `copyright_claim_files` row per file |
+| 2 Reject | Reject… with a reason | "Rejected by *you*"; nothing new in Blocked list | Status `rejected`; no blocklist row with that complaint id |
+| 2 Accept | Accept… with the tick box | Processing **Done**; *Follow this claim* → Blocked list shows the advertiser, on every network | One `advertiser` row per network with that `complaint_id`; one hash job per network |
+| 4 Hash job | Wait a minute | Hash jobs: *Done* (it has ads) or *No ads to hash* (a fake name) | `image_hash` rows with the same `complaint_id`; results in `copyright_image_hash_results` |
+| 5a Insertion | Send a new ad of the blocked advertiser | Rejected ads, source *ingestion* | 422 from the insertion API; one `copyright_blocked_attempts` row; no ad row |
+| 6 Recheck | Wait up to 2 minutes (check on) | Following the claim, Rejected ads: source *verification-recheck*; *Waiting for cleanup* goes up | Existing ads at `copyright_status = 2` in SQL and ES |
+| 7 Cleanup | Wait up to 15 minutes | Takedown runs: a new run, trigger *verification*, Planned = Done; *Waiting for cleanup* back to 0 | Ads gone from SQL, ES and NAS; `ad_id` blocklist rows added by `copyright-verification` |
+| 8 Audit | Open the run, then *Open audit* | Expected = Found | One `copyright_audit_runs` row and one finding per ad, `resolved` / `removed` |
 
 ---
 
@@ -500,6 +560,6 @@ Main settings of `compliance.copyrightVerification`:
 | B2 image matching | `src/compliance/imagematch/`; insertion image check in `src/insertion/helpers/mediaUpload.js` | Hashing service (DS team) |
 | Verification, cleanup (B3), audit (B6) | `src/services/copyrightVerification/` (`status.js`, `service.js`, `hashWorker.js`, `migrate.js`, `repairEs.js`) | |
 | Crons | `src/jobs/cronManager.js` (`imageHashJobs`, `copyrightVerification`, `copyrightCleanup`) | |
-| Monitor | `src/compliance/monitor/monitor.js` | `react_admin/.../Pas/TakedownMonitor.jsx` |
+| Monitor | `src/compliance/monitor/monitor.js` | `admin_panel_backend/routes/copyright-claims.js` (`/monitor/*`, `/monitor/image-hashing-health`); `react_admin/.../Pas/TakedownMonitor.jsx`; menu badges in `react_admin/.../Layout/Sidebar.jsx` |
 | Schema | `scripts/apply-copyright-schema.js` | |
 | Tests | `tests/compliance/`, `tests/services/copyrightVerification/` | `admin_panel_backend/tests/routes/`, `react_admin/vite-project/tests/components/` |

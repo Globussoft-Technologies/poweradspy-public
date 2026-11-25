@@ -121,8 +121,8 @@ router.get('/monitor/verification', checkMonitor, proxy('GET', '/verification', 
 router.get('/monitor/runs', checkMonitor, proxy('GET', '/runs', passOn('network', 'complaintId', 'status', 'mode', 'cursor', 'limit')));
 router.get('/monitor/runs/:runId/logs', checkMonitor, proxy('GET', (req) => `/runs/${req.params.runId}/logs`, passOn('network', 'status', 'system', 'afterId', 'limit')));
 router.get('/monitor/failures', checkMonitor, proxy('GET', '/failures', passOn('network', 'beforeId', 'limit')));
-router.get('/monitor/blocklist', checkMonitor, proxy('GET', '/blocklist', passOn('network', 'status', 'entryType', 'q', 'beforeId', 'limit')));
-router.get('/monitor/attempts', checkMonitor, proxy('GET', '/attempts', passOn('network', 'beforeId', 'limit')));
+router.get('/monitor/blocklist', checkMonitor, proxy('GET', '/blocklist', passOn('network', 'status', 'entryType', 'q', 'complaintId', 'beforeId', 'limit')));
+router.get('/monitor/attempts', checkMonitor, proxy('GET', '/attempts', passOn('network', 'complaintId', 'beforeId', 'limit'))); // complaintId: follow one claim
 router.get('/monitor/hash-jobs', checkMonitor, proxy('GET', '/hash-jobs', passOn('network', 'status', 'afterId', 'limit')));
 router.get('/monitor/audits', checkMonitor, proxy('GET', '/audits', passOn('network', 'takedownRunId', 'cursor', 'limit')));
 router.get('/monitor/audits/:auditId/findings', checkMonitor, proxy('GET', (req) => `/audits/${req.params.auditId}/findings`, passOn('network', 'status', 'afterId', 'limit')));

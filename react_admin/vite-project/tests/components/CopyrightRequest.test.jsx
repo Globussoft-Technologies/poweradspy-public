@@ -44,7 +44,7 @@ describe("CopyrightRequest > when the backend answers", () => {
     expect(screen.queryByText("MONITORING PAGE")).toBeNull();
     expect(screen.getByRole("tab", { name: /Requests/ })).toHaveAttribute("aria-selected", "true");
     expect(await screen.findByTitle("Claims waiting for a decision")).toHaveTextContent("3");
-    expect(screen.getByTitle("Delete steps that failed")).toHaveTextContent("6");
+    expect(screen.getByTitle("Ads whose delete failed")).toHaveTextContent("6");
     expect(calls[0].opts.headers.Authorization).toBe("Bearer jwt-token");
     fireEvent.click(screen.getByRole("tab", { name: /Monitoring/ }));
     expect(screen.getByText("MONITORING PAGE")).toBeInTheDocument();
@@ -58,7 +58,7 @@ describe("CopyrightRequest > when the backend answers", () => {
     render(<CopyrightRequest />);
     await screen.findByText("REQUESTS PAGE");
     expect(screen.queryByTitle("Claims waiting for a decision")).toBeNull();
-    expect(screen.queryByTitle("Delete steps that failed")).toBeNull();
+    expect(screen.queryByTitle("Ads whose delete failed")).toBeNull();
   });
 
   it("still opens when only the monitor numbers fail (the badge is left out)", async () => {
@@ -66,7 +66,7 @@ describe("CopyrightRequest > when the backend answers", () => {
     render(<CopyrightRequest />);
     expect(await screen.findByText("REQUESTS PAGE")).toBeInTheDocument();
     expect(screen.getByTitle("Claims waiting for a decision")).toHaveTextContent("2");
-    expect(screen.queryByTitle("Delete steps that failed")).toBeNull();
+    expect(screen.queryByTitle("Ads whose delete failed")).toBeNull();
   });
 });
 
