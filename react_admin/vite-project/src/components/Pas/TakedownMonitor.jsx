@@ -5,6 +5,7 @@ import { FiRefreshCw, FiX, FiSearch } from "react-icons/fi";
 
 /**
  * Takedown Monitor: how many ads/images were deleted, how many are waiting, how many failed, and the log of every step. READ ONLY.
+ * (Comment-only change to trigger a fresh admin panel build, so the deployed bundle includes the complaint-id message fix from #1704.)
  *
  * Talks only to admin_panel_backend (/admin-panel/copyright-claims/monitor/...), which checks the admin login and the reviewers' allowlist.
  * Shows current verification stages, B3's takedown runs (and each delete step), and B2's image hash jobs. A network whose tables do not exist
