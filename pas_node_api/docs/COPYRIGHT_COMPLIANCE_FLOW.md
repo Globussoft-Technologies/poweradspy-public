@@ -276,7 +276,7 @@ Cron `copyrightVerification`. For each network, one pass does two things.
    - **Image not reachable yet** (for example the NAS upload is still queued): the ad is tried again on a later pass. After `maxHashAttempts` (5) it stays hidden, or is approved if `afterMaxAttempts = 'approve'`.
    - **Hashing service down:** nothing is approved by image, and the ads wait.
 4. **Results:**
-   - **Approved:** ES is set to 1 first, then SQL. If ES fails, SQL stays 0 and the ad is retried.
+   - **Approved:** ES is set to 1 first, then SQL, and SQL only for ads whose ES document was found and updated. If ES fails, or the document is not searchable yet (a new ad is indexed after its media upload and becomes searchable at the next index refresh), SQL stays 0, the ad shows as *Waiting for search index* in Monitoring, and it is retried on the next pass. (Before 25 November 2026 a missing document still set SQL to 1, which could leave an ad at ES 0 / SQL 1: hidden and invisible to Monitoring. `repairEs.js` fixes those.)
    - **Failed:** SQL is set to 2. ES already hides it. One row is written to `copyright_blocked_attempts` (source `verification`), with the image URL when an image matched.
    - **Still pending:** the last verification stage and reason are saved in `copyright_verification_diagnostics` for the admin monitor.
 

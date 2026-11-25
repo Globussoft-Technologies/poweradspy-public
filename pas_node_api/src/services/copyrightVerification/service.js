@@ -107,15 +107,30 @@ async function setSqlStatus(sql, network, ids, to, from = [PENDING]) {
   return Number(res?.affectedRows) || 0;
 }
 
-/** One search + one bulk request for the whole batch. */
+/** The internal ad id an ES hit belongs to: insertion writes it as a flat dotted key ('facebook_ad.id'), or nested. */
+function esIdOf(source, field) {
+  if (!source) return null;
+  const [outer, inner] = field.split('.');
+  const v = source[field] ?? (inner ? source[outer]?.[inner] : undefined);
+  return v === undefined || v === null ? null : String(v);
+}
+
+/**
+ * One search + one bulk request for the whole batch. Returns the Set of ids whose ES document(s) were found and updated, or null (= treat
+ * every id as found) when the network has no ES client or a hit's ad id cannot be read. A new ad whose document is not searchable yet (indexed after the SQL commit and the media uploads, and only
+ * searchable after the next index refresh) is NOT in the set: the caller must not mark it approved in SQL, or SQL says 1 while the
+ * document later lands with 0 and nothing ever looks at it again (hidden from search, and absent from every Monitoring view).
+ */
 async function setEsStatus(elastic, network, ids, to) {
-  if (!ids.length || !elastic) return;
+  if (!elastic) return null;
+  const updated = new Set();
+  if (!ids.length) return updated;
   const [, field, defaultIndex] = NETWORKS[network];
   const index = elastic.indexName || defaultIndex;
-  const found = await elastic.search({ index, body: { size: Math.min(ids.length * 5, 10000), _source: false,
+  const found = await elastic.search({ index, body: { size: Math.min(ids.length * 5, 10000), _source: [field],
     query: { terms: { [field]: ids } } } });
   const hits = (found?.body || found)?.hits?.hits || [];
-  if (!hits.length) return;
+  if (!hits.length) return updated;
   const old = Number(elastic.esMajor) <= 6;
   const body = hits.flatMap((h) => [
     { update: { _index: h._index || index, _id: h._id, ...(old ? { _type: h._type || 'doc' } : {}) } },
@@ -123,6 +138,19 @@ async function setEsStatus(elastic, network, ids, to) {
   ]);
   const res = await elastic.bulk({ body, refresh: false });
   if ((res?.body || res)?.errors) throw new Error(`${network}: some ES status updates failed`);
+  const wanted = new Set(ids.map(String));
+  for (const h of hits) {
+    const id = esIdOf(h._source, field);
+    // A hit whose id cannot be read (a document shape this code does not know): the documents were updated, but we cannot tell which ad
+    // each belongs to. Return null = "treat the whole batch as found", the behaviour before this check, so such a network never stops
+    // approving ads; the warning makes the unknown shape visible.
+    if (id === null) {
+      log.warn('copyright verify: ES hit without a readable ad id; approving the batch without the per-ad index check', { network, field, _id: h._id });
+      return null;
+    }
+    if (wanted.has(id)) updated.add(id);
+  }
+  return updated;
 }
 
 // ─── Cron 1: verify pending ads ─────────────────────────────────────────
@@ -406,14 +434,25 @@ async function verifyNetwork(network) {
   const approvedIds = approved.map((ad) => ad.id);
   await saveVerificationDiagnostics(db.sql, network, approved.map((ad) => ({ ...ad, stage: 'updating_search_index',
     detail: 'The ad passed checks; updating its Elasticsearch visibility.', attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
-  try { await setEsStatus(db.elastic, network, approvedIds, APPROVED); }
+  let visible;
+  try { visible = await setEsStatus(db.elastic, network, approvedIds, APPROVED); }
   catch (error) {
     await saveVerificationDiagnostics(db.sql, network, approved.map((ad) => ({ ...ad, stage: 'search_index_update_failed',
       detail: 'The ad passed checks, but its search index status could not be updated. See service logs.', attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
     throw error;
   }
+  // SQL becomes 1 only for ads whose ES document was really set to 1 (all of them when the network has no ES). An ad whose document is
+  // not searchable yet stays 0, is listed in Monitoring as "Waiting for search index", and is approved on a later pass.
+  const shownIds = visible === null ? approvedIds : approvedIds.filter((id) => visible.has(String(id)));
+  const notIndexedYet = approved.filter((ad) => !shownIds.includes(ad.id));
+  if (notIndexedYet.length) {
+    log.info('copyright verify: approved ads not in the search index yet, retried next pass', { network, ids: notIndexedYet.map((ad) => ad.id).slice(0, 20), count: notIndexedYet.length });
+    await saveVerificationDiagnostics(db.sql, network, notIndexedYet.map((ad) => ({ ...ad, stage: 'search_index_unavailable',
+      detail: 'The ad passed checks, but its search document is not searchable yet (it is indexed after the media upload). It stays hidden and is approved on a later pass.',
+      attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
+  }
   let nApproved;
-  try { nApproved = await setSqlStatus(db.sql, network, approvedIds, APPROVED); }
+  try { nApproved = await setSqlStatus(db.sql, network, shownIds, APPROVED); }
   catch (error) {
     await saveVerificationDiagnostics(db.sql, network, approved.map((ad) => ({ ...ad, stage: 'database_status_update_failed',
       detail: 'The ad passed checks, but its SQL status could not be updated. See service logs.', attempts: attempts.get(`${network}:${ad.id}`) || 0 })));
@@ -427,8 +466,8 @@ async function verifyNetwork(network) {
       detail: 'The ad matched a blocklist entry, but its SQL status could not be updated. See service logs.', attempts: attempts.get(`${network}:${f.ad.id}`) || 0 })));
     throw error;
   }
-  await clearVerificationDiagnostics(db.sql, network, approvedIds.concat(failed.map((f) => f.ad.id)));
-  for (const id of approvedIds.concat(failed.map((f) => f.ad.id))) attempts.delete(`${network}:${id}`);
+  await clearVerificationDiagnostics(db.sql, network, shownIds.concat(failed.map((f) => f.ad.id)));
+  for (const id of shownIds.concat(failed.map((f) => f.ad.id))) attempts.delete(`${network}:${id}`);
   for (const f of failed) {
     // Audit of the match, through B1's batched attempts writer (copyright_blocked_attempts).
     blocklist.recordAttempt({ network, platformAdId: f.ad.adId, advertiser: f.ad.ad.post_owner, blocklistId: f.blocklistId,
@@ -587,4 +626,4 @@ async function runAll(kind, task, jobCfg) {
 const runVerification = (jobCfg) => runAll('verification', verifyNetwork, jobCfg);
 const runCleanup = (jobCfg) => runAll('cleanup', cleanupNetwork, jobCfg);
 
-module.exports = { runVerification, runCleanup, verifyNetwork, cleanupNetwork, recheckExisting, recheckCursors, loadAds, ownFile };
+module.exports = { runVerification, runCleanup, verifyNetwork, cleanupNetwork, recheckExisting, recheckCursors, loadAds, ownFile, setEsStatus };

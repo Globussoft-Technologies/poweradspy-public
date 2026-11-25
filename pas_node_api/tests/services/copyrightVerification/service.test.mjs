@@ -40,11 +40,13 @@ function makeSql(ads, media, internal = []) {
   };
 }
 
-function makeEs() {
+// `notIndexed`: ids whose ES document is not searchable yet (indexed after the media upload / before the next refresh)
+function makeEs({ notIndexed = [] } = {}) {
   const bulks = [];
+  const missing = new Set(notIndexed.map(String));
   return {
     bulks, esMajor: 6, indexName: "search_mix",
-    async search({ body }) { return { hits: { hits: body.query.terms["facebook_ad.id"].map((id) => ({ _id: `doc-${id}`, _index: "search_mix", _type: "doc" })) } }; },
+    async search({ body }) { return { hits: { hits: body.query.terms["facebook_ad.id"].filter((id) => !missing.has(String(id))).map((id) => ({ _id: `doc-${id}`, _index: "search_mix", _type: "doc", _source: { "facebook_ad.id": String(id) } })) } }; },
     async bulk({ body }) { bulks.push(body); return { errors: false }; },
   };
 }
@@ -127,6 +129,30 @@ describe("verification cron", () => {
     expect(es.bulks).toHaveLength(1);
     expect(es.bulks[0][1]).toEqual({ doc: { copyright_status: 1 } });
     expect(blocklist.recordAttempt).toHaveBeenCalledTimes(2);
+  });
+
+  // The bug: SQL was set to 1 although the ES search found no document, then the document landed with 0 and the ad was hidden for good.
+  it("keeps an approved ad at 0 while its ES document is not searchable yet, and approves it on a later pass", async () => {
+    // high ids: the verify cursor is module state shared with the other tests, and it wraps after an empty pass
+    const ads = [{ id: 1001, ad_id: "p1", post_owner: "Good Co", copyright_status: 0 }, { id: 1005, ad_id: "p5", post_owner: "New Co", copyright_status: 0 }];
+    const sql = makeSql(ads, []);
+    vi.spyOn(blocklist, "match").mockReturnValue(null);
+    vi.spyOn(databaseManager, "getConnections").mockReturnValue({ sql, elastic: makeEs({ notIndexed: [1005] }) });
+    const first = await service.runVerification({});
+    expect(first.facebook).toMatchObject({ scanned: 2, approved: 1, pending: 1 });
+    expect(ads.map((a) => a.copyright_status)).toEqual([1, 0]);           // 1005 not approved in SQL: it stays in the queue
+    vi.spyOn(databaseManager, "getConnections").mockReturnValue({ sql, elastic: makeEs() }); // the document is searchable now
+    for (let pass = 0; pass < 3 && ads[1].copyright_status === 0; pass += 1) await service.runVerification({});
+    expect(ads.map((a) => a.copyright_status)).toEqual([1, 1]);
+    await service.runVerification({}); // an empty pass wraps the shared cursor back to 0 for the next tests
+  });
+
+  it("setEsStatus reports only the ids it found, and falls back to 'all found' when a hit's id cannot be read", async () => {
+    const es = makeEs({ notIndexed: [8] });
+    expect([...(await service.setEsStatus(es, "facebook", ["7", "8"], 1))]).toEqual(["7"]);
+    expect(await service.setEsStatus(null, "facebook", ["7"], 1)).toBeNull();
+    const shapeless = { ...makeEs(), async search() { return { hits: { hits: [{ _id: "x", _index: "search_mix", _type: "doc" }] } }; } };
+    expect(await service.setEsStatus(shapeless, "facebook", ["7"], 1)).toBeNull(); // unknown document shape: never blocks approvals
   });
 
   it("fails an ad blocked by its internal row id (identifier_namespace = internal)", async () => {

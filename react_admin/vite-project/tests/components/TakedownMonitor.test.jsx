@@ -397,3 +397,24 @@ describe("TakedownMonitor > why something is blocked", () => {
     expect(screen.getAllByText(/blocks this one ad/).length).toBe(2);
   });
 });
+
+describe("TakedownMonitor > the complaint id message", () => {
+  it("'That is not a complaint id.' goes away when the field is emptied, edited, or cleared", async () => {
+    backend(base());
+    show();
+    await screen.findByText("dry run: deleted nothing");
+    const field = screen.getByLabelText("Complaint id");
+    fireEvent.change(field, { target: { value: "CR-ABC234" } });
+    fireEvent.click(screen.getByLabelText("Search"));
+    expect(await screen.findByText("That is not a complaint id.")).toBeInTheDocument();
+    fireEvent.change(field, { target: { value: "" } });           // emptied by hand
+    expect(screen.queryByText("That is not a complaint id.")).toBeNull();
+
+    fireEvent.change(field, { target: { value: "nonsense" } });
+    fireEvent.click(screen.getByLabelText("Search"));
+    expect(await screen.findByText("That is not a complaint id.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "clear" })); // the clear link
+    expect(screen.queryByText("That is not a complaint id.")).toBeNull();
+    expect(field).toHaveValue("");
+  });
+});

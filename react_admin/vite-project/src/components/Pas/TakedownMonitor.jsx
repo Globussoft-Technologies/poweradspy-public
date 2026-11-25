@@ -221,6 +221,9 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
   const [runFilter, setRunFilter] = useState("");
   const [complaint, setComplaint] = useState("");
   const [complaintQuery, setComplaintQuery] = useState("");
+  // the "not a complaint id" message has its own state: kept in runs.error it outlived the text it was about, because clearing the
+  // input does not reload the runs. It goes away as soon as the input changes, is cleared, or another network is chosen.
+  const [complaintError, setComplaintError] = useState("");
   const [runs, setRuns] = useState({ items: [], next: null, unavailable: [], error: "", loading: false });
   const [failures, setFailures] = useState({ items: [], next: null, error: "", loading: false });
   const [hashStatus, setHashStatus] = useState("");
@@ -410,7 +413,8 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
   const submitComplaint = (e) => {
     e.preventDefault();
     const value = complaint.trim();
-    if (value && !UUID.test(value)) { setRuns((r) => ({ ...r, error: "That is not a complaint id." })); return; }
+    if (value && !UUID.test(value)) { setComplaintError("That is not a complaint id."); return; }
+    setComplaintError("");
     setComplaintQuery(value);
   };
 
@@ -469,7 +473,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
             </thead>
             <tbody>
               {overview.networks.map((n) => (
-                <tr key={n.network} className={`border-t border-gray-100 cursor-pointer hover:bg-gray-50 ${network === n.network ? "bg-indigo-50" : ""}`} onClick={() => { setNetwork(n.network); setComplaintQuery(""); setComplaint(""); }}>
+                <tr key={n.network} className={`border-t border-gray-100 cursor-pointer hover:bg-gray-50 ${network === n.network ? "bg-indigo-50" : ""}`} onClick={() => { setNetwork(n.network); setComplaintQuery(""); setComplaint(""); setComplaintError(""); }}>
                   <td className="p-3 font-semibold">{n.network}</td>
                   {n.takedown.available ? (
                     <>
@@ -574,11 +578,12 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
               <button key={f.key || "all"} onClick={() => setRunFilter(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${runFilter === f.key ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{f.label}</button>
             ))}
             <form onSubmit={submitComplaint} className="ml-auto flex items-center gap-2">
-              <input value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder="Find by complaint id (the long id)" title="The long complaint id shown on the claim page, for example 11111111-1111-4111-8111-111111111111. The short CR- reference does not work here." aria-label="Complaint id" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-72" />
+              <input value={complaint} onChange={(e) => { setComplaint(e.target.value); setComplaintError(""); }} placeholder="Find by complaint id (the long id)" title="The long complaint id shown on the claim page, for example 11111111-1111-4111-8111-111111111111. The short CR- reference does not work here." aria-label="Complaint id" className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm w-72" />
               <button type="submit" className="px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-sm" aria-label="Search"><FiSearch /></button>
-              {complaintQuery && <button type="button" onClick={() => { setComplaint(""); setComplaintQuery(""); }} className="text-xs text-gray-500 underline">clear</button>}
+              {(complaintQuery || complaint) && <button type="button" onClick={() => { setComplaint(""); setComplaintQuery(""); setComplaintError(""); }} className="text-xs text-gray-500 underline">clear</button>}
             </form>
           </div>
+          {complaintError && <div role="alert" className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{complaintError}</div>}
           {runs.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{runs.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
