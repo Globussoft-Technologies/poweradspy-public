@@ -202,6 +202,13 @@ function formatJobStats(stats) {
   }).join(" · ");
 }
 
+/**
+ * Dropdown style for the Monitoring filters and side panels. The open option list is drawn by the browser and follows the
+ * system theme: in dark mode it was a dark list with our dark text, so the options were unreadable. A light colour scheme
+ * plus explicit white background and dark text keeps both the closed box and the open list readable.
+ */
+const SELECT_CLS = "border border-gray-300 rounded-lg px-2 text-xs bg-white text-gray-800 [color-scheme:light]";
+
 /** A coloured label. `tip` (optional) explains it on hover; the help cursor shows there is something to read. */
 function Badge({ cls, children, tip }) {
   return <span title={tip || undefined} className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${tip ? "cursor-help" : ""} ${cls || "bg-gray-100 text-gray-600"}`}>{children}</span>;
@@ -720,7 +727,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
             {BLOCK_STATUS_FILTERS.map((f) => (
               <button key={f.key || "all"} onClick={() => setBlockStatus(f.key)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${blockStatus === f.key ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{f.label}</button>
             ))}
-            <select aria-label="Block type" value={blockType} onChange={(e) => setBlockType(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
+            <select aria-label="Block type" value={blockType} onChange={(e) => setBlockType(e.target.value)} className={SELECT_CLS + " py-1.5"}>
               {BLOCK_TYPES.map((t) => <option key={t.key || "all"} value={t.key}>{t.label}</option>)}
             </select>
             <form onSubmit={submitBlockSearch} className="ml-auto flex items-center gap-2">
@@ -889,7 +896,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                       {system}: {Object.entries(v.byStatus).map(([s, n]) => `${s} ${n}`).join(", ")}
                     </button>
                   ))}
-                  <select aria-label="Step status" value={stepStatus} onChange={(e) => setStepStatus(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
+                  <select aria-label="Step status" value={stepStatus} onChange={(e) => setStepStatus(e.target.value)} className={SELECT_CLS + " py-1.5"}>
                     <option value="">All statuses</option>
                     {[...new Set(Object.values(log.data.steps.bySystem).flatMap((v) => Object.keys(v.byStatus)))].map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
@@ -929,7 +936,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                 {log.data.audit.details && <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs whitespace-pre-wrap break-words">{log.data.audit.details}</pre>}
                 <div className="flex gap-2 items-center flex-wrap text-xs">
                   {Object.entries(log.data.counts.byStatus).map(([st, n]) => <Badge key={st} cls={AUDIT_STATUS_META[st]}>{st} {n}</Badge>)}
-                  <select aria-label="Finding status" value={findingStatus} onChange={(e) => setFindingStatus(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
+                  <select aria-label="Finding status" value={findingStatus} onChange={(e) => setFindingStatus(e.target.value)} className={SELECT_CLS + " py-1.5"}>
                     <option value="">All findings</option>
                     {AUDIT_FINDING_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
                   </select>
@@ -962,7 +969,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                   <span>{log.data.job.entryType}: <b>{log.data.job.value}</b></span>
                   {/* the run being shown, and a switch to the earlier runs */}
                   {log.data.latestGeneration > 1 ? (
-                    <select aria-label="Run" value={String(log.data.generation)} onChange={(e) => setJobRun(e.target.value === String(log.data.latestGeneration) ? "" : e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1 text-xs">
+                    <select aria-label="Run" value={String(log.data.generation)} onChange={(e) => setJobRun(e.target.value === String(log.data.latestGeneration) ? "" : e.target.value)} className={SELECT_CLS + " py-1"}>
                       {Array.from({ length: log.data.latestGeneration }, (_, i) => i + 1).map((g) => <option key={g} value={String(g)}>run {g} of {log.data.latestGeneration}{g === log.data.latestGeneration ? " (latest)" : ""}</option>)}
                     </select>
                   ) : <span className="text-gray-500">run {log.data.generation} of {log.data.latestGeneration}</span>}
@@ -973,7 +980,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                   </div>
                 )}
                 {log.data.job.lastError && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{log.data.job.lastError}</div>}
-                <select aria-label="Image result" value={outcome} onChange={(e) => setOutcome(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
+                <select aria-label="Image result" value={outcome} onChange={(e) => setOutcome(e.target.value)} className={SELECT_CLS + " py-1.5"}>
                   <option value="">All results</option>
                   {Object.keys(OUTCOME_META).map((o) => <option key={o} value={o}>{o}</option>)}
                 </select>
