@@ -30,6 +30,11 @@ const RESULTS_TABLE = 'copyright_image_hash_results';
 // The blocklist entry types that get a job: an advertiser / page (its ads), one ad id, a URL (its ads, if they can be found).
 const ENTRY_TYPES = ['advertiser', 'page', 'ad_id', 'url', 'image_url'];
 const NAME_MAX = 255;
+// The cleanup (copyrightVerification) blocks the platform ad id of every ad it deletes, so a re-scraped copy is refused. Those entries get
+// NO hash job: the ad is deleted right after its id is blocked, so the job could only end "no ad has this ad id" (no_owner), one useless
+// job per deleted ad. The ad's images are covered by the block it actually matched (its advertiser's job, or the image entry itself).
+const CLEANUP_ADDED_BY = 'copyright-verification';
+const NOT_CLEANUP_AD_ID = `NOT (b.entry_type = 'ad_id' AND b.added_by = '${CLEANUP_ADDED_BY}')`;
 const ERROR_MAX = 512;
 const LAST_REAL_ENTRY = 4294967294; // 4294967295 is the backfill cursor row; 0 is the sweep cursor row
 
@@ -71,6 +76,7 @@ async function findNewAdvertisers(sql, network, { limit = 100 } = {}) {
             AND b.entry_type = ?
             AND b.status = 'active'
             AND (b.expires_at IS NULL OR b.expires_at > UTC_TIMESTAMP())
+            AND ${NOT_CLEANUP_AD_ID}
             AND j.id IS NULL
           ORDER BY b.id
           LIMIT ${n}`,
@@ -140,6 +146,7 @@ async function findReblocked(sql, network, { limit = 100 } = {}) {
             AND b.entry_type = ?
             AND b.status = 'active'
             AND (b.expires_at IS NULL OR b.expires_at > UTC_TIMESTAMP())
+            AND ${NOT_CLEANUP_AD_ID}
             AND ((b.complaint_id IS NOT NULL AND NOT (b.complaint_id <=> j.complaint_id))
               OR (b.complaint_id IS NULL AND b.updated_at > COALESCE(j.requested_at, j.created_at)))
           ORDER BY b.id

@@ -560,6 +560,12 @@ async function cleanupNetwork(network) {
     source: 'verification', reason: 'failed copyright verification' }));
   if (s.blockAdvertiser) {
     for (const name of new Set(ads.map((ad) => ad.ad.post_owner).filter(Boolean))) {
+      // Skip an advertiser that is already blocked (by a claim, which blocks network 'all', or by an earlier pass). Adding it again made a
+      // second entry for the same name (the unique key includes the network), so a second hash job fingerprinted the same images, and
+      // every later pass refreshed that entry, which made the hash worker run the job again (each time finding fewer ads, then none).
+      const known = blocklist.match({ post_owner: name }, network);
+      // advertiser and page names share one family in the in-memory snapshot, so a page entry of the same name also means "already blocked"
+      if (['advertiser', 'page'].includes(known?.hit?.entry?.entryType)) continue;
       entries.push({ entryType: 'advertiser', value: String(name), network, addedBy: ADDED_BY, source: 'verification', reason: 'failed copyright verification' });
     }
   }

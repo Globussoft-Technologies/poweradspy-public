@@ -253,6 +253,23 @@ describe("cleanup cron", () => {
     expect(stale.p).toEqual(["facebook", "copyright-verification"]);
   });
 
+  // With blockAdvertiser on, an advertiser that is already blocked (here by a claim) must not be blocked again: a second entry made a second
+  // hash job for the same images, and every pass re-ran it.
+  it("blockAdvertiser adds only advertisers that are not blocked yet", async () => {
+    Object.assign(config.compliance.copyrightVerification, { blockAdvertiser: true });
+    const ads = [{ id: 31, ad_id: "p31", post_owner: "Myntra", copyright_status: 2 }, { id: 32, ad_id: "p32", post_owner: "New Co", copyright_status: 2 }];
+    const sql = makeSql(ads, []);
+    vi.spyOn(databaseManager, "getConnections").mockReturnValue({ sql, elastic: makeEs() });
+    vi.spyOn(blocklist, "match").mockImplementation((ad) => (ad.post_owner === "Myntra" ? { hit: { entry: { id: 148, entryType: "advertiser" } } } : null));
+    const add = vi.spyOn(blocklist, "add").mockResolvedValue({ ok: true });
+    vi.spyOn(nas, "deleteFromNas").mockResolvedValue(true);
+    vi.spyOn(fbDelete, "processDelete").mockResolvedValue({ code: 200 });
+    await service.cleanupNetwork("facebook");
+    const added = add.mock.calls[0][0];
+    expect(added.filter((e) => e.entryType === "advertiser").map((e) => e.value)).toEqual(["New Co"]);
+    expect(added.filter((e) => e.entryType === "ad_id").map((e) => e.value)).toEqual(["p31", "p32"]); // the ad ids are still blocked
+  });
+
   it("blocklists, deletes own NAS files, deletes through the existing pipeline and writes audit rows", async () => {
     const ads = [{ id: 11, ad_id: "p11", post_owner: "Bad Co", copyright_status: 2 }];
     const media = [{ ad: 11, image_url: "/b/stream/fb/adImage/2026-11/11.jpg" }, { ad: 11, image_url: "/b/stream/fb/postowner/2026-11/99.jpg" }];

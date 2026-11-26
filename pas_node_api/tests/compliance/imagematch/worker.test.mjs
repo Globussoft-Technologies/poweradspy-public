@@ -596,6 +596,17 @@ function fakeSql(handler = () => []) {
 }
 const noDestructive = (text) => expect(text).not.toMatch(/\b(DELETE|DROP|TRUNCATE|ALTER)\b/i);
 
+describe("jobRepository > the cleanup's own ad id blocks get no hash job", () => {
+  it("findNewAdvertisers and findReblocked leave out ad_id entries added by copyright-verification", async () => {
+    const sql = fakeSql(() => []);
+    await repo.findNewAdvertisers(sql, "facebook", { limit: 10 });
+    await repo.findReblocked(sql, "facebook", { limit: 10 });
+    expect(sql.calls.length).toBeGreaterThan(0);
+    // the ad is deleted right after its id is blocked, so such a job could only end "no ad has this ad id"
+    for (const { text } of sql.calls) expect(text).toContain("NOT (b.entry_type = 'ad_id' AND b.added_by = 'copyright-verification')");
+  });
+});
+
 describe("jobRepository > findNewAdvertisers", () => {
   it("looks, for the network's own entries and then the 'all' ones, for advertisers without a job (anti-join on the unique key)", async () => {
     const sql = fakeSql((text, params) => {

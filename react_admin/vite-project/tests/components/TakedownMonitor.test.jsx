@@ -418,3 +418,39 @@ describe("TakedownMonitor > the complaint id message", () => {
     expect(field).toHaveValue("");
   });
 });
+
+describe("TakedownMonitor > hover explanations", () => {
+  it("column titles, run states, hash statuses and tabs explain themselves on hover", async () => {
+    backend(base([[/^GET \/monitor\/hash-jobs\?/, () => ok({ items: [{ id: 3, network: "facebook", entryType: "advertiser", value: "Big Brand", status: "limit_reached", attempts: 1, updatedAt: when, lastError: null }], next: null })]]));
+    show();
+    await screen.findByText("dry run: deleted nothing");
+    expect(screen.getByText("Planned")).toHaveAttribute("title", expect.stringMatching(/meant to delete/));
+    expect(screen.getByText("dry run: deleted nothing")).toHaveAttribute("title", expect.stringMatching(/deleted nothing/));
+    expect(screen.getAllByText("failed")[0]).toHaveAttribute("title", expect.stringMatching(/failed/));
+    expect(screen.getByRole("button", { name: "Hash jobs" })).toHaveAttribute("title", expect.stringMatching(/fingerprint/));
+    fireEvent.click(screen.getByRole("button", { name: "Hash jobs" }));
+    await screen.findByText("Big Brand", { exact: false }); // the job row is loaded (the filter button has the same text earlier)
+    expect((await screen.findAllByText("Stopped at image limit")).find((el) => el.tagName === "SPAN")).toHaveAttribute("title", expect.stringMatching(/50,000/));
+  });
+});
+
+describe("TakedownMonitor > hash job runs", () => {
+  it("a job that ran 3 times opens on its latest run, can switch to an earlier run, and shows its counts in words", async () => {
+    const job = { id: 84, entryType: "advertiser", value: "Myntra", status: "done", lastError: null, stats: { ads: 0, hashed: 0, skipped: { video: 2, too_small: 1 } } };
+    const calls = backend(base([
+      [/^GET \/monitor\/hash-jobs\?/, () => ok({ items: [{ id: 84, network: "facebook", entryType: "advertiser", value: "Myntra", status: "done", attempts: 1, updatedAt: when, lastError: null }], next: null })],
+      [/^GET \/monitor\/hash-jobs\/84\/results\?.*generation=2/, () => ok({ job, generation: 2, latestGeneration: 3, items: [{ id: 1, platformAdId: "p1", internalAdId: "5", sourceUrl: "/x.jpg", outcome: "hashed", reason: null, updatedAt: when }], next: null })],
+      [/^GET \/monitor\/hash-jobs\/84\/results/, () => ok({ job, generation: 3, latestGeneration: 3, items: [], next: null })],
+    ]));
+    show();
+    fireEvent.click(await screen.findByText("Hash jobs", { selector: "button" }));
+    fireEvent.click(await screen.findByText("Myntra", { exact: false }));
+    const dialog = await screen.findByRole("dialog", { name: "Job results" });
+    expect(await within(dialog).findByText(/This job ran more than once/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/skipped 3 \(video 2, too_small 1\)/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/object Object/)).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText("Run"), { target: { value: "2" } });
+    expect(await within(dialog).findByText("p1")).toBeInTheDocument();
+    expect(calls.some((c) => c.key.includes("/hash-jobs/84/results?") && c.key.includes("generation=2"))).toBe(true);
+  });
+});

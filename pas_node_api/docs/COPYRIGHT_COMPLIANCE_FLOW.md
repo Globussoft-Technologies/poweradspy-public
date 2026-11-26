@@ -201,12 +201,15 @@ Code: [src/compliance/blocklist/](../src/compliance/blocklist/).
 - **SSCD hash:** 256 bits, close for images that look alike (resized, recompressed, lightly cropped). The number of different bits is the **distance**: 0 means the same picture.
 
 **The hash job** (cron `imageHashJobs`, every minute):
-1. It finds blocklist entries of type `advertiser`, `page`, `ad_id`, `url` or `image_url` that have no job yet, and creates one row in `copyright_image_hash_jobs`.
+1. It finds blocklist entries of type `advertiser`, `page`, `ad_id`, `url` or `image_url` that have no job yet, and creates one row in `copyright_image_hash_jobs`. Excluded: the `ad_id` entries the cleanup adds itself (`added_by = 'copyright-verification'`). The cleanup deletes that ad right after blocking its id, so such a job could only end `no_owner` ("no ad has this ad id"), one useless job per deleted ad; the ad's images are covered by the block it matched. Jobs already made for such entries stay as they are.
+   - A job **runs again** (a new generation) when its entry is blocked again: a new complaint id, or, for an entry without complaint id, any update of the entry. Results are kept per generation, and the admin panel can show any of them.
 2. It claims the oldest waiting job. The claim is atomic, so two servers never run the same job.
 3. It finds the advertiser's **stored** ads (by the indexed lowercase name), takes each ad's stored image (for YouTube, the thumbnail), and sends it to the service.
 4. It adds one `image_hash` entry to the blocklist per distinct image, with the same complaint id. `details` keeps the platform ad id, our row id and the stored path.
 5. It records the result of every image in `copyright_image_hash_results`: hashed, duplicate, skipped or failed.
 6. It ends as `done`, `no_owner` (the name has no ads), `limit_reached` (image cap), `unresolved` (the ads could not be found) or `failed`.
+   - **The image cap** is `compliance.imageMatch.worker.maxImagesPerJob`: default **50,000** images sent to the hashing service per job, allowed 1 to 1,000,000 (`src/config/index.js`). The worker passes it to the job as `maxImages` (`worker.js`), so the job file's own fallback of 10,000 (`job.js`) is not what applies. At the cap the job stops, keeps its place in `state`, and keeps every `image_hash` entry already written.
+   - **Continuing:** `POST /api/v1/copyright/jobs/requeue { network, blocklistId, mode: "resume" }` (token) continues the same run from its saved place with the counter back at 0; `mode: "rerun"` starts a new run from scratch. Only a `limit_reached` job can be resumed. There is no admin panel button for it.
 
 It works in short slices with a time budget and keeps its place in the job row, so a huge advertiser never overloads anything and a restart continues where it stopped. It only **reads** the ad tables.
 
@@ -490,7 +493,7 @@ Main settings of `compliance.copyrightVerification`:
 | `maxHashAttempts` / `afterMaxAttempts` | 5 / `pending` | When an image never loads: stay hidden, or `approve` |
 | `cleanupBatchSize` | 50 | Failed ads deleted per network per pass |
 | `nasConcurrency` / `maxNasAttempts` | 2 / 3 | NAS deletes at once / tries before giving up on NAS |
-| `blockAdvertiser` | false | Also block the advertiser of a failed ad |
+| `blockAdvertiser` | false | Also block the advertiser of a failed ad. An advertiser that is already blocked (for example by a claim, which blocks network `all`) is skipped, so no duplicate entry or second hash job is made. |
 | `audit` | true | Write takedown runs, steps and the audit |
 | `recheckExisting` | true | A new block also fails existing ads |
 | `recheckEntries` / `recheckAds` / `recheckLookbackHours` | 100 / 1000 / 24 | Recheck limits per pass |

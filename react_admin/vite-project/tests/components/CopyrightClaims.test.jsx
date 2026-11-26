@@ -278,3 +278,14 @@ describe("CopyrightClaims > the complaint id, following a claim, and pages", () 
     expect(calls.filter((c) => c.key.startsWith("GET ?")).at(-1).key).not.toContain("beforeId=");
   });
 });
+
+describe("CopyrightClaims > hover explanations", () => {
+  it("the status pill, the reference and the complaint id explain themselves on hover", async () => {
+    backend(baseHandlers());
+    render(<CopyrightClaims />);
+    fireEvent.click(await screen.findByText("Example Advertiser"));
+    await screen.findByText("Jane Doe · Example Company");
+    expect(screen.getAllByText("Waiting").find((el) => el.getAttribute("title"))).toHaveAttribute("title", expect.stringMatching(/accept or reject/));
+    expect(screen.getByText("Complaint id")).toHaveAttribute("title", expect.stringMatching(/long unique id/));
+  });
+});

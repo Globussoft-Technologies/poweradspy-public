@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import Cookies from "js-cookie";
 import { FiRefreshCw, FiX, FiDownload, FiCopy, FiExternalLink, FiSearch } from "react-icons/fi";
 import { ToastContainer, toast } from "react-toastify";
+// hover explanations for the claim words (statuses, search results, per-network steps, the two claim codes)
+import { TIPS, tipFor } from "./copyrightGlossary";
+import { Term } from "./CopyrightTerm";
 import "react-toastify/dist/ReactToastify.css";
 
 /**
@@ -50,9 +53,13 @@ const STEP_LABEL = {
 
 const fmtDate = (d) => (d ? new Date(d).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—");
 
+// which glossary group explains the values of each pill kind
+const PILL_TIPS = new Map([[STATUS_META, "claim"], [PROCESSING_META, "processing"], [CHECK_META, "check"]]);
+
 function Pill({ meta, value }) {
   const m = meta[value] || { label: value || "—", cls: "bg-gray-100 text-gray-600" };
-  return <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${m.cls}`}>{m.label}</span>;
+  const tip = tipFor(PILL_TIPS.get(meta), value);
+  return <span title={tip || undefined} className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${tip ? "cursor-help" : ""} ${m.cls}`}>{m.label}</span>;
 }
 
 /** A call to the claims backend with the admin login. 401 sends the person to the login page; 403 (not a reviewer) is returned for the page to explain. */
@@ -333,10 +340,10 @@ export default function CopyrightClaims({ onFollowClaim } = {}) {
               <div className="flex flex-wrap items-start gap-3">
                 <div>
                   <div className="text-lg font-semibold text-gray-900 break-words">{claim.name}</div>
-                  <div className="text-xs text-gray-500">{claim.reference} · received {fmtDate(claim.receivedAt)}</div>
+                  <div className="text-xs text-gray-500"><Term tip={TIPS.word.reference}>{claim.reference}</Term> · received {fmtDate(claim.receivedAt)}</div>
                   {/* the long id: Monitoring filters by it (the short reference is only for the claimant) */}
                   <div className="text-xs text-gray-500 mt-1 flex items-center gap-1 flex-wrap">
-                    <span>Complaint id:</span>
+                    <span><Term tip={TIPS.word.complaintId}>Complaint id</Term>:</span>
                     <code className="font-mono text-[11px] bg-gray-50 border border-gray-200 rounded px-1.5 py-0.5 break-all">{openId}</code>
                     <button onClick={() => copyComplaintId(openId)} aria-label="Copy complaint id" title="Copy complaint id" className="h-6 px-1.5 rounded border border-gray-200 hover:bg-gray-50! flex items-center"><FiCopy size={11} /></button>
                   </div>
@@ -434,8 +441,8 @@ export default function CopyrightClaims({ onFollowClaim } = {}) {
                       {claim.processing.networks.map((n) => (
                         <div key={n.network} className="flex items-center gap-3 px-3 py-2 flex-wrap">
                           <span className="w-28 text-gray-900">{n.network}</span>
-                          <span className="text-xs">Block: <b className={n.blocklist === "failed" ? "text-rose-600" : "text-gray-800"}>{STEP_LABEL[n.blocklist] || n.blocklist}</b></span>
-                          <span className="text-xs">Image hashing: <b className={n.hashing === "not_queued" ? "text-rose-600" : "text-gray-800"}>{STEP_LABEL[n.hashing] || n.hashing}</b></span>
+                          <span className="text-xs">Block: <b title={tipFor("step", n.blocklist) || undefined} className={`cursor-help ${n.blocklist === "failed" ? "text-rose-600" : "text-gray-800"}`}>{STEP_LABEL[n.blocklist] || n.blocklist}</b></span>
+                          <span className="text-xs">Image hashing: <b title={tipFor("step", n.hashing) || undefined} className={`cursor-help ${n.hashing === "not_queued" ? "text-rose-600" : "text-gray-800"}`}>{STEP_LABEL[n.hashing] || n.hashing}</b></span>
                           {n.ads !== null && n.ads !== undefined && <span className="text-xs text-gray-500">{n.ads} ads found</span>}
                           {n.error && <span className="text-xs text-rose-600 truncate">{n.error}</span>}
                         </div>

@@ -2,6 +2,8 @@
 
 For testers, reviewers and anyone else who opens the **Copyright Request** page of the admin panel. It assumes you have never seen the page before. It explains every screen, every box, every button and every word, what each one does to the data, and how to test the page. Updated 24 November 2026.
 
+**Hover to learn a word.** On the page, every column title and lesser-known word has a dotted underline, and every coloured status label and tab name shows a help cursor. Hover over it for a one- or two-line explanation, so most questions are answered on the page itself. This guide gives the full picture.
+
 If you only read one thing, read this:
 
 > **Only three buttons change data: Accept, Reject and Retry.** They are all on the **Requests** tab, inside one claim. Everything else on the page, including the whole **Monitoring** tab, only **reads**. You cannot delete, block or edit anything from Monitoring, so you can click around there freely.
@@ -371,9 +373,12 @@ The newest delete steps that failed on the chosen network: when, system / operat
 
 A **hash job** fingerprints the images of one blocked entry (an advertiser, page, ad, link or image link) on one network.
 
-- **Filters:** All, Waiting, Running, Failed, Stopped at image limit, Ads not found, Done, No ads to hash. (Hover a filter to see the stored word, for example `limit_reached`.)
+- **Filters:** All, Waiting, Running, Failed, Stopped at image limit, Ads not found, Done, No ads to hash. (Hover a filter or a status label for what it means, followed by the stored word in brackets, for example `[limit_reached]`.)
+- **Stopped at image limit:** one job sends at most **50,000 images** to the hashing service. That is the default of the server setting `compliance.imageMatch.worker.maxImagesPerJob` (an administrator can set it between 1 and 1,000,000 in `config.json`; see section 16). The limit protects the hashing service and the database from one very large advertiser. When a job reaches it, it stops and keeps its place, and the images it already fingerprinted stay blocked. The rest of that advertiser's images are **not** fingerprinted until the job is continued, so copies of those images are not caught yet; blocking by advertiser name still works. There is **no button** to continue it on this page; ask an administrator.
 - **Columns:** job number, what was blocked ("advertiser: Example Brand"), status, tries, last update, last error.
 - **Click a job** to open **Job results**: one row per image with the ad (advertiser, platform ad id, our row id), the image address, the **result** (*hashed*, *duplicate*, *skipped*, *failed*), the reason and the time. A list filters by result. "run 1 of 1" says which run of the job you see, because a job can run again.
+  - **Runs.** A job runs again each time its entry is blocked again (another claim on the same name, a block request, or Retry). When a job has more than one run, "run 3 of 3 (latest)" is a list: choose an earlier run to see its images. The panel opens on the latest run. That run can be empty even though an earlier run fingerprinted images, typically because the advertiser's ads were deleted by the cleanup in between; the empty table then says so.
+  - **The counts line** ("This run: ads 17 · imagesFound 87 · requested 87 · hashed 87 · duplicates 32 · skipped 3 (video 2, too_small 1) · …") belongs to the job's **latest** run; on an earlier run it reads "Latest run:". *skipped* is followed by the reasons in brackets.
 - Jobs exist on Facebook, Instagram, Reddit, Quora, Pinterest, Native, GDN, ChatGPT Ads, LinkedIn, YouTube (the video thumbnail), Google text ads and AdMob, as far as the administrator has switched them on. TikTok is not covered.
 
 #### Blocked list
@@ -386,7 +391,7 @@ Everything blocked on the chosen network: advertisers, ads, links, websites and 
 
 | Column | Meaning |
 | --- | --- |
-| Type | What kind of thing is blocked. An **ad id** entry says under it which kind of id the value is: *platform ad id* (the network's id; blocks the ad at the door) or *our row id* (added by the cleanup for an ad it deleted). Hover it for the explanation. |
+| Type | What kind of thing is blocked. An **ad id** entry says under it which kind of id the value is: *platform ad id* (the network's id; blocks the ad at the door) or *our row id* (added by the cleanup for an ad it deleted). Hover it for the explanation. A **page** entry blocks ads by the name of the page that posted them (for example the Facebook or Instagram Page shown as the poster). It checks the same poster-name field as an **advertiser** entry, so a page block and an advertiser block of the same name count as one block. Hover the type to see what it blocks. |
 | Blocked | The blocked value. A long image fingerprint is shortened to 16 characters and "…": hover to see it all. For an **image** entry, "image of the ad:" shows the ad the picture was taken from (advertiser, platform ad id, our row id). |
 | Status | *active* (red), *revoked* or *expired*. A lifted block shows who lifted it and when. |
 | Added by | Who or what added it, and from where (for example *landing-form* / *intake*, or *copyright-verification* / *verification* for the cleanup job). |
@@ -564,7 +569,7 @@ Any word not listed here is shown as the system wrote it.
 | Running | running | Being worked on now. |
 | Done | done | All the images were processed. |
 | No ads to hash | no_owner | No stored ads were found for that name. Normal for a name with no ads. |
-| Stopped at image limit | limit_reached | It stopped at the safety limit of images. It can continue later. |
+| Stopped at image limit | limit_reached | It reached the limit of 50,000 images per job (setting `maxImagesPerJob`) and stopped, keeping its place. An administrator can continue it with a fresh allowance of 50,000 (section 16). |
 | Ads not found | unresolved | The ads for that entry could not be looked up (for example a link on Native, GDN or AdMob). |
 | Failed | failed | It kept failing and stopped. Read *Last error*. |
 
@@ -666,8 +671,17 @@ That is expected today: the cleanup job's runs are not linked to a claim. Use **
 **"That is not a complaint id."**
 You typed a `CR-` reference or something else. Paste the long id (36 characters with dashes).
 
+**A hash job shows "No results recorded for this run". Were records lost?**
+Usually not. If it says "run 3 of 3", choose run 1 or 2 in the list: an earlier run normally holds the images. The latest run finds nothing when the advertiser's ads were already deleted by the cleanup.
+
+**Why does the same advertiser have two hash jobs?**
+Before 26 November 2026, the cleanup (with the `blockAdvertiser` setting on) blocked the advertiser of the ads it deleted again, even when a claim had already blocked it. The claim blocks on "all networks" and the cleanup on one network, so these were two separate entries with two jobs fingerprinting the same images. Since then the cleanup skips an advertiser that is already blocked. Existing duplicates stay, and are harmless.
+
 **Hash jobs show "Done 1 · No ads to hash 1". Is something wrong?**
 No. *Done* is an entry whose images were fingerprinted. *No ads to hash* is a blocked name that has no stored ads.
+
+**A hash job says "Stopped at image limit". What does it mean?**
+The advertiser has more images than one job may fingerprint: 50,000 by default (setting `maxImagesPerJob`). The first 50,000 are fingerprinted and blocked; the rest are not until an administrator continues the job (section 16). The advertiser name itself is blocked either way.
 
 **Download is greyed out.**
 The file's virus scan is still pending. It becomes available once the scan is clean.
@@ -737,6 +751,7 @@ Reviewers and testers do not need this section.
   - Run `node scripts/apply-copyright-schema.js` so each network has the copyright tables, including `copyright_verification_diagnostics` (needed by the Ad verification tab).
   - Crons: `crons.jobs.copyrightVerification` (default every 2 minutes) and `crons.jobs.copyrightCleanup` (default every 15 minutes). Both do nothing while the switch is off.
   - Existing-ad check: `recheckExisting` (on by default), `recheckEntries`, `recheckAds`, `recheckLookbackHours`.
+  - **Hash job image limit:** `compliance.imageMatch.worker.maxImagesPerJob` (default 50,000, allowed 1 to 1,000,000) is the most images one hash job sends to the hashing service; the job then ends as `limit_reached` (*Stopped at image limit*). Continue it from its saved place, with a fresh allowance, with `POST /api/v1/copyright/jobs/requeue` and the body `{ "network": "facebook", "blocklistId": <the job's blocklist entry id>, "mode": "resume" }` (copyright request token required; `mode: "rerun"` instead starts the job again from scratch).
   - Other settings: `networks` (empty = all supported; TikTok never), `batchSize`, `cleanupBatchSize`, `maxHashAttempts`, `afterMaxAttempts`, `maxNasAttempts`, `blockAdvertiser`, `audit`.
   - `node src/services/copyrightVerification/migrateAttemptsIndex.js` (dry run first: it prints each network's `copyright_blocked_attempts` size; then `--apply`, optionally `--networks=`) adds `idx_blocked_attempts_ad (network, platform_ad_id)` online. Without it, the Blocked list's **Why** box only looks two days back. The monitor notices the new index within 10 minutes, no restart needed.
   - `node src/services/copyrightVerification/repairEs.js` (dry run unless `--apply`; `--networks=` to limit) is a one-time fix for search documents left at 0 while the database says 1.

@@ -2,6 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import Cookies from "js-cookie";
 import { Link } from "react-router-dom";
 import { FiRefreshCw, FiX, FiSearch } from "react-icons/fi";
+// hover explanations for every lesser-known term (column titles, status labels, sources, systems, stages)
+import { TIPS, tipFor } from "./copyrightGlossary";
+import { Term, Col } from "./CopyrightTerm";
 
 /**
  * Takedown Monitor: how many ads/images were deleted, how many are waiting, how many failed, and the log of every step. READ ONLY.
@@ -39,6 +42,17 @@ const HASH_META = {
   pending: "bg-amber-100 text-amber-700", limit_reached: "bg-orange-100 text-orange-700", unresolved: "bg-orange-100 text-orange-700",
 };
 const OUTCOME_META = { hashed: "bg-green-100 text-green-700", duplicate: "bg-gray-100 text-gray-600", skipped: "bg-amber-100 text-amber-700", failed: "bg-rose-100 text-rose-700" };
+// what each tab lists, on hover over the tab name
+const TAB_TIPS = {
+  verification: "New ads still hidden because the copyright check has not finished with them, and what it is doing with each.",
+  runs: "Each pass of the cleanup job that deleted ads which failed the copyright check, with a log of every step.",
+  failures: "Single delete steps that failed, newest first.",
+  hash: "Jobs that fingerprint the images of blocked advertisers, so copies of those images are caught.",
+  blocklist: "Everything blocked on this network: advertisers, ads, links, websites and images.",
+  attempts: "Ads refused or failed because they matched the block list, and why.",
+  audit: "The proof written after each cleanup run: what it meant to remove and what it found removed.",
+  claims: "The claims that came in from the website form (read only).",
+};
 const TABS = [{ key: "verification", label: "Ad verification" }, { key: "runs", label: "Takedown runs" }, { key: "failures", label: "Failed steps" }, { key: "hash", label: "Hash jobs" }, { key: "blocklist", label: "Blocked list" }, { key: "attempts", label: "Rejected ads" }, { key: "audit", label: "Audit" }, { key: "claims", label: "Claim requests" }];
 const VERIFICATION_STAGES = {
   not_checked: "Not checked yet", checking_metadata: "Checking ad details", checking_images: "Checking images",
@@ -66,6 +80,8 @@ const HASH_LABEL = {
   done: "Done", no_owner: "No ads to hash",
 };
 const hashLabel = (s) => HASH_LABEL[s] || s;
+// a hash status's hover text: the explanation, then the stored word (what the database and the API use), e.g. "… [limit_reached]"
+const hashTip = (s) => (s ? `${tipFor("hash", s) || ""} [${s}]`.trim() : undefined);
 // one plain sentence per tab, shown at its top (the tabs that already explain themselves inline are not listed)
 const TAB_HELP = {
   runs: "A takedown run is one pass of the cleanup job on one network: it deletes the ads that failed the copyright check. Click a run to see every delete step.",
@@ -160,7 +176,7 @@ function BlockCause({ b }) {
       <div>
         <b>Why:</b> the ad matched <b>{MATCH_LABEL[c.matchType] || c.matchType}</b>
         {e && <> — blocked {ENTRY_LABEL[e.type] || e.type}{e.type === "ad_id" ? (e.namespace === "internal" ? " (our row id)" : " (platform ad id)") : ""} <span className="font-mono break-all" title={e.value}>{shortHash(e.value)}</span></>}
-        {c.distance !== null && c.distance !== undefined && <> ({c.distance} bits apart)</>}
+        {c.distance !== null && c.distance !== undefined && <> (<Term tip={TIPS.word.bitsApart}>{c.distance} bits apart</Term>)</>}
       </div>
       {c.advertiser && <div>Advertiser of the ad: <b>{c.advertiser}</b></div>}
       <div className="text-amber-800/80">Found by the {CAUSE_SOURCE[c.source] || c.source || "check"}{e?.complaintId ? <> · claim <span className="font-mono" title={e.complaintId}>{e.complaintId.slice(0, 8)}</span></> : null} · {fmtDate(c.at)}</div>
@@ -171,12 +187,28 @@ function BlockCause({ b }) {
 // The kind of blocklist entry a rejected ad matched, in words.
 const ENTRY_LABEL = { advertiser: "advertiser", page: "page", ad_id: "ad id", url: "URL", domain: "domain", image_url: "image URL", image_hash: "image" };
 
-function Badge({ cls, children }) {
-  return <span className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${cls || "bg-gray-100 text-gray-600"}`}>{children}</span>;
+/**
+ * A hash job's counts in words. Most are numbers; `skipped` (and any other breakdown) is an object of reason -> count, shown as
+ * "skipped 12 (video 12)" instead of "[object Object]".
+ */
+function formatJobStats(stats) {
+  return Object.entries(stats || {}).map(([k, v]) => {
+    if (v && typeof v === "object") {
+      const parts = Object.entries(v).filter(([, n]) => Number(n) > 0);
+      const total = parts.reduce((sum, [, n]) => sum + Number(n), 0);
+      return parts.length ? `${k} ${total} (${parts.map(([why, n]) => `${why} ${n}`).join(", ")})` : `${k} 0`;
+    }
+    return `${k} ${v}`;
+  }).join(" · ");
+}
+
+/** A coloured label. `tip` (optional) explains it on hover; the help cursor shows there is something to read. */
+function Badge({ cls, children, tip }) {
+  return <span title={tip || undefined} className={`px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${tip ? "cursor-help" : ""} ${cls || "bg-gray-100 text-gray-600"}`}>{children}</span>;
 }
 function GroupBadge({ group, status }) {
   const m = GROUP_META[group] || GROUP_META.other;
-  return <Badge cls={m.cls}>{status || m.label}</Badge>;
+  return <Badge cls={m.cls} tip={tipFor("group", group) || TIPS.group.other}>{status || m.label}</Badge>;
 }
 
 /** A call to the monitor with the admin login. 401 sends the person to the login page; 403 (not a reviewer) is returned for the page to explain. */
@@ -248,6 +280,9 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
   const [stepStatus, setStepStatus] = useState("");
   const [stepSystem, setStepSystem] = useState("");
   const [outcome, setOutcome] = useState("");
+  // which run of a hash job the side panel shows ("" = the latest): a job runs again each time its entry is blocked again, and the
+  // latest run can be empty (for example the ads were deleted by then) while an earlier run holds the results
+  const [jobRun, setJobRun] = useState("");
   const [findingStatus, setFindingStatus] = useState("");
   const openRef = useRef(null);
   const verificationRef = useRef(null);
@@ -364,13 +399,13 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
         ? await api(`/runs/${target.id}/logs`, { network: target.network, status: stepStatus, system: stepSystem, afterId: reset ? undefined : cursor, limit: 100 })
         : target.kind === "audit"
           ? await api(`/audits/${target.id}/findings`, { network: target.network, status: findingStatus, afterId: reset ? undefined : cursor, limit: 100 })
-          : await api(`/hash-jobs/${target.id}/results`, { network: target.network, outcome, afterId: reset ? undefined : cursor, limit: 200 });
+          : await api(`/hash-jobs/${target.id}/results`, { network: target.network, generation: jobRun || undefined, outcome, afterId: reset ? undefined : cursor, limit: 200 });
       if (openRef.current !== target) return;
       if (!res.ok) { setLog((l) => ({ ...l, loading: false, error: res.json?.message || "The log could not be loaded." })); return; }
       const d = res.json.data;
       setLog((l) => ({ data: reset ? d : l.data, items: d.items, ...pageMove(l, reset, cursor, dir), next: d.items.length ? d.next : null, error: "", loading: false }));
     } catch { setLog((l) => ({ ...l, loading: false, error: "The log could not be loaded." })); }
-  }, [stepStatus, stepSystem, outcome, findingStatus]);
+  }, [stepStatus, stepSystem, outcome, findingStatus, jobRun]);
 
   // "Follow this claim" from the Requests tab: show that claim's blocks (the nonce re-applies it when the same claim is followed again)
   useEffect(() => {
@@ -400,7 +435,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
   const refresh = () => { loadOverview(); loadImageHashingHealth(); if (tab === "verification") loadVerification(true); if (tab === "runs") loadRuns(true); if (tab === "failures") loadFailures(true); if (tab === "hash") loadHash(true); if (tab === "blocklist") loadBlocklist(true); if (tab === "attempts") loadAttempts(true); if (tab === "audit") loadAudits(true); if (tab === "claims") loadClaims(true); if (open) loadLog(open, true); };
   const submitBlockSearch = (e) => { e.preventDefault(); setBlockSearch(blockText.trim()); };
   const openRun = (r) => { setStepStatus(""); setStepSystem(""); setOpen({ kind: "run", network: r.network, id: r.runId }); };
-  const openJob = (j) => { setOutcome(""); setOpen({ kind: "job", network: j.network, id: j.id }); };
+  const openJob = (j) => { setOutcome(""); setJobRun(""); setOpen({ kind: "job", network: j.network, id: j.id }); };
   const openAudit = (a) => { setFindingStatus(""); setOpen({ kind: "audit", network: a.network, id: a.auditId }); };
   // From a run log: the audit written for that run (a run that removed no ad has none).
   const openAuditOfRun = async (run) => {
@@ -470,7 +505,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
         <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="text-left text-xs text-gray-500 bg-gray-50">
-              <tr><th className="p-3">Network</th><th className="p-3">Runs</th><th className="p-3">Deleted</th><th className="p-3">Waiting</th><th className="p-3">Failed</th><th className="p-3">Dry runs</th><th className="p-3">Last run</th><th className="p-3">To check / to remove</th><th className="p-3">Hash jobs</th></tr>
+              <tr><th className="p-3"><Col>Network</Col></th><th className="p-3"><Col>Runs</Col></th><th className="p-3"><Col>Deleted</Col></th><th className="p-3"><Col>Waiting</Col></th><th className="p-3"><Col>Failed</Col></th><th className="p-3"><Col>Dry runs</Col></th><th className="p-3"><Col>Last run</Col></th><th className="p-3"><Col>To check / to remove</Col></th><th className="p-3"><Col>Hash jobs</Col></th></tr>
             </thead>
             <tbody>
               {overview.networks.map((n) => (
@@ -495,7 +530,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                   </td>
                   <td className="p-3">
                     {n.hashJobs.available
-                      ? (Object.entries(n.hashJobs.byStatus).map(([s, c]) => <span key={s} title={s} className={`mr-1 inline-block px-2 py-0.5 rounded-full text-xs ${HASH_META[s] || "bg-gray-100 text-gray-600"}`}>{hashLabel(s)} {c}</span>) || null)
+                      ? (Object.entries(n.hashJobs.byStatus).map(([s, c]) => <span key={s} title={hashTip(s)} className={`mr-1 inline-block cursor-help px-2 py-0.5 rounded-full text-xs ${HASH_META[s] || "bg-gray-100 text-gray-600"}`}>{hashLabel(s)} {c}</span>) || null)
                       : <span className="text-gray-400">not available</span>}
                     {n.hashJobs.available && n.hashJobs.total === 0 && <span className="text-gray-400">none</span>}
                   </td>
@@ -525,7 +560,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
 
       <div className="flex items-center gap-2 flex-wrap border-b border-gray-200">
         {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={`px-4 py-2 text-sm font-semibold border-b-2 ${tab === t.key ? "border-[#1f296a] text-[#1f296a]" : "border-transparent text-gray-500"}`}>{t.label}</button>
+          <button key={t.key} title={TAB_TIPS[t.key]} onClick={() => setTab(t.key)} className={`px-4 py-2 text-sm font-semibold border-b-2 ${tab === t.key ? "border-[#1f296a] text-[#1f296a]" : "border-transparent text-gray-500"}`}>{t.label}</button>
         ))}
         <span className="ml-auto text-sm text-gray-500 pb-2">Network: <b>{network || "—"}</b></span>
       </div>
@@ -550,12 +585,12 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
           {verification.available && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Ad</th><th className="p-3">Current stage</th><th className="p-3">Image attempts</th><th className="p-3">Detail</th><th className="p-3">First checked</th><th className="p-3">Last checked</th></tr></thead>
+                <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3"><Col>Ad</Col></th><th className="p-3"><Col>Current stage</Col></th><th className="p-3"><Col>Image attempts</Col></th><th className="p-3"><Col>Detail</Col></th><th className="p-3"><Col>First checked</Col></th><th className="p-3"><Col>Last checked</Col></th></tr></thead>
                 <tbody>
                   {verification.items.map((item) => (
                     <tr key={`${network}-${item.internalAdId}`} className="border-t border-gray-100">
                       <td className="p-3 min-w-48"><AdRef advertiser={item.advertiser} platformId={item.platformAdId} rowId={item.internalAdId} /></td>
-                      <td className="p-3"><Badge cls={item.stage === "near_match_review" || item.stage === "blocklist_unavailable" || item.stage === "search_index_unavailable" || item.stage === "hash_service_unavailable" || item.stage === "images_unavailable" || item.stage.endsWith("failed") ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-700"}>{VERIFICATION_STAGES[item.stage] || item.stage}</Badge></td>
+                      <td className="p-3"><Badge cls={item.stage === "near_match_review" || item.stage === "blocklist_unavailable" || item.stage === "search_index_unavailable" || item.stage === "hash_service_unavailable" || item.stage === "images_unavailable" || item.stage.endsWith("failed") ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-700"} tip={tipFor("stage", item.stage)}>{VERIFICATION_STAGES[item.stage] || item.stage}</Badge></td>
                       <td className="p-3">{item.attempts}</td>
                       <td className="p-3 min-w-64">{item.detail}</td>
                       <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(item.firstCheckedAt)}</td>
@@ -588,13 +623,13 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
           {runs.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{runs.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Run</th><th className="p-3">Status</th><th className="p-3">Mode</th><th className="p-3">Planned</th><th className="p-3">Done</th><th className="p-3">Failed</th><th className="p-3">Started</th><th className="p-3">Complaint / trigger</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3"><Col>Run</Col></th><th className="p-3"><Col>Status</Col></th><th className="p-3"><Col>Mode</Col></th><th className="p-3"><Col>Planned</Col></th><th className="p-3"><Col>Done</Col></th><th className="p-3"><Col>Failed</Col></th><th className="p-3"><Col>Started</Col></th><th className="p-3"><Col>Complaint / trigger</Col></th></tr></thead>
               <tbody>
                 {runs.items.map((r) => (
                   <tr key={`${r.network}-${r.runId}`} className="border-t border-gray-100 cursor-pointer hover:bg-gray-50" onClick={() => openRun(r)}>
                     <td className="p-3 font-mono text-xs">{r.runId.slice(0, 8)} <span className="text-gray-400">{r.network}</span></td>
                     <td className="p-3"><GroupBadge group={r.group} status={r.status} /></td>
-                    <td className="p-3">{r.mode === "dry_run" ? <Badge>dry run: deleted nothing</Badge> : "real"}</td>
+                    <td className="p-3">{r.mode === "dry_run" ? <Badge tip={TIPS.word.dryRun}>dry run: deleted nothing</Badge> : <Term tip={TIPS.col.Mode}>real</Term>}</td>
                     <td className="p-3">{r.itemsPlanned}</td><td className="p-3 text-green-700">{r.itemsSucceeded}</td><td className="p-3 text-rose-700">{r.itemsFailed}</td>
                     <td className="p-3 text-gray-500">{fmtDate(r.startedAt || r.createdAt)}</td>
                     <td className="p-3 font-mono text-xs text-gray-500" title={r.complaintId || undefined}>{r.complaintId ? r.complaintId.slice(0, 8) : (r.triggerType || "—")}</td>
@@ -620,7 +655,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
           {failures.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{failures.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">When</th><th className="p-3">System</th><th className="p-3">What</th><th className="p-3">Status</th><th className="p-3">Tries</th><th className="p-3">Error</th><th className="p-3">Retry at</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3"><Col>When</Col></th><th className="p-3"><Col>System</Col></th><th className="p-3"><Col>What</Col></th><th className="p-3"><Col>Status</Col></th><th className="p-3"><Col>Tries</Col></th><th className="p-3"><Col>Error</Col></th><th className="p-3"><Col>Retry at</Col></th></tr></thead>
               <tbody>
                 {failures.items.map((s) => (
                   <tr key={s.id} className="border-t border-gray-100 align-top cursor-pointer hover:bg-gray-50" onClick={() => openRun({ network, runId: s.runId })}>
@@ -645,19 +680,19 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
         <section className="space-y-3">
           <div className="flex gap-2 flex-wrap">
             {HASH_FILTERS.map((s) => (
-              <button key={s || "all"} onClick={() => setHashStatus(s)} title={s || undefined} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${hashStatus === s ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{s ? hashLabel(s) : "All"}</button>
+              <button key={s || "all"} onClick={() => setHashStatus(s)} title={hashTip(s)} className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${hashStatus === s ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! text-gray-600 border-gray-300"}`}>{s ? hashLabel(s) : "All"}</button>
             ))}
           </div>
           {hash.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{hash.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Job</th><th className="p-3">Blocked</th><th className="p-3">Status</th><th className="p-3">Tries</th><th className="p-3">Updated</th><th className="p-3">Last error</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3"><Col>Job</Col></th><th className="p-3"><Col>Blocked</Col></th><th className="p-3"><Col>Status</Col></th><th className="p-3"><Col>Tries</Col></th><th className="p-3"><Col>Updated</Col></th><th className="p-3"><Col>Last error</Col></th></tr></thead>
               <tbody>
                 {hash.items.map((j) => (
                   <tr key={j.id} className="border-t border-gray-100 align-top cursor-pointer hover:bg-gray-50" onClick={() => openJob(j)}>
                     <td className="p-3 font-mono text-xs">#{j.id}</td>
                     <td className="p-3 break-all">{j.entryType}: {j.value}</td>
-                    <td className="p-3" title={j.status}><Badge cls={HASH_META[j.status]}>{hashLabel(j.status)}</Badge></td>
+                    <td className="p-3"><Badge cls={HASH_META[j.status]} tip={hashTip(j.status)}>{hashLabel(j.status)}</Badge></td>
                     <td className="p-3">{j.attempts}</td>
                     <td className="p-3 text-gray-500">{fmtDate(j.updatedAt)}</td>
                     <td className="p-3 text-rose-700 break-words max-w-md">{j.lastError || "—"}</td>
@@ -697,12 +732,13 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
           {blocklist.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{blocklist.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Type</th><th className="p-3">Blocked</th><th className="p-3">Status</th><th className="p-3">Added by</th><th className="p-3">Added</th><th className="p-3">Reason (and why)</th><th className="p-3">Complaint</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3"><Col>Type</Col></th><th className="p-3"><Col>Blocked</Col></th><th className="p-3"><Col>Status</Col></th><th className="p-3"><Col>Added by</Col></th><th className="p-3"><Col>Added</Col></th><th className="p-3"><Col>Reason (and why)</Col></th><th className="p-3"><Col>Complaint</Col></th></tr></thead>
               <tbody>
                 {blocklist.items.map((b) => (
                   <tr key={b.id} className="border-t border-gray-100 align-top">
                     <td className="p-3 max-w-[14rem]">
-                      <div className="whitespace-nowrap">{b.entryType}</div>
+                      {/* hover explains the entry type, e.g. what a "page" block is */}
+                      <div className="whitespace-nowrap"><Term tip={tipFor("entry", b.entryType)}>{b.entryType}</Term></div>
                       {b.entryType === "ad_id" && b.identifierNamespace && <div className="text-xs text-gray-400" title={b.identifierNamespace === "internal" ? ID_HELP.row : ID_HELP.platform}>{b.identifierNamespace === "internal" ? "our row id: blocks this one ad" : "platform ad id: blocks this one ad"}</div>}
                       {BLOCK_EXPLAIN[b.entryType] && <div className="text-xs text-gray-400">{BLOCK_EXPLAIN[b.entryType]}</div>}
                     </td>
@@ -713,7 +749,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                         <div className="mt-1 font-normal text-xs text-gray-500"><div className="text-gray-400">image of the ad:</div><AdRef advertiser={b.origin.advertiser} platformId={b.origin.platformAdId} rowId={b.origin.internalAdId} /></div>
                       )}
                     </td>
-                    <td className="p-3"><Badge cls={BLOCK_STATUS_META[b.status]}>{b.status}</Badge>{b.removedBy && <div className="text-xs text-gray-400 mt-1">by {b.removedBy} · {fmtDate(b.removedAt)}</div>}</td>
+                    <td className="p-3"><Badge cls={BLOCK_STATUS_META[b.status]} tip={tipFor("block", b.status)}>{b.status}</Badge>{b.removedBy && <div className="text-xs text-gray-400 mt-1">by {b.removedBy} · {fmtDate(b.removedAt)}</div>}</td>
                     <td className="p-3 text-gray-600">{b.addedBy || "—"}{b.source && <div className="text-xs text-gray-400">{b.source}</div>}</td>
                     <td className="p-3 text-gray-500">{fmtDate(b.createdAt)}{b.expiresAt && <div className="text-xs text-gray-400">expires {fmtDate(b.expiresAt)}</div>}</td>
                     <td className="p-3 break-words max-w-sm"><div>{b.reason || "—"}</div><BlockCause b={b} /></td>
@@ -736,18 +772,18 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
           {attempts.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{attempts.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">When</th><th className="p-3">Refused because</th><th className="p-3">Advertiser</th><th className="p-3" title={ID_HELP.platform}>Platform ad id</th><th className="p-3">Image</th><th className="p-3">Source</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3"><Col>When</Col></th><th className="p-3"><Col>Refused because</Col></th><th className="p-3"><Col>Advertiser</Col></th><th className="p-3" title={ID_HELP.platform}>Platform ad id</th><th className="p-3"><Col>Image</Col></th><th className="p-3"><Col>Source</Col></th></tr></thead>
               <tbody>
                 {attempts.items.map((a) => (
                   <tr key={a.id} className="border-t border-gray-100 align-top">
                     <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(a.createdAt)}</td>
-                    <td className="p-3"><Badge cls="bg-rose-100 text-rose-700">{MATCH_LABEL[a.matchType] || a.matchType}</Badge>{a.distance !== null && <div className="text-xs text-gray-400 mt-1">{a.distance} bits apart</div>}
+                    <td className="p-3"><Badge cls="bg-rose-100 text-rose-700" tip={tipFor("match", a.matchType)}>{MATCH_LABEL[a.matchType] || a.matchType}</Badge>{a.distance !== null && <div className="text-xs text-gray-400 mt-1"><Term tip={TIPS.word.bitsApart}>{a.distance} bits apart</Term></div>}
                       {/* which block entry it hit: the advertiser name, the platform ad id or row id, the image fingerprint… */}
                       {a.matchedEntry && <div className="text-xs text-gray-500 mt-1 break-all" title={a.matchedEntry.value}>matched {ENTRY_LABEL[a.matchedEntry.type] || a.matchedEntry.type}{a.matchedEntry.type === "ad_id" ? (a.matchedEntry.namespace === "internal" ? " (our row id)" : " (platform ad id)") : ""}: <span className="font-mono">{shortHash(a.matchedEntry.value)}</span></div>}</td>
                     <td className="p-3 break-words">{a.advertiser || <span className="text-gray-400" title="The ad did not carry a name, and it no longer exists in our data">unknown</span>}</td>
                     <td className="p-3 font-mono text-xs break-all">{a.platformAdId || "—"}</td>
                     <td className="p-3 break-all text-gray-500 text-xs max-w-xs">{a.imageUrl || "—"}</td>
-                    <td className="p-3 text-gray-500 text-xs">{a.source || "—"}</td>
+                    <td className="p-3 text-gray-500 text-xs"><Term tip={tipFor("source", String(a.source || "").startsWith("ingestion") ? "ingestion" : a.source)}>{a.source || "—"}</Term></td>
                   </tr>
                 ))}
                 {!attempts.loading && !attempts.items.length && !attempts.error && <tr><td className="p-4 text-gray-500" colSpan={6}>{followed ? "No ad has been refused for this claim on this network yet." : "No ad has been refused here yet."}</td></tr>}
@@ -764,14 +800,14 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
           {audits.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{audits.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">When</th><th className="p-3">Audit</th><th className="p-3">Type</th><th className="p-3">Status</th><th className="p-3">Expected</th><th className="p-3">Found</th><th className="p-3">Takedown run</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3"><Col>When</Col></th><th className="p-3"><Col>Audit</Col></th><th className="p-3"><Col>Type</Col></th><th className="p-3"><Col>Status</Col></th><th className="p-3"><Col>Expected</Col></th><th className="p-3"><Col>Found</Col></th><th className="p-3"><Col>Takedown run</Col></th></tr></thead>
               <tbody>
                 {audits.items.map((a) => (
                   <tr key={a.auditId} className="border-t border-gray-100 align-top cursor-pointer hover:bg-gray-50" onClick={() => openAudit(a)}>
                     <td className="p-3 text-gray-500 whitespace-nowrap">{fmtDate(a.finishedAt || a.startedAt || a.createdAt)}</td>
                     <td className="p-3 font-mono text-xs">{a.auditId.slice(0, 8)}</td>
                     <td className="p-3">{a.auditType}</td>
-                    <td className="p-3"><Badge cls={AUDIT_STATUS_META[a.status]}>{a.status}</Badge></td>
+                    <td className="p-3"><Badge cls={AUDIT_STATUS_META[a.status]} tip={tipFor("audit", a.status)}>{a.status}</Badge></td>
                     <td className="p-3">{a.expectedCount}</td>
                     <td className={`p-3 ${a.foundCount === a.expectedCount ? "text-green-700" : "text-rose-700"}`}>{a.foundCount}</td>
                     <td className="p-3">{a.takedownRunId
@@ -801,7 +837,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
           {claims.error && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{claims.error}</div>}
           <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3">Claim</th><th className="p-3">Complaint id</th><th className="p-3">Advertiser named</th><th className="p-3">Sent by</th><th className="p-3">Received</th><th className="p-3">Decision</th><th className="p-3">After accept</th></tr></thead>
+              <thead className="text-left text-xs text-gray-500 bg-gray-50"><tr><th className="p-3"><Col>Claim</Col></th><th className="p-3"><Col>Complaint id</Col></th><th className="p-3"><Col>Advertiser named</Col></th><th className="p-3"><Col>Sent by</Col></th><th className="p-3"><Col>Received</Col></th><th className="p-3"><Col>Decision</Col></th><th className="p-3"><Col>After accept</Col></th></tr></thead>
               <tbody>
                 {claims.items.map((c) => (
                   <tr key={c.complaintId} className="border-t border-gray-100 align-top">
@@ -813,8 +849,8 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                     <td className="p-3 break-words">{c.name}</td>
                     <td className="p-3 text-gray-600">{c.organization || "—"}</td>
                     <td className="p-3 text-gray-500">{fmtDate(c.receivedAt)}</td>
-                    <td className="p-3"><Badge cls={CLAIM_STATUS[c.status]}>{c.status === "pending" ? "Waiting" : c.status}</Badge>{c.decidedBy && <div className="text-xs text-gray-400 mt-1">{c.decidedBy} · {fmtDate(c.decidedAt)}</div>}</td>
-                    <td className="p-3">{c.status === "accepted" ? <Badge cls={(PROCESSING[c.processingStatus] || PROCESSING.none)[1]}>{(PROCESSING[c.processingStatus] || PROCESSING.none)[0]}</Badge> : "—"}</td>
+                    <td className="p-3"><Badge cls={CLAIM_STATUS[c.status]} tip={tipFor("claim", c.status)}>{c.status === "pending" ? "Waiting" : c.status}</Badge>{c.decidedBy && <div className="text-xs text-gray-400 mt-1">{c.decidedBy} · {fmtDate(c.decidedAt)}</div>}</td>
+                    <td className="p-3">{c.status === "accepted" ? <Badge cls={(PROCESSING[c.processingStatus] || PROCESSING.none)[1]} tip={tipFor("processing", c.processingStatus || "none")}>{(PROCESSING[c.processingStatus] || PROCESSING.none)[0]}</Badge> : "—"}</td>
                   </tr>
                 ))}
                 {!claims.loading && !claims.items.length && !claims.error && <tr><td className="p-4 text-gray-500" colSpan={7}>No claim requests.</td></tr>}
@@ -841,7 +877,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
               <>
                 <div className="flex gap-2 items-center flex-wrap text-sm">
                   <GroupBadge group={log.data.run.group} status={log.data.run.status} />
-                  {log.data.run.mode === "dry_run" && <Badge>dry run: deleted nothing</Badge>}
+                  {log.data.run.mode === "dry_run" && <Badge tip={TIPS.word.dryRun}>dry run: deleted nothing</Badge>}
                   <span>planned {log.data.run.itemsPlanned}</span><span className="text-green-700">done {log.data.run.itemsSucceeded}</span><span className="text-rose-700">failed {log.data.run.itemsFailed}</span>
                   <span className="text-gray-500">operator {log.data.run.operator || "—"}</span>
                   <button type="button" onClick={() => openAuditOfRun(log.data.run)} className="ml-auto px-3 py-1.5 rounded-lg border border-gray-300 bg-white! text-xs">Open audit</button>
@@ -849,7 +885,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                 {log.data.run.details && <pre className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs whitespace-pre-wrap break-words">{log.data.run.details}</pre>}
                 <div className="flex gap-2 flex-wrap">
                   {Object.entries(log.data.steps.bySystem).map(([system, v]) => (
-                    <button key={system} onClick={() => setStepSystem(stepSystem === system ? "" : system)} className={`px-3 py-1.5 rounded-lg border text-xs ${stepSystem === system ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! border-gray-300"}`}>
+                    <button key={system} title={tipFor("system", system) || undefined} onClick={() => setStepSystem(stepSystem === system ? "" : system)} className={`px-3 py-1.5 rounded-lg border text-xs ${stepSystem === system ? "bg-[#1f296a]! text-white border-[#1f296a]" : "bg-white! border-gray-300"}`}>
                       {system}: {Object.entries(v.byStatus).map(([s, n]) => `${s} ${n}`).join(", ")}
                     </button>
                   ))}
@@ -860,7 +896,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                 </div>
                 <div className="border border-gray-200 rounded-lg overflow-x-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-left text-gray-500 bg-gray-50"><tr><th className="p-2">#</th><th className="p-2">System</th><th className="p-2">What</th><th className="p-2">Status</th><th className="p-2">Tries</th><th className="p-2">When</th><th className="p-2">Error</th></tr></thead>
+                    <thead className="text-left text-gray-500 bg-gray-50"><tr><th className="p-2"><Col>#</Col></th><th className="p-2"><Col>System</Col></th><th className="p-2"><Col>What</Col></th><th className="p-2"><Col>Status</Col></th><th className="p-2"><Col>Tries</Col></th><th className="p-2"><Col>When</Col></th><th className="p-2"><Col>Error</Col></th></tr></thead>
                     <tbody>
                       {log.items.map((s) => (
                         <tr key={s.id} className="border-t border-gray-100 align-top">
@@ -883,7 +919,7 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
             {open.kind === "audit" && log.data?.audit && (
               <>
                 <div className="flex gap-2 items-center flex-wrap text-sm">
-                  <Badge cls={AUDIT_STATUS_META[log.data.audit.status]}>{log.data.audit.status}</Badge>
+                  <Badge cls={AUDIT_STATUS_META[log.data.audit.status]} tip={tipFor("audit", log.data.audit.status)}>{log.data.audit.status}</Badge>
                   <span>{log.data.audit.auditType}</span>
                   <span>expected {log.data.audit.expectedCount}</span>
                   <span className={log.data.audit.foundCount === log.data.audit.expectedCount ? "text-green-700" : "text-rose-700"}>found {log.data.audit.foundCount}</span>
@@ -900,14 +936,14 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                 </div>
                 <div className="border border-gray-200 rounded-lg overflow-x-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-left text-gray-500 bg-gray-50"><tr><th className="p-2">Ad</th><th className="p-2">Finding</th><th className="p-2">Where</th><th className="p-2">Status</th><th className="p-2">Details</th><th className="p-2">When</th></tr></thead>
+                    <thead className="text-left text-gray-500 bg-gray-50"><tr><th className="p-2"><Col>Ad</Col></th><th className="p-2"><Col>Finding</Col></th><th className="p-2"><Col>Where</Col></th><th className="p-2"><Col>Status</Col></th><th className="p-2"><Col>Details</Col></th><th className="p-2"><Col>When</Col></th></tr></thead>
                     <tbody>
                       {log.items.map((f) => (
                         <tr key={f.id} className="border-t border-gray-100 align-top">
                           <td className="p-2 break-all min-w-40"><AdRef advertiser={f.advertiser} platformId={f.platformAdId} rowId={f.internalAdId} /></td>
-                          <td className="p-2">{f.findingType}</td>
+                          <td className="p-2"><Term tip={TIPS.col.Finding}>{f.findingType}</Term></td>
                           <td className="p-2 break-all">{f.system}{f.location ? ` / ${f.location}` : ""}</td>
-                          <td className="p-2"><Badge cls={AUDIT_STATUS_META[f.status]}>{f.status}</Badge>{f.resolution && <div className="text-gray-400 mt-1">{f.resolution}</div>}</td>
+                          <td className="p-2"><Badge cls={AUDIT_STATUS_META[f.status]} tip={tipFor("audit", f.status)}>{f.status}</Badge>{f.resolution && <div className="text-gray-400 mt-1">{f.resolution}</div>}</td>
                           <td className="p-2 break-words max-w-xs text-gray-500">{f.resolutionNote || f.details || "—"}</td>
                           <td className="p-2 text-gray-500">{fmtDate(f.resolvedAt || f.createdAt)}</td>
                         </tr>
@@ -922,11 +958,20 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
             {open.kind === "job" && log.data?.job && (
               <>
                 <div className="flex gap-2 items-center flex-wrap text-sm">
-                  <span title={log.data.job.status}><Badge cls={HASH_META[log.data.job.status]}>{hashLabel(log.data.job.status)}</Badge></span>
+                  <Badge cls={HASH_META[log.data.job.status]} tip={hashTip(log.data.job.status)}>{hashLabel(log.data.job.status)}</Badge>
                   <span>{log.data.job.entryType}: <b>{log.data.job.value}</b></span>
-                  <span className="text-gray-500">run {log.data.generation} of {log.data.latestGeneration}</span>
-                  {log.data.job.stats && <span className="text-gray-500">{Object.entries(log.data.job.stats).map(([k, v]) => `${k} ${v}`).join(" · ")}</span>}
+                  {/* the run being shown, and a switch to the earlier runs */}
+                  {log.data.latestGeneration > 1 ? (
+                    <select aria-label="Run" value={String(log.data.generation)} onChange={(e) => setJobRun(e.target.value === String(log.data.latestGeneration) ? "" : e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1 text-xs">
+                      {Array.from({ length: log.data.latestGeneration }, (_, i) => i + 1).map((g) => <option key={g} value={String(g)}>run {g} of {log.data.latestGeneration}{g === log.data.latestGeneration ? " (latest)" : ""}</option>)}
+                    </select>
+                  ) : <span className="text-gray-500">run {log.data.generation} of {log.data.latestGeneration}</span>}
                 </div>
+                {log.data.job.stats && (
+                  <div className="text-xs text-gray-500">
+                    <Term tip="The job's counts are those of its latest run.">{log.data.generation === log.data.latestGeneration ? "This run" : "Latest run"}</Term>: {formatJobStats(log.data.job.stats)}
+                  </div>
+                )}
                 {log.data.job.lastError && <div className="bg-rose-50 border border-rose-200 text-rose-700 rounded-lg p-3 text-sm">{log.data.job.lastError}</div>}
                 <select aria-label="Image result" value={outcome} onChange={(e) => setOutcome(e.target.value)} className="border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
                   <option value="">All results</option>
@@ -934,18 +979,18 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                 </select>
                 <div className="border border-gray-200 rounded-lg overflow-x-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-left text-gray-500 bg-gray-50"><tr><th className="p-2">Ad</th><th className="p-2">Image</th><th className="p-2">Result</th><th className="p-2">Reason</th><th className="p-2">When</th></tr></thead>
+                    <thead className="text-left text-gray-500 bg-gray-50"><tr><th className="p-2"><Col>Ad</Col></th><th className="p-2"><Col>Image</Col></th><th className="p-2"><Col>Result</Col></th><th className="p-2"><Col>Reason</Col></th><th className="p-2"><Col>When</Col></th></tr></thead>
                     <tbody>
                       {log.items.map((r) => (
                         <tr key={r.id} className="border-t border-gray-100 align-top">
                           <td className="p-2 break-all min-w-40"><AdRef advertiser={r.advertiser || (log.data.job.entryType === "advertiser" ? log.data.job.value : null)} platformId={r.platformAdId} rowId={r.internalAdId} /></td>
                           <td className="p-2 break-all text-gray-500">{r.sourceUrl}</td>
-                          <td className="p-2"><Badge cls={OUTCOME_META[r.outcome]}>{r.outcome}</Badge></td>
+                          <td className="p-2"><Badge cls={OUTCOME_META[r.outcome]} tip={tipFor("outcome", r.outcome)}>{r.outcome}</Badge></td>
                           <td className="p-2">{r.reason || "—"}</td>
                           <td className="p-2 text-gray-500">{fmtDate(r.updatedAt)}</td>
                         </tr>
                       ))}
-                      {!log.loading && !log.items.length && !log.error && <tr><td className="p-3 text-gray-500" colSpan={5}>No results recorded for this run.</td></tr>}
+                      {!log.loading && !log.items.length && !log.error && <tr><td className="p-3 text-gray-500" colSpan={5}>No results recorded for this run.{log.data?.latestGeneration > 1 ? " This job ran more than once (each time its entry was blocked again); a later run finds nothing when the ads were already deleted. Choose another run above to see its results." : ""}</td></tr>}
                     </tbody>
                   </table>
                 </div>
