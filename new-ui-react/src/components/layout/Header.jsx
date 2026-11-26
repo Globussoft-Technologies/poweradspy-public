@@ -152,6 +152,7 @@ const Header = ({
   onShowMySpacePage,
   onOpenMySpaceImage,
   onRecreateFromNotification,
+  onNotificationSearch,
   onUpgradeClick,
   onSearch,
   onAiSearch,
@@ -426,7 +427,11 @@ const Header = ({
     }
     setLocalSearchIn(searchType);
     setLocalQuery(term);
-    if (onSearch) onSearch(term, searchType, notif.network);
+    // onNotificationSearch (App) = same search + switch to the Ads Library when the
+    // click comes from another page (Projects, Market Trends, Saved, MySpace, ...).
+    // Falls back to plain onSearch if the parent doesn't pass it.
+    if (onNotificationSearch) onNotificationSearch(term, searchType, notif.network);
+    else if (onSearch) onSearch(term, searchType, notif.network);
     setNotifOpen(false);
   };
 

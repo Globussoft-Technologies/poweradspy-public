@@ -153,6 +153,50 @@ describe("hooks/useNotifications > with user", () => {
     expect(result.current.notifications.length).toBe(1);
   });
 
+  it("markAllRead success → also removes them from the All list (not just flagged read)", async () => {
+    fetchSpy.mockResolvedValue({ data: [{ id: "a", keyword: "flipkart" }, { id: "b", keyword: "flipkart" }] });
+    markSpy.mockResolvedValue(true);
+    const { result } = renderHook(() => useNotifications());
+    await act(async () => { await Promise.resolve(); });
+    expect(result.current.allNotifications.map((n) => n.id)).toEqual(["a", "b"]);
+    await act(async () => { await result.current.markAllRead(); });
+    expect(result.current.allNotifications).toEqual([]);
+    expect(result.current.notifications).toEqual([]);
+  });
+
+  it("markAllRead success → next poll (server deleted them) keeps All empty", async () => {
+    fetchSpy.mockResolvedValueOnce({ data: [{ id: "a" }, { id: "b" }] });
+    markSpy.mockResolvedValue(true);
+    const { result } = renderHook(() => useNotifications());
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await result.current.markAllRead(); });
+    fetchSpy.mockResolvedValue({ data: [] });
+    await act(async () => { vi.advanceTimersByTime(60000); await Promise.resolve(); });
+    expect(result.current.allNotifications).toEqual([]);
+  });
+
+  it("markAllRead failure → re-poll brings them back into All as unread", async () => {
+    fetchSpy.mockResolvedValue({ data: [{ id: "a" }, { id: "b" }] });
+    markSpy.mockResolvedValue(false);
+    const { result } = renderHook(() => useNotifications());
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await result.current.markAllRead(); await Promise.resolve(); });
+    expect(result.current.allNotifications.map((n) => n.id)).toEqual(["a", "b"]);
+    expect(result.current.allNotifications.every((n) => n.read === false)).toBe(true);
+    expect(result.current.notifications.length).toBe(2);
+  });
+
+  it("new notification arriving after markAllRead shows in All as unread", async () => {
+    fetchSpy.mockResolvedValueOnce({ data: [{ id: "a" }] });
+    markSpy.mockResolvedValue(true);
+    const { result } = renderHook(() => useNotifications());
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await result.current.markAllRead(); });
+    fetchSpy.mockResolvedValue({ data: [{ id: "c" }] });
+    await act(async () => { vi.advanceTimersByTime(60000); await Promise.resolve(); });
+    expect(result.current.allNotifications.map((n) => [n.id, n.read])).toEqual([["c", false]]);
+  });
+
   it("markRead success → removes matching ids and decrements count", async () => {
     fetchSpy.mockResolvedValue({ data: [{ id: 1 }, { id: 2 }, { id: 3 }] });
     markSpy.mockResolvedValue(true);

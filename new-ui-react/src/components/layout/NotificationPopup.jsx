@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Bell, Globe, RefreshCw, Search, Sparkle, User } from "lucide-react";
 import { autoUpdate, flip, FloatingPortal, offset, shift, useDismiss, useFloating, useInteractions } from "@floating-ui/react";
+import { PLATFORM_FULL_NAMES } from "../shared/PlatformTab";
 import "./notification-popup.css";
 import "../shared/floating-popover.css";
 
@@ -43,7 +44,9 @@ function RecreateRow({ notif, onOpen, onTryAgain }) {
     {!notif.read ? <span className="np-unread-dot"/> : null}
   </div>;
 }
-function KeywordRow({ notif, onOpen }) { const info = TYPE_MAP[notif.type] || TYPE_MAP[0]; const Icon = info.icon; return <div className={`np-it ${!notif.read ? "unread" : ""}`} role="button" tabIndex={0} onClick={() => onOpen?.(notif)} onKeyDown={(event) => { if (["Enter", " "].includes(event.key)) onOpen?.(notif); }}><div className="np-th sys"><Icon size={20}/></div><div className="np-body"><div className="np-title">New ads found for “{notif.keyword}”</div><div className="np-sub">{info.label} · {relativeTime(notif.created_at)}</div></div>{!notif.read ? <span className="np-unread-dot"/> : null}</div>; }
+// "instagram" → "Instagram"; unknown slugs are capitalised; missing → null (segment hidden).
+function platformLabel(network) { const key = String(network || "").toLowerCase(); if (!key) return null; return PLATFORM_FULL_NAMES[key] || key.replace(/^./, (c) => c.toUpperCase()); }
+function KeywordRow({ notif, onOpen }) { const info = TYPE_MAP[notif.type] || TYPE_MAP[0]; const Icon = info.icon; const platform = platformLabel(notif.network); return <div className={`np-it ${!notif.read ? "unread" : ""}`} role="button" tabIndex={0} onClick={() => onOpen?.(notif)} onKeyDown={(event) => { if (["Enter", " "].includes(event.key)) onOpen?.(notif); }}><div className="np-th sys"><Icon size={20}/></div><div className="np-body"><div className="np-title">New ads found for “{notif.keyword}”</div><div className="np-sub">{info.label}{platform ? ` · ${platform}` : ""} · {relativeTime(notif.created_at)}</div></div>{!notif.read ? <span className="np-unread-dot"/> : null}</div>; }
 
 export default function NotificationPopup({ notifications, allNotifications = [], onMarkAllRead, onNotificationClick, onClose, imageGenNotifications = [], onImageGenNotificationClick, onImageGenTryAgain, anchorRef, onLoadMore, hasMore, loadingMore }) {
   const [tab, setTab] = useState("all"); const unreadCount = notifications.length + imageGenNotifications.filter((item) => !item.read).length;

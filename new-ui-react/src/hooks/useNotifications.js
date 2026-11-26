@@ -136,7 +136,10 @@ export function useNotifications() {
     const ids = notifications.map((n) => n.id);
     setNotifications([]);
     setUnreadCount(0);
-    setAllNotifications((prev) => prev.map((n) => (ids.includes(n.id) ? { ...n, read: true } : n)));
+    // Remove (not just flag read) from the All tab too — the server DELETES these docs,
+    // so keeping them in All only lasted until the next reload. If the API call fails,
+    // poll() below re-fetches them and they come back into both tabs as unread.
+    setAllNotifications((prev) => prev.filter((n) => !ids.includes(n.id)));
     const ok = await markNotificationsRead(ids);
     if (!ok) poll();
   }, [notifications, poll]);

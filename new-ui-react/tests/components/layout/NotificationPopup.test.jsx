@@ -56,6 +56,28 @@ describe("NotificationPopup — keyword / advertiser / domain search notificatio
     const { getByText } = renderKeyword([{ id: 1, type: 99, keyword: "k", created_at: minsAgo(5) }]);
     expect(getByText("Keyword · 5 min ago")).toBeInTheDocument();
   });
+  it("shows the platform name between type and time", () => {
+    const { getByText } = renderKeyword([
+      { id: 1, type: 1, keyword: "flipkart", network: "instagram", created_at: minsAgo(5) },
+      { id: 2, type: 1, keyword: "flipkart", network: "facebook", created_at: minsAgo(6) },
+    ]);
+    expect(getByText("Advertiser · Instagram · 5 min ago")).toBeInTheDocument();
+    expect(getByText("Advertiser · Facebook · 6 min ago")).toBeInTheDocument();
+  });
+  it("platform: shared full names (chatgptads, gdn) and unknown slug capitalised", () => {
+    const { getByText } = renderKeyword([
+      { id: 1, type: 0, keyword: "a", network: "chatgptads", created_at: minsAgo(1) },
+      { id: 2, type: 0, keyword: "b", network: "gdn", created_at: minsAgo(2) },
+      { id: 3, type: 0, keyword: "c", network: "newnet", created_at: minsAgo(3) },
+    ]);
+    expect(getByText("Keyword · ChatGPT Ads · 1 min ago")).toBeInTheDocument();
+    expect(getByText("Keyword · Google Display Network · 2 min ago")).toBeInTheDocument();
+    expect(getByText("Keyword · Newnet · 3 min ago")).toBeInTheDocument();
+  });
+  it("no network → platform segment hidden", () => {
+    const { getByText } = renderKeyword([{ id: 1, type: 2, keyword: "x.com", network: "", created_at: minsAgo(4) }]);
+    expect(getByText("Domain · 4 min ago")).toBeInTheDocument();
+  });
   it("clicking a keyword notification fires onNotificationClick with it", () => {
     const onNotificationClick = vi.fn();
     const notif = { id: 7, type: 1, keyword: "Nike", network: "facebook", created_at: minsAgo(3) };

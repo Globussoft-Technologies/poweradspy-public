@@ -3771,6 +3771,23 @@ const App = () => {
     if (next) dispatch(setShowMySpacePage(true));
   };
 
+  // Bell → "New ads found for X" click. Runs the same search as the header search
+  // bar, then — if the user is on any other page (Projects, Keywords Explorer,
+  // Market Trends, Saved, MySpace, Profile) — switches to the Ads Library so the
+  // results for that term/platform are actually shown. Same page switch as
+  // AllProjects' onNavigateToAds: let the search state flush a frame before the
+  // Ads Library mounts so its first fetch doesn't race the update.
+  const handleNotificationSearch = (query, type, platform) => {
+    handleSearch(query, type, platform, { showScraperToast: true });
+    const onAdsLibrary = ui.activePage === 'ads'
+      && !ui.showSavedAdsPage && !ui.showMySpacePage && !ui.showProfilePage;
+    if (onAdsLibrary) return;
+    exitSpecialPages();
+    if (location.pathname === '/market-trends') navigate('/');
+    coalesceNextHistoryWrite();
+    window.requestAnimationFrame(() => dispatch(setActivePage('ads')));
+  };
+
   const handleOpenMySpaceImage = (jobId) => {
     if (!jobId) return;
     // The route is the single source of truth here. The URL→state effect above
@@ -3894,6 +3911,7 @@ const App = () => {
         onShowProfilePage={showProfileIfEnabled}
         onShowMySpacePage={showMySpaceIfEnabled}
         onOpenMySpaceImage={handleOpenMySpaceImage}
+        onNotificationSearch={handleNotificationSearch}
         onRecreateFromNotification={openRecreate}
         onUpgradeClick={() => dispatch(openModal('isPricingModalOpen'))}
         activeTab={ui.activeTab}
