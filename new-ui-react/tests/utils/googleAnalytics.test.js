@@ -14,12 +14,14 @@ import {
 describe('trackAdAction', () => {
   afterEach(() => {
     delete window.gtag;
+    vi.unstubAllEnvs();
   });
 
-  it('sends the canonical action name as a GA4 event parameter', () => {
+  it('sends the canonical action name as a GA4 event parameter', async () => {
+    vi.stubEnv('GOOGLE_GA4_ENABLED', 'local'); // jsdom hostname is localhost
     window.gtag = vi.fn();
 
-    expect(trackAdAction('favorite_added', { platform: 'facebook' })).toBe(true);
+    expect(await trackAdAction('favorite_added', { platform: 'facebook' })).toBe(true);
     expect(window.gtag).toHaveBeenCalledWith('event', 'ad_action', {
       platform: 'facebook',
       action_name: 'favorite_added',
@@ -29,8 +31,8 @@ describe('trackAdAction', () => {
     });
   });
 
-  it('does nothing when gtag is unavailable', () => {
-    expect(trackAdAction('hidden')).toBe(false);
+  it('does nothing when gtag is unavailable', async () => {
+    expect(await trackAdAction('hidden')).toBe(false);
   });
 
   it.each([
@@ -58,9 +60,24 @@ describe('trackAdAction', () => {
     expect(getNetworkContext(['tiktok', 'facebook'])).toEqual({ network: 'facebook,tiktok', network_scope: 'multiple' });
   });
 
-  it('allowlists plan tiers and sanitizes errors', () => {
-    expect(resolvePlanTier({ userSubscriptionType: 'Pro Annual' })).toBe('pro');
-    expect(resolvePlanTier({ userSubscriptionType: 'Customer-specific plan' })).toBe('other');
+  it.each([
+    ['Palladium', 'palladium'],
+    ['palladium', 'palladium'],
+    ['  PALLADIUM ', 'palladium'],
+    ['Basic', 'basic'],
+    ['Basic (2026)', 'basic_2026'],
+    ['Standard - Annual', 'standard_annual'],
+    ['69', 'unknown'],
+    ['', 'free'],
+  ])('normalizes plan tier %j to a single case-insensitive value %j', async (input, expected) => {
+    expect(await resolvePlanTier({ planTier: input })).toBe(expected);
+  });
+
+  it('never sends a numeric plan id from the JWT', async () => {
+    expect(await resolvePlanTier({ userSubscriptionType: 36 })).toBe('unknown');
+  });
+
+  it('sanitizes errors', () => {
     expect(classifyError({ status: 503 })).toBe('server_error');
   });
 });

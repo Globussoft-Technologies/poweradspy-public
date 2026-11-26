@@ -68,6 +68,23 @@ html[data-theme="light"] textarea { color-scheme: light; }
   }
 }
 
+/* Expanded platform/network chips row on ad cards: thin visible horizontal
+   scrollbar so users can tell more chips are off to the side. */
+.badges-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-text-muted) 35%, transparent) transparent;
+}
+.badges-scrollbar::-webkit-scrollbar {
+  height: 4px;
+}
+.badges-scrollbar::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-text-muted) 35%, transparent);
+  border-radius: 4px;
+}
+.badges-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 /* ── Google Translate Widget — hide all visible UI chrome ── */
 .goog-te-banner-frame,
 .goog-te-balloon-frame,

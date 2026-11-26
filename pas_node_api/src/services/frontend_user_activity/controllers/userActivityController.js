@@ -132,14 +132,17 @@ const POSTER_INTELLIGENCE_LABELS = {
 
 // ChatGPT sort dropdown label (e.g. 'Oldest First') from the *_sort flag plus
 // order_by — the flag alone can't tell Longest Running from Shortest Running.
+// Same format as the other networks (applySortActivity): '<Group>: <direction>',
+// or just 'Newest' / 'Oldest' for the untouched default Ad Seen Date sort.
 function chatgptSortName(data) {
   const asc = String(data.order_by || '').toLowerCase() === 'asc';
-  if (data.hits_sort === 'hits_sort')                       return asc ? 'Least Seen First' : 'Most Seen First';
-  if (data.running_longest_sort === 'running_longest_sort') return asc ? 'Shortest Running' : 'Longest Running';
+  if (data.hits_sort === 'hits_sort')                       return `Most Seen: ${asc ? 'Least Seen First' : 'Most Seen First'}`;
+  if (data.running_longest_sort === 'running_longest_sort') return `Ad Running Days: ${asc ? 'Shortest Running' : 'Longest Running'}`;
   // Ad Seen Date — also the fallback, same as the ChatGPT search (paramParser
   // parseSort): a leftover range filter from another tab can move order_column
   // off post_date so no *_sort flag is set, yet ChatGPT still sorts by date.
-  return asc ? 'Oldest First' : 'Newest First';
+  if (data.sort_selected === 'NA') return asc ? 'Oldest' : 'Newest';
+  return `Ad Seen Date: ${asc ? 'Oldest First' : 'Newest First'}`;
 }
 
 // Sort dropdown (all networks except ChatGPT, see chatgptSortName): the search

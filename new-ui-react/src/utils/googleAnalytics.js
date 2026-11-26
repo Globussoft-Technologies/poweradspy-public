@@ -123,7 +123,9 @@ function normalizePlanTierValue(raw) {
   const value = String(raw ?? '').trim().toLowerCase();
   // A bare number is a plan_id (the JWT's userSubscriptionType), not a plan name.
   // Never send an id to GA — report `unknown` instead of leaking e.g. "69".
-  return /^\s*\d+\s*$/.test(value) ? 'unknown' : value;
+  if (/^\d+$/.test(value)) return 'unknown';
+  // Collapse spaces/brackets/dashes so "Basic (2026)" -> "basic_2026".
+  return value.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
 /**

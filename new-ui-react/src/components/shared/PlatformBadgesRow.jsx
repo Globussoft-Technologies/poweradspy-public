@@ -39,7 +39,7 @@ export default function PlatformBadgesRow({ allLogos }) {
 
   if (expanded) {
     return (
-      <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden scrollbar-hide w-full max-w-full -mx-1 px-1">
+      <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto overflow-y-hidden badges-scrollbar w-full max-w-full -mx-1 px-1 pb-1.5">
         {allLogos.map((logo) => (
           <button
             key={logo.key}
