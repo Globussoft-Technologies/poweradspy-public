@@ -1418,7 +1418,7 @@ describe("SQL of the cursors, the stored hashes and the review queue", () => {
     expect(sql.calls[0].text).toMatch(/FROM copyright_review_queue WHERE network = \? AND status = \? AND id > \? ORDER BY id LIMIT 10$/);
     await sweepRepo.listReview(sql, { network: "facebook", status: "whatever", afterId: "x", limit: 99999 });
     expect(sql.calls[1].params).toEqual(["facebook", "pending", 0]);
-    expect(sql.calls[1].text).toMatch(/LIMIT 200$/);
+    expect(sql.calls[1].text).toMatch(/LIMIT 201$/); // 200 a page + the look-ahead row
 
     const w = sqlSpy(() => ({ affectedRows: 1 }));
     expect(await sweepRepo.resolveReview(w, { network: "facebook", id: 5, status: "blocked", reviewedBy: "agent", note: "n".repeat(600) })).toBe(true);
@@ -1690,7 +1690,10 @@ describe("the review queue (review.list / review.resolve)", () => {
 
   it("lists the held images of a network, oldest first, with the id to continue from", async () => {
     const { api } = build({ rows: [row({ id: 1 }), row({ id: 2 }), row({ id: 3, status: "allowed" }), row({ id: 4, network: "reddit" })] });
-    expect(await api.list({ network: "Facebook" })).toMatchObject({ ok: true, items: [{ id: 1 }, { id: 2 }], next: 2 });
+    // nothing after these two: no next page
+    expect(await api.list({ network: "Facebook" })).toMatchObject({ ok: true, items: [{ id: 1 }, { id: 2 }], next: null });
+    // a page of one, with a row after it: the cursor is the id of the row shown
+    expect(await api.list({ network: "facebook", limit: 1 })).toMatchObject({ ok: true, items: [{ id: 1 }], next: 1 });
     expect((await api.list({ network: "facebook", status: "allowed" })).items.map((r) => r.id)).toEqual([3]);
     expect(await api.list({ network: "facebook", status: "odd" })).toMatchObject({ ok: false, error: "invalid_status" });
     expect(await api.list({ network: "bad net!" })).toMatchObject({ ok: false, error: "invalid_network" });
@@ -1996,7 +1999,7 @@ describe("generations and requeue (jobRepository)", () => {
     const sql = sqlOf(() => []);
     await real.listJobs(sql, { network: "facebook", blocklistId: "7", status: "done", afterId: 4, limit: 99999 });
     const jobs = sql.calls[0];
-    expect(jobs.text).toMatch(/WHERE network = \? AND id > \? AND blocklist_id > 0 AND blocklist_id <= 4294967294 AND blocklist_id = \? AND status = \? ORDER BY id LIMIT 200$/);
+    expect(jobs.text).toMatch(/WHERE network = \? AND id > \? AND blocklist_id > 0 AND blocklist_id <= 4294967294 AND blocklist_id = \? AND status = \? ORDER BY id LIMIT 201$/); // 200 a page + the look-ahead row
     expect(jobs.params).toEqual(["facebook", 4, 7, "done"]);
     await real.listJobResults(sql, { network: "facebook", jobId: 8, generation: 2, outcome: "failed", afterId: 0, limit: 5 });
     const results = sql.calls[1];
@@ -2031,8 +2034,12 @@ describe("generations and requeue (jobRepository)", () => {
     it("lists jobs with their generations, and checks its input", async () => {
       const { api: a, repo } = api();
       const out = await a.list({ network: "Facebook", blocklistId: "3", status: "unresolved" });
-      expect(out).toMatchObject({ ok: true, next: 8, items: [{ id: 8, entryType: "url", status: "unresolved", requestedGen: 2, coveredGen: 1, coversLatest: false }] });
-      expect(repo.listJobs.mock.calls[0][1]).toMatchObject({ network: "facebook", blocklistId: "3", status: "unresolved" });
+      // the only job: no next page (before, any non-empty page gave a cursor and "Next" opened an empty page)
+      expect(out).toMatchObject({ ok: true, next: null, items: [{ id: 8, entryType: "url", status: "unresolved", requestedGen: 2, coveredGen: 1, coversLatest: false }] });
+      // one row more than the page (50) is asked for, to know whether a next page exists
+      expect(repo.listJobs.mock.calls[0][1]).toMatchObject({ network: "facebook", blocklistId: "3", status: "unresolved", limit: 51 });
+      const two = api({ listJobs: vi.fn(async () => [job, { ...job, id: 9 }]) }).api;
+      expect(await two.list({ network: "facebook", limit: 1 })).toMatchObject({ ok: true, items: [{ id: 8 }], next: 8 });
       for (const bad of [{ network: "bad net" }, { network: "facebook", jobId: "x" }, { network: "facebook", blocklistId: -1 }, { network: "facebook", status: "nope" }]) {
         expect((await a.list(bad)).ok).toBe(false);
       }
@@ -2041,8 +2048,8 @@ describe("generations and requeue (jobRepository)", () => {
     it("results default to the job's latest run, can ask for an older one, and tell the run apart", async () => {
       const { api: a, repo } = api();
       const latest = await a.results({ network: "facebook", jobId: "8" });
-      expect(repo.listJobResults.mock.calls[0][1]).toMatchObject({ jobId: 8, generation: 2 });
-      expect(latest).toMatchObject({ ok: true, generation: 2, latestGeneration: 2, items: [{ platformAdId: "A21", internalAdId: "21", outcome: "failed", reason: "unavailable: 503" }], next: 11 });
+      expect(repo.listJobResults.mock.calls[0][1]).toMatchObject({ jobId: 8, generation: 2, limit: 201 }); // a page of 200 + the look-ahead row
+      expect(latest).toMatchObject({ ok: true, generation: 2, latestGeneration: 2, items: [{ platformAdId: "A21", internalAdId: "21", outcome: "failed", reason: "unavailable: 503" }], next: null }); // the only result: no next page
       const older = await a.results({ network: "facebook", jobId: 8, generation: "1", outcome: "failed" });
       expect(repo.listJobResults.mock.calls[1][1]).toMatchObject({ generation: 1, outcome: "failed" });
       expect(older).toMatchObject({ generation: 1, latestGeneration: 2 });

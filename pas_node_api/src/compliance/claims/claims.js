@@ -127,7 +127,8 @@ const repository = {
   },
   /** Newest first, by primary key, one page: pass the `id` of the last row as `beforeId` for the next. */
   async list(sql, { status, beforeId, limit = 25 } = {}) {
-    const n = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 100);
+    // +1: room for the extra row the API asks for to know whether a next page exists
+    const n = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 101);
     const where = [];
     const params = [];
     if (status) { where.push('status = ?'); params.push(status); }
@@ -267,8 +268,11 @@ function createClaimsService({ settings, getSql, repo = repository, submitAdvert
     const sql = needSql();
     if (!sql) return bad('no_database', 'the claims database is not connected');
     try {
-      const rows = await repo.list(sql, { status, beforeId, limit });
-      return { ok: true, items: rows.map(shortView), next: rows.length ? rows[rows.length - 1].id : null };
+      // one row more than a page is asked for: it only tells whether a next page exists, and is not shown
+      const n = Math.min(Math.max(parseInt(limit, 10) || 25, 1), 100);
+      const fetched = await repo.list(sql, { status, beforeId, limit: n + 1 });
+      const rows = fetched.slice(0, n);
+      return { ok: true, items: rows.map(shortView), next: fetched.length > n ? rows[rows.length - 1].id : null };
     } catch (err) {
       return bad('failed', err.message);
     }

@@ -296,13 +296,16 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
     const table = adTables[slug];
     if (!/^[a-z][a-z0-9_]{0,63}$/.test(table)) return bad('invalid_network', 'the ad table name is not supported');
     try {
-      const rows = await sql.query(`SELECT a.id AS internal_ad_id, a.ad_id AS platform_ad_id,
+      const fetched = await sql.query(`SELECT a.id AS internal_ad_id, a.ad_id AS platform_ad_id,
           d.stage, d.detail, d.attempts, d.first_checked_at, d.last_checked_at
         FROM \`${table}\` a
         LEFT JOIN copyright_verification_diagnostics d
           ON d.network = ? AND d.internal_ad_id = CAST(a.id AS CHAR)
         WHERE a.copyright_status = 0 AND a.id > ?
-        ORDER BY a.id LIMIT ${n}`, [slug, String(afterId)]);
+        ORDER BY a.id LIMIT ${n + 1}`, [slug, String(afterId)]);
+      // one row more than a page was asked for: it only tells whether a next page exists, and is not shown
+      const more = fetched.length > n;
+      const rows = fetched.slice(0, n);
       const items = rows.map((r) => ({
         internalAdId: String(r.internal_ad_id), platformAdId: r.platform_ad_id == null ? null : String(r.platform_ad_id),
         stage: r.stage || 'not_checked', detail: r.detail || 'No verification attempt is recorded; check that the verification cron is enabled and running.',
@@ -311,7 +314,7 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       // the advertiser of each waiting ad, read in a second query so a missing owner table never hides the queue
       const names = await liveAdvertisers(sql, slug, items.map((i) => i.internalAdId));
       const named = items.map((i) => ({ ...i, advertiser: names.get(i.internalAdId) || null }));
-      return { ok: true, available: true, items: named, next: rows.length === n ? items[items.length - 1].internalAdId : null };
+      return { ok: true, available: true, items: named, next: more ? items[items.length - 1].internalAdId : null };
     } catch (err) {
       if (missingTable(err)) return { ok: true, available: false, reason: 'diagnostics_not_migrated', items: [], next: null };
       if (err?.code === 'ER_BAD_FIELD_ERROR' || err?.errno === 1054) return { ok: true, available: false, reason: 'no_column', items: [], next: null };
@@ -381,7 +384,7 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       if (mode) { where.push('mode = ?'); params.push(mode); }
       if (before) { where.push('(created_at < ? OR (created_at = ? AND run_id < ?))'); params.push(before.at, before.at, before.runId); }
       try {
-        const rows = await sql.query(`SELECT ${RUN_COLUMNS} FROM ${RUNS} WHERE ${where.join(' AND ')} ORDER BY created_at DESC, run_id DESC LIMIT ${n}`, params);
+        const rows = await sql.query(`SELECT ${RUN_COLUMNS} FROM ${RUNS} WHERE ${where.join(' AND ')} ORDER BY created_at DESC, run_id DESC LIMIT ${n + 1}`, params);
         items.push(...rows.map((r) => ({ ...runShape(r), cursorAt: dbTime(r.created_at) })));
       } catch (err) {
         if (!missingTable(err)) log.warn?.('monitor: runs failed', { network: slug, error: err.message });
@@ -389,9 +392,10 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       }
     }
     items.sort((a, b) => String(b.cursorAt).localeCompare(String(a.cursorAt)) || String(b.runId).localeCompare(String(a.runId)));
+    // each network was asked for one row more than a page, so more than `n` merged rows means a next page really exists
     const page = items.slice(0, n);
     const last = page[page.length - 1];
-    const next = page.length === n && last ? `${last.cursorAt}|${last.runId}` : null;
+    const next = items.length > n && last ? `${last.cursorAt}|${last.runId}` : null;
     return { ok: true, items: page.map(({ cursorAt, ...run }) => run), unavailable, next };
   }
 
@@ -419,7 +423,10 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       const params = [String(runId).toLowerCase(), slug, whole(afterId)];
       if (status) { where.push('status = ?'); params.push(String(status)); }
       if (system) { where.push('`system` = ?'); params.push(String(system)); }
-      const rows = await sql.query(`SELECT ${ACTION_COLUMNS} FROM ${ACTIONS} WHERE ${where.join(' AND ')} ORDER BY id LIMIT ${n}`, params);
+      const fetched = await sql.query(`SELECT ${ACTION_COLUMNS} FROM ${ACTIONS} WHERE ${where.join(' AND ')} ORDER BY id LIMIT ${n + 1}`, params);
+      // one row more than a page was asked for: it only tells whether a next page exists, and is not shown
+      const more = fetched.length > n;
+      const rows = fetched.slice(0, n);
       const bySystem = {};
       const byGroup = {};
       for (const c of counts) {
@@ -430,7 +437,7 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
         addTo(byGroup, g, num(c.steps));
       }
       const steps = await withAdvertisers(sql, slug, rows.map((a) => ({ ...actionShape(a), runId: a.run_id })));
-      return { ok: true, run: runShape(run), steps: { byGroup, bySystem }, items: steps.map(({ runId: _r, ...st }) => st), next: rows.length === n ? rows[rows.length - 1].id : null };
+      return { ok: true, run: runShape(run), steps: { byGroup, bySystem }, items: steps.map(({ runId: _r, ...st }) => st), next: more ? rows[rows.length - 1].id : null };
     } catch (err) {
       if (missingTable(err)) return bad('no_table', 'the takedown tables do not exist in that database yet');
       log.warn?.('monitor: run logs failed', { network: slug, error: err.message });
@@ -449,9 +456,12 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       const where = [`status IN (${FAILED_WORDS.map(() => '?').join(', ')})`, 'network = ?'];
       const params = [...FAILED_WORDS, slug];
       if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
-      const rows = await sql.query(`SELECT ${ACTION_COLUMNS} FROM ${ACTIONS} WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`, params);
+      const fetched = await sql.query(`SELECT ${ACTION_COLUMNS} FROM ${ACTIONS} WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n + 1}`, params);
+      // one row more than a page was asked for: it only tells whether a next page exists, and is not shown
+      const more = fetched.length > n;
+      const rows = fetched.slice(0, n);
       const items = await withAdvertisers(sql, slug, rows.map((a) => ({ ...actionShape(a), runId: a.run_id })));
-      return { ok: true, items, next: rows.length === n ? rows[rows.length - 1].id : null };
+      return { ok: true, items, next: more ? rows[rows.length - 1].id : null };
     } catch (err) {
       if (missingTable(err)) return bad('no_table', 'the takedown tables do not exist in that database yet');
       log.warn?.('monitor: failures failed', { network: slug, error: err.message });
@@ -499,7 +509,9 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
     const sql = getSql(slug);
     if (!sql) return bad('no_database', 'there is no database connection for that network');
     try {
-      const where = ['network = ?'];
+      // A network's blocks are its own rows plus the rows marked 'all' (an accepted claim blocks for every network and writes an
+      // 'all' row into each network's database). Reading only `network = ?` hid every claim block from this list.
+      const where = [`network IN (?, 'all')`];
       const params = [slug];
       if (status) { where.push('status = ?'); params.push(status); }
       if (entryType) { where.push('entry_type = ?'); params.push(entryType); }
@@ -507,12 +519,15 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       // one claim's entries only (complaint ids are stored lowercase, as the runs filter assumes)
       if (complaintId) { where.push('complaint_id = ?'); params.push(String(complaintId).toLowerCase()); }
       if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
-      const rows = await sql.query(
+      const fetched = await sql.query(
         `SELECT id, network, entry_type, identifier_namespace, value, reason, source, complaint_id, status, expires_at, created_at, added_by, removed_at, removed_by, details
-           FROM copyright_blocklist WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`,
+           FROM copyright_blocklist WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n + 1}`,
         params
       );
-      const counted = await sql.query('SELECT entry_type, status, COUNT(*) AS entries FROM copyright_blocklist WHERE network = ? GROUP BY entry_type, status', [slug]);
+      // one row more than a page was asked for: it only tells whether a next page exists, and is not shown
+      const more = fetched.length > n;
+      const rows = fetched.slice(0, n);
+      const counted = await sql.query(`SELECT entry_type, status, COUNT(*) AS entries FROM copyright_blocklist WHERE network IN (?, 'all') GROUP BY entry_type, status`, [slug]); // own + 'all' rows, as the list
       const counts = { total: 0, byStatus: {}, activeByType: {} };
       for (const c of counted) {
         const k = num(c.entries);
@@ -553,7 +568,7 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
         ok: true,
         counts,
         items,
-        next: rows.length === n ? rows[rows.length - 1].id : null,
+        next: more ? rows[rows.length - 1].id : null,
       };
     } catch (err) {
       if (missingTable(err)) return bad('no_table', 'the blocklist table does not exist in that database yet');
@@ -578,15 +593,19 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       const where = ['network = ?'];
       const params = [slug];
       if (complaintId) {
-        where.push('blocklist_id IN (SELECT id FROM copyright_blocklist WHERE network = ? AND complaint_id = ?)');
+        // a claim's blocks are 'all' rows (see blocklist above), so the claim's entries are looked up in both
+        where.push(`blocklist_id IN (SELECT id FROM copyright_blocklist WHERE network IN (?, 'all') AND complaint_id = ?)`);
         params.push(slug, String(complaintId).toLowerCase());
       }
       if (whole(beforeId)) { where.push('id < ?'); params.push(whole(beforeId)); }
-      const rows = await sql.query(
+      const fetched = await sql.query(
         `SELECT id, network, platform_ad_id, advertiser, image_url, blocklist_id, match_type, distance, source, created_at
-           FROM copyright_blocked_attempts WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n}`,
+           FROM copyright_blocked_attempts WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${n + 1}`,
         params
       );
+      // one row more than a page was asked for: it only tells whether a next page exists, and is not shown
+      const more = fetched.length > n;
+      const rows = fetched.slice(0, n);
       // the entry that matched (so "Ad id" or "Same image" says WHICH ad id or image), and the advertiser of ads the attempt has no name for
       const entries = await entriesById(sql, slug, rows.map((r) => r.blocklist_id));
       const names = await liveAdvertisers(sql, slug, rows.filter((r) => !r.advertiser).map((r) => r.platform_ad_id), 'ad_id');
@@ -601,7 +620,7 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
             matchedEntry: e || null,
           };
         }),
-        next: rows.length === n ? rows[rows.length - 1].id : null,
+        next: more ? rows[rows.length - 1].id : null,
       };
     } catch (err) {
       if (missingTable(err)) return bad('no_table', 'the blocked-attempts table does not exist in that database yet');
@@ -638,9 +657,12 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       const params = [slug];
       if (takedownRunId) { where.push('takedown_run_id = ?'); params.push(String(takedownRunId).toLowerCase()); }
       if (before) { where.push('(created_at < ? OR (created_at = ? AND audit_id < ?))'); params.push(before.at, before.at, before.id); }
-      const rows = await sql.query(`SELECT ${AUDIT_COLUMNS} FROM copyright_audit_runs WHERE ${where.join(' AND ')} ORDER BY created_at DESC, audit_id DESC LIMIT ${n}`, params);
+      const fetched = await sql.query(`SELECT ${AUDIT_COLUMNS} FROM copyright_audit_runs WHERE ${where.join(' AND ')} ORDER BY created_at DESC, audit_id DESC LIMIT ${n + 1}`, params);
+      // one row more than a page was asked for: it only tells whether a next page exists, and is not shown
+      const more = fetched.length > n;
+      const rows = fetched.slice(0, n);
       const last = rows[rows.length - 1];
-      return { ok: true, items: rows.map(auditShape), next: rows.length === n && last ? `${dbTime(last.created_at)}|${last.audit_id}` : null };
+      return { ok: true, items: rows.map(auditShape), next: more && last ? `${dbTime(last.created_at)}|${last.audit_id}` : null };
     } catch (err) {
       if (missingTable(err)) return bad('no_table', 'the audit tables do not exist in that database yet');
       log.warn?.('monitor: audits failed', { network: slug, error: err.message });
@@ -666,12 +688,15 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
       const params = [id, slug, whole(afterId)];
       if (status) { where.push('status = ?'); params.push(status); }
       // `system` is a reserved word in MySQL 8: always quoted.
-      const rows = await sql.query(
+      const fetched = await sql.query(
         `SELECT id, finding_type, \`system\`, location, internal_ad_id, platform_ad_id, target_type, target_value, details, status, resolution, resolution_note,
                 resolved_at, takedown_run_id, created_at
-           FROM copyright_audit_findings WHERE ${where.join(' AND ')} ORDER BY id LIMIT ${n}`,
+           FROM copyright_audit_findings WHERE ${where.join(' AND ')} ORDER BY id LIMIT ${n + 1}`,
         params
       );
+      // one row more than a page was asked for: it only tells whether a next page exists, and is not shown
+      const more = fetched.length > n;
+      const rows = fetched.slice(0, n);
       const byStatus = {};
       for (const c of counted) byStatus[c.status] = num(c.findings);
       return {
@@ -688,7 +713,7 @@ function createMonitorService({ networks, getSql, jobs, adTables = {}, log = con
             advertiser: saved,
           };
         }), (f) => f.takedownRunId),
-        next: rows.length === n ? rows[rows.length - 1].id : null,
+        next: more ? rows[rows.length - 1].id : null,
       };
     } catch (err) {
       if (missingTable(err)) return bad('no_table', 'the audit tables do not exist in that database yet');

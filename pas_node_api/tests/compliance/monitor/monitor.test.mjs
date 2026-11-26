@@ -108,15 +108,18 @@ describe("runs", () => {
     expect(out.items[0]).toMatchObject({ runId: RUN, status: "failed", group: "failed", itemsFailed: 6 });
     expect(out.items[0].details.length).toBeLessThan(2100);
     const q = sql.seen[0];
-    expect(q.text).toMatch(/WHERE network = \? AND status = \? AND mode = \? ORDER BY created_at DESC, run_id DESC LIMIT 10$/);
+    expect(q.text).toMatch(/WHERE network = \? AND status = \? AND mode = \? ORDER BY created_at DESC, run_id DESC LIMIT 11$/);
     expect(q.params).toEqual(["facebook", "failed'; DROP TABLE x;--", "execute"]);
     expect(q.text).not.toMatch(/DROP/);
   });
 
   it("pages with a cursor made from the last row; a bad cursor is refused", async () => {
-    const rows = [row({ created_at: new Date(2026, 10, 4, 9, 30, 5) }), row({ run_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", created_at: new Date(2026, 10, 4, 9, 0, 0) })];
+    const rows = [row({ created_at: new Date(2026, 10, 4, 9, 30, 5) }), row({ run_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", created_at: new Date(2026, 10, 4, 9, 0, 0) }),
+      // the extra row: it proves a next page exists and is not shown
+      row({ run_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", created_at: new Date(2026, 10, 4, 8, 0, 0) })];
     const sql = fakeSql(() => rows);
     const first = await service({ sqls: { facebook: sql } }).runs({ network: "facebook", limit: "2" });
+    expect(first.items).toHaveLength(2);
     expect(first.next).toBe("2026-11-04 09:00:00|bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
     await service({ sqls: { facebook: sql } }).runs({ network: "facebook", limit: "2", cursor: first.next });
     expect(sql.seen[1].text).toMatch(/\(created_at < \? OR \(created_at = \? AND run_id < \?\)\)/);
@@ -150,7 +153,7 @@ describe("run logs and failures", () => {
     return fakeSql((text) => {
       if (/FROM copyright_takedown_runs/.test(text)) return [runRow];
       if (/GROUP BY `system`, status/.test(text)) return [{ system: "sql", status: "succeeded", steps: 2 }, { system: "elastic", status: "failed", steps: 1 }];
-      return [action(1), action(2), action(3, { system: "elastic", status: "failed", error_message: "timeout", attempts: 3, next_retry_at: "2026-11-04 12:00:00" })];
+      return [action(1), action(2), action(3, { system: "elastic", status: "failed", error_message: "timeout", attempts: 3, next_retry_at: "2026-11-04 12:00:00" }), action(4)]; // action 4: the extra row of a limit of 3
     });
   }
 
@@ -161,9 +164,10 @@ describe("run logs and failures", () => {
     expect(out.steps.byGroup).toEqual({ done: 2, failed: 1 });
     expect(out.steps.bySystem.elastic).toEqual({ total: 1, byStatus: { failed: 1 } });
     expect(out.items[2]).toMatchObject({ id: 3, system: "elastic", status: "failed", group: "failed", errorMessage: "timeout", attempts: 3, nextRetryAt: "2026-11-04 12:00:00" });
+    expect(out.items).toHaveLength(3);
     expect(out.next).toBe(3);
     // reads the steps by run id (the run's index), by id order, with a limit
-    expect(sql.seen[2].text).toMatch(/FROM copyright_takedown_actions WHERE run_id = \? AND network = \? AND id > \? ORDER BY id LIMIT 3$/);
+    expect(sql.seen[2].text).toMatch(/FROM copyright_takedown_actions WHERE run_id = \? AND network = \? AND id > \? ORDER BY id LIMIT 4$/);
     // `system` is a reserved word in MySQL 8: a bare one is a syntax error there (the run log then answered 503)
     for (const q of sql.seen) expect(q.text).not.toMatch(/(^|[^`])system(?!`)/);
   });
@@ -184,13 +188,24 @@ describe("run logs and failures", () => {
   });
 
   it("failures: the newest failed steps by status, newest first, with a cursor, using only the failed words as parameters", async () => {
-    const sql = fakeSql(() => [action(9, { status: "failed", error_message: "boom" }), action(8, { status: "error" })]);
+    const sql = fakeSql(() => [action(9, { status: "failed", error_message: "boom" }), action(8, { status: "error" }), action(7, { status: "failed" })]); // 7: the extra row
     const out = await service({ sqls: { facebook: sql } }).failures({ network: "facebook", beforeId: "20", limit: "2" });
     expect(out.items.map((i) => i.id)).toEqual([9, 8]);
     expect(out.items[0].runId).toBe(RUN);
     expect(out.next).toBe(8);
-    expect(sql.seen[0].text).toMatch(/WHERE status IN \(\?, \?, \?, \?\) AND network = \? AND id < \? ORDER BY id DESC LIMIT 2$/);
+    expect(sql.seen[0].text).toMatch(/WHERE status IN \(\?, \?, \?, \?\) AND network = \? AND id < \? ORDER BY id DESC LIMIT 3$/);
     expect(sql.seen[0].params.slice(-2)).toEqual(["facebook", 20]);
+  });
+});
+
+describe("no next page after the last one", () => {
+  // Before: a page that came back exactly full always got a cursor, so "Next" opened an empty page ("No hash jobs.", "No blocks.").
+  it("gives no cursor when the database has no row after a full page", async () => {
+    const block = (id) => ({ id, network: "facebook", entry_type: "advertiser", value: `B${id}`, reason: null, source: "intake", complaint_id: null, status: "active", expires_at: null, created_at: "2026-11-05 10:00:00", added_by: "x", removed_at: null, removed_by: null });
+    const sql = fakeSql((text) => (/GROUP BY entry_type, status/.test(text) ? [] : [block(5), block(4)]));
+    const out = await service({ sqls: { facebook: sql } }).blocklist({ network: "facebook", limit: "2" });
+    expect(out.items.map((i) => i.id)).toEqual([5, 4]);
+    expect(out.next).toBeNull();
   });
 });
 
@@ -213,9 +228,9 @@ describe("audit (B6)", () => {
   const finding = (id, over = {}) => ({ id, finding_type: "blocklist_hit", system: "sql", location: "facebook_ad", internal_ad_id: String(id), platform_ad_id: `p${id}`, target_type: "ad_id", target_value: `p${id}`, details: '{"nasDeleted":1}', status: "resolved", resolution: "removed", resolution_note: null, resolved_at: "2026-11-05 10:00:01", takedown_run_id: RUN, created_at: "2026-11-05 10:00:01", ...over });
   const auditSql = () => fakeSql((text) => {
     if (/FROM copyright_audit_runs WHERE audit_id/.test(text)) return [auditRow];
-    if (/FROM copyright_audit_runs/.test(text)) return [auditRow];
+    if (/FROM copyright_audit_runs/.test(text)) return [auditRow, { ...auditRow, audit_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }]; // the second is the extra row of a limit of 1
     if (/GROUP BY status/.test(text)) return [{ status: "resolved", findings: 2 }];
-    return [finding(1), finding(2)];
+    return [finding(1), finding(2), finding(3)]; // finding 3: the extra row of a limit of 2
   });
 
   it("lists a network's audit runs newest first, by takedown run when asked, with the filters as parameters", async () => {
@@ -224,7 +239,7 @@ describe("audit (B6)", () => {
     expect(out.items[0]).toMatchObject({ auditId: AUDIT, auditType: "verification_cleanup", expectedCount: 2, foundCount: 2, takedownRunId: RUN });
     expect(out.next).toBe(`2026-11-05 10:00:01|${AUDIT}`);
     expect(sql.seen[0].params).toEqual(["facebook", RUN]);
-    expect(sql.seen[0].text).toMatch(/ORDER BY created_at DESC, audit_id DESC LIMIT 1$/);
+    expect(sql.seen[0].text).toMatch(/ORDER BY created_at DESC, audit_id DESC LIMIT 2$/);
   });
 
   it("gives one audit, its findings counted by status, and the findings (the system column quoted for MySQL 8)", async () => {
@@ -356,7 +371,8 @@ describe("routes", () => {
 describe("blocklist and rejected ads", () => {
   const blockRow = (over = {}) => ({ id: 7, network: "facebook", entry_type: "advertiser", value: "Test Brand", reason: "test", source: "intake", complaint_id: COMPLAINT, status: "active", expires_at: null, created_at: "2026-11-05 10:00:00", added_by: "landing-form", removed_at: null, removed_by: null, ...over });
   const counted = [{ entry_type: "advertiser", status: "active", entries: 2 }, { entry_type: "image_hash", status: "active", entries: 5 }, { entry_type: "advertiser", status: "revoked", entries: 1 }];
-  const answer = (text) => (/GROUP BY entry_type, status/.test(text) ? counted : [blockRow()]);
+  // blockRow 6 is the extra row of a limit of 1
+  const answer = (text) => (/GROUP BY entry_type, status/.test(text) ? counted : [blockRow(), blockRow({ id: 6 })]);
 
   it("lists the blocked entries newest first, with the counts by status and the active ones by type", async () => {
     const sql = fakeSql(answer);
@@ -364,15 +380,26 @@ describe("blocklist and rejected ads", () => {
     expect(out.ok).toBe(true);
     expect(out.items[0]).toMatchObject({ id: 7, entryType: "advertiser", value: "Test Brand", status: "active", addedBy: "landing-form", complaintId: COMPLAINT, removedAt: null });
     expect(out.counts).toEqual({ total: 8, byStatus: { active: 7, revoked: 1 }, activeByType: { advertiser: 2, image_hash: 5 } });
-    expect(out.next).toBe(7); // a full page: the id of the last row is the cursor
-    expect(sql.seen[0].text).toMatch(/FROM copyright_blocklist WHERE network = \? ORDER BY id DESC LIMIT 1$/);
+    expect(out.items).toHaveLength(1);
+    expect(out.next).toBe(7); // the database had one more row: the id of the last shown row is the cursor
+    expect(sql.seen[0].text).toMatch(/FROM copyright_blocklist WHERE network IN \(\?, 'all'\) ORDER BY id DESC LIMIT 2$/);
   });
 
   it("filters through parameters only, escapes the search text, and pages by id", async () => {
     const sql = fakeSql(answer);
     await service({ sqls: { facebook: sql } }).blocklist({ network: "facebook", status: "active", entryType: "advertiser", q: "50%_Off\\", beforeId: "20", limit: "10" });
-    expect(sql.seen[0].text).toMatch(/WHERE network = \? AND status = \? AND entry_type = \? AND LOWER\(value\) LIKE \? AND id < \? ORDER BY id DESC LIMIT 10$/);
+    expect(sql.seen[0].text).toMatch(/WHERE network IN \(\?, 'all'\) AND status = \? AND entry_type = \? AND LOWER\(value\) LIKE \? AND id < \? ORDER BY id DESC LIMIT 11$/);
     expect(sql.seen[0].params).toEqual(["facebook", "active", "advertiser", "%50\\%\\_off\\\\%", 20]);
+  });
+
+  // An accepted claim blocks for every network: its rows are network 'all'. The Blocked list of facebook read only `network = ?`, so
+  // "Follow this claim" showed "Nothing is blocked here for this claim." for an accepted claim.
+  it("lists the 'all' rows (claim blocks) with the network's own rows, and counts them too", async () => {
+    const sql = fakeSql((text) => (/GROUP BY entry_type, status/.test(text) ? counted : [blockRow({ network: "all" })]));
+    const out = await service({ sqls: { facebook: sql } }).blocklist({ network: "facebook", complaintId: COMPLAINT });
+    expect(out.items[0]).toMatchObject({ id: 7, network: "all", complaintId: COMPLAINT });
+    expect(sql.seen[0].params[0]).toBe("facebook");
+    expect(sql.seen[1].text).toMatch(/WHERE network IN \(\?, 'all'\) GROUP BY entry_type, status/);
   });
 
   it("refuses an unknown network, status or type before reading anything", async () => {
@@ -397,14 +424,15 @@ describe("blocklist and rejected ads", () => {
 
   it("lists the rejected ads newest first, identifiers only, with a cursor", async () => {
     const rows = [{ id: 12, network: "facebook", platform_ad_id: "990001110002", advertiser: "Test Brand", image_url: null, blocklist_id: 7, match_type: "advertiser", distance: null, source: "ingestion:facebook", created_at: "2026-11-05 10:05:00" },
-      { id: 11, network: "facebook", platform_ad_id: "990001110003", advertiser: null, image_url: "https://x/y.jpg", blocklist_id: 9, match_type: "phash", distance: 3, source: null, created_at: "2026-11-05 10:04:00" }];
+      { id: 11, network: "facebook", platform_ad_id: "990001110003", advertiser: null, image_url: "https://x/y.jpg", blocklist_id: 9, match_type: "phash", distance: 3, source: null, created_at: "2026-11-05 10:04:00" },
+      { id: 10, network: "facebook", platform_ad_id: "990001110004", advertiser: "Test Brand", image_url: null, blocklist_id: 7, match_type: "advertiser", distance: null, source: null, created_at: "2026-11-05 10:03:00" }]; // 10: the extra row
     const sql = fakeSql(() => rows);
     const out = await service({ sqls: { facebook: sql } }).attempts({ network: "facebook", beforeId: "13", limit: "2" });
     expect(out.items.map((i) => i.id)).toEqual([12, 11]);
     expect(out.items[0]).toMatchObject({ platformAdId: "990001110002", advertiser: "Test Brand", matchType: "advertiser", distance: null, blocklistId: 7 });
     expect(out.items[1]).toMatchObject({ matchType: "phash", distance: 3, imageUrl: "https://x/y.jpg" });
     expect(out.next).toBe(11);
-    expect(sql.seen[0].text).toMatch(/FROM copyright_blocked_attempts WHERE network = \? AND id < \? ORDER BY id DESC LIMIT 2$/);
+    expect(sql.seen[0].text).toMatch(/FROM copyright_blocked_attempts WHERE network = \? AND id < \? ORDER BY id DESC LIMIT 3$/);
     expect(sql.seen[0].params).toEqual(["facebook", 13]);
   });
 
@@ -413,11 +441,11 @@ describe("blocklist and rejected ads", () => {
     const sql = fakeSql(answer);
     const s = service({ sqls: { facebook: sql } });
     await s.blocklist({ network: "facebook", complaintId: COMPLAINT.toUpperCase(), limit: "10" });
-    expect(sql.seen[0].text).toMatch(/WHERE network = \? AND complaint_id = \? ORDER BY id DESC LIMIT 10$/);
+    expect(sql.seen[0].text).toMatch(/WHERE network IN \(\?, 'all'\) AND complaint_id = \? ORDER BY id DESC LIMIT 11$/);
     expect(sql.seen[0].params).toEqual(["facebook", COMPLAINT]);
     sql.seen.length = 0;
     await s.attempts({ network: "facebook", complaintId: COMPLAINT, beforeId: "13", limit: "5" });
-    expect(sql.seen[0].text).toMatch(/WHERE network = \? AND blocklist_id IN \(SELECT id FROM copyright_blocklist WHERE network = \? AND complaint_id = \?\) AND id < \? ORDER BY id DESC LIMIT 5$/);
+    expect(sql.seen[0].text).toMatch(/WHERE network = \? AND blocklist_id IN \(SELECT id FROM copyright_blocklist WHERE network IN \(\?, 'all'\) AND complaint_id = \?\) AND id < \? ORDER BY id DESC LIMIT 6$/);
     expect(sql.seen[0].params).toEqual(["facebook", "facebook", COMPLAINT, 13]);
     sql.seen.length = 0;
     expect((await s.blocklist({ network: "facebook", complaintId: "CR-ABC234" })).error).toBe("invalid_id");

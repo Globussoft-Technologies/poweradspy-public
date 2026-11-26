@@ -746,6 +746,8 @@ export default function TakedownMonitor({ follow, onOpenRequests } = {}) {
                     <td className="p-3 max-w-[14rem]">
                       {/* hover explains the entry type, e.g. what a "page" block is */}
                       <div className="whitespace-nowrap"><Term tip={tipFor("entry", b.entryType)}>{b.entryType}</Term></div>
+                      {/* a claim's blocks are stored for every network ('all'), so they are listed under each network */}
+                      {b.network === "all" && <div className="text-xs text-gray-400" title="Blocked for every network (for example by an accepted claim), so it is listed under each network.">all networks</div>}
                       {b.entryType === "ad_id" && b.identifierNamespace && <div className="text-xs text-gray-400" title={b.identifierNamespace === "internal" ? ID_HELP.row : ID_HELP.platform}>{b.identifierNamespace === "internal" ? "our row id: blocks this one ad" : "platform ad id: blocks this one ad"}</div>}
                       {BLOCK_EXPLAIN[b.entryType] && <div className="text-xs text-gray-400">{BLOCK_EXPLAIN[b.entryType]}</div>}
                     </td>

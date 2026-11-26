@@ -441,7 +441,8 @@ const REVIEW_STATUS = Object.freeze(['pending', 'allowed', 'blocked']);
 
 /** The review queue of a network, oldest first, by primary key. @returns {Promise<Array>} */
 async function listReview(sql, { network, status = 'pending', afterId = 0, limit = 50 } = {}) {
-  const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  // +1: room for the extra row the API asks for to know whether a next page exists
+  const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 201);
   const after = Number.isSafeInteger(Number(afterId)) && Number(afterId) > 0 ? Number(afterId) : 0;
   return sql.query(
     `SELECT id, network, platform_ad_id, internal_ad_id, advertiser, image_url, media_role, ordinal, sha256, phash, phash_algo,
@@ -503,7 +504,8 @@ async function recordJobResults(sql, rows, { network, jobId, blocklistId, genera
 
 /** Jobs of a network by id order (the real ones: not the sweep / backfill cursor rows), optionally one entry or one status. */
 async function listJobs(sql, { network, jobId, blocklistId, status, afterId = 0, limit = 50 } = {}) {
-  const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  // +1: room for the extra row the API asks for to know whether a next page exists
+  const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 201);
   const where = ['network = ?', 'id > ?', 'blocklist_id > 0', `blocklist_id <= ${LAST_REAL_ENTRY}`];
   const params = [network, Number.isSafeInteger(Number(afterId)) && Number(afterId) > 0 ? Number(afterId) : 0];
   if (jobId !== undefined && jobId !== null && jobId !== '') { where.push('id = ?'); params.push(Number(jobId)); }
@@ -522,7 +524,8 @@ async function listJobs(sql, { network, jobId, blocklistId, status, afterId = 0,
 
 /** The results of one run (generation) of one job, by id. outcome is optional ('hashed', 'duplicate', 'skipped', 'failed'). */
 async function listJobResults(sql, { network, jobId, generation, outcome, afterId = 0, limit = 200 } = {}) {
-  const n = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1000);
+  // +1: room for the extra row the API asks for to know whether a next page exists
+  const n = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1001);
   const where = ['network = ?', 'job_id = ?', 'generation = ?', 'id > ?'];
   const params = [network, jobId, generation, Number.isSafeInteger(Number(afterId)) && Number(afterId) > 0 ? Number(afterId) : 0];
   if (outcome) { where.push('outcome = ?'); params.push(String(outcome)); }
@@ -1450,8 +1453,11 @@ function createReview(deps = {}) {
     try {
       const sql = sqlOf(network.trim().toLowerCase());
       if (!sql) return bad('no_database', 'there is no database connection for that network');
-      const rows = await repo.listReview(sql, { network: network.trim().toLowerCase(), status, afterId, limit });
-      return { ok: true, items: rows, next: rows.length ? rows[rows.length - 1].id : null };
+      // one row more than a page is asked for: it only tells whether a next page exists, and is not shown
+      const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+      const fetched = await repo.listReview(sql, { network: network.trim().toLowerCase(), status, afterId, limit: n + 1 });
+      const rows = fetched.slice(0, n);
+      return { ok: true, items: rows, next: fetched.length > n ? rows[rows.length - 1].id : null };
     } catch (err) {
       return bad('failed', err.message);
     }
@@ -1599,8 +1605,11 @@ function createJobsApi(deps = {}) {
     try {
       const sql = sqlOf(slug);
       if (!sql) return bad('no_database', 'there is no database connection for that network');
-      const rows = await repo.listJobs(sql, { network: slug, jobId, blocklistId, status: status || undefined, afterId, limit });
-      return { ok: true, items: rows.map(describeJob), next: rows.length ? rows[rows.length - 1].id : null };
+      // one row more than a page is asked for: it only tells whether a next page exists, and is not shown
+      const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+      const fetched = await repo.listJobs(sql, { network: slug, jobId, blocklistId, status: status || undefined, afterId, limit: n + 1 });
+      const rows = fetched.slice(0, n);
+      return { ok: true, items: rows.map(describeJob), next: fetched.length > n ? rows[rows.length - 1].id : null };
     } catch (err) {
       return bad('failed', err.message);
     }
@@ -1619,13 +1628,16 @@ function createJobsApi(deps = {}) {
       if (!job) return bad('not_found', 'no such job');
       const wanted = generation === undefined || generation === null || generation === '' ? Number(job.run_gen) || 1 : whole(generation);
       if (!Number.isSafeInteger(wanted) || wanted <= 0) return bad('invalid_generation', 'generation must be a positive whole number');
-      const rows = await repo.listJobResults(sql, { network: slug, jobId: id, generation: wanted, outcome: outcome || undefined, afterId, limit });
+      // one row more than a page is asked for: it only tells whether a next page exists, and is not shown
+      const n = Math.min(Math.max(parseInt(limit, 10) || 200, 1), 1000);
+      const fetched = await repo.listJobResults(sql, { network: slug, jobId: id, generation: wanted, outcome: outcome || undefined, afterId, limit: n + 1 });
+      const rows = fetched.slice(0, n);
       return {
         ok: true, job: describeJob(job), generation: wanted, latestGeneration: Number(job.run_gen) || 1,
         items: rows.map((r) => ({
           id: r.id, platformAdId: r.platform_ad_id, internalAdId: r.internal_ad_id || null, sourceUrl: r.source_url, outcome: r.outcome, reason: r.reason || null, sha256: r.sha256 || null, updatedAt: r.updated_at,
         })),
-        next: rows.length ? rows[rows.length - 1].id : null,
+        next: fetched.length > n ? rows[rows.length - 1].id : null,
       };
     } catch (err) {
       return bad('failed', err.message);
